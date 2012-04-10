@@ -34,16 +34,10 @@ Client are described by a structure containing its raw socket and its VPN addres
 #include <string.h>
 #include <unistd.h>
 
+#include "handle_client.h"
+
 
 #define MAX_CLIENTS 50
-
-/* Stucture defining a client */
-struct client {
-    struct in_addr local_address;
-    struct in_addr dest_address ;
-    int      raw_socket   ;   
-    pthread_t thread      ;
-} ;
 
 /* Create TCP socket for communication with clients */
 int create_tcp_socket(uint32_t address, uint16_t port) {
@@ -62,34 +56,6 @@ int create_tcp_socket(uint32_t address, uint16_t port) {
         perror("Listen failed") ;
 
     return sock ;
-}
-
-/* Called in a thread on a new client */
-void* new_client(void* arg) {
-
-    struct client* client = (struct client*) arg ;
-    int i;
-    char message[255] ;
-    char s_local[16] ;
-    char s_dest[16] ;
-
-    strcpy(s_local, inet_ntoa(client->local_address)) ;
-    strcpy(s_dest, inet_ntoa(client->dest_address)) ;
-    sprintf(message, "Hello client %s (%d) from IP %s (%d)\n", s_local, client->local_address.s_addr, 
-                                                               s_dest, client->dest_address.s_addr) ;   
-
-    if (send(client->raw_socket, message, strlen(message), 0) < 0) {
-        perror("send") ;
-    }
-
-    for (i=20; i > 0; i--) {
-        sprintf(message, "%d...\n", i) ;
-        send(client->raw_socket, message, strlen(message), 0) ;
-        sleep(1) ;
-    }
-
-    close(client->raw_socket) ;
-    return NULL ;
 }
 
 int main(int argc, char *argv[]) {
