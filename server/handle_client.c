@@ -281,7 +281,6 @@ int tun2raw(struct rohc_comp *comp,
 	if(rohc_size <= 0)
 	{
 		fprintf(stderr, "compression of packet #%u failed\n", seq);
-		dump_packet("IP packet", packet, packet_len);
 		goto error;
 	}
 
@@ -385,7 +384,6 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to)
 		else
 		{
 			fprintf(stderr, "decompression of packet #%u failed\n", new_seq);
-			dump_packet("ROHC packet", packet + 2, packet_len - 2);
 			goto drop;
 		}
 	}
@@ -406,8 +404,6 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to)
 		default:
 			fprintf(stderr, "bad IP version (%d)\n",
 			        (decomp_packet[4] >> 4) & 0x0f);
-			dump_packet("ROHC packet", packet, packet_len);
-			dump_packet("Decompressed packet", &decomp_packet[4], decomp_size);
 			goto drop;
 	}
 	
@@ -441,4 +437,9 @@ error:
 }
 
 
+int read_from_tun(int fd, unsigned char *packet, unsigned int *length) {}
+int write_to_tun(int fd, unsigned char *packet, unsigned int length) {}
+
+int read_from_raw(int sock, unsigned char *buffer, unsigned int *length) {}
+int write_to_raw(int sock, struct in_addr raddr, unsigned char *packet, unsigned int length){}
 

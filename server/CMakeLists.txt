@@ -8,4 +8,6 @@ set(LIBS ${LIBS} ${ROHC_LIBRARIES})
 
 add_executable (server server.c handle_client.c)
 
+add_definitions("-Wall")
+
 target_link_libraries(server ${LIBS} ) 

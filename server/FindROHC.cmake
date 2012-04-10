@@ -14,7 +14,7 @@ if (PC_ROHC_FOUND)
     set(ROHC_LIBRARIES ${PC_ROHC_LIBRARIES} )
     set(ROHC_INCLUDE_DIR ${PC_ROHC_INCLUDE_DIRS})
 else (PC_ROHC_FOUND)
-    MESSAGE("-- Unable to find pkgconfig for ROHC, trying to find it directly")
+    FIND_PACKAGE_MESSAGE(ROHC "Unable to find pkgconfig for ROHC, trying to find it directly" "")
     find_path(ROHC_INCLUDE_DIR rohc.h )
 
     find_library(ROHC_LIBRARY_COMMON NAMES rohc_common)
