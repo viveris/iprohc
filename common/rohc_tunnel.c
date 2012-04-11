@@ -17,7 +17,7 @@ On a client connection :
 #include <signal.h>
 #include <errno.h>
 
-#include "handle_client.h"
+#include "rohc_tunnel.h"
 
 /* ROHC includes */
 #include <rohc.h>
@@ -43,11 +43,10 @@ int seq ;
 void* new_client(void* arg) {
 
     struct client* client = (struct client*) arg ;
-    int i;
     int alive ;
-    char message[255] ;
-    char s_local[16] ;
-    char s_dest[16] ;
+//    char message[255] ;
+//    char s_local[16] ;
+//    char s_dest[16] ;
 
     int failure = 0;
     int is_umode = 1 ; /* TODO : Handle other mode */
@@ -141,12 +140,13 @@ void* new_client(void* arg) {
                 }
                 failure = tun2raw(comp, tun, client->raw_socket, client->dest_address);
                 gettimeofday(&last, NULL);
+                if(failure) {
 #if STOP_ON_FAILURE
-                if(failure)
                     alive = 0;
-#endif
+#endif          
+                }
             }
-
+  
             /* bridge from RAW to TUN */
             if(
 #if STOP_ON_FAILURE
@@ -163,16 +163,16 @@ void* new_client(void* arg) {
         }
 
         /* flush feedback data if nothing is sent in the tunnel for a moment */
-/*        gettimeofday(&now, NULL);
+        gettimeofday(&now, NULL);
         if(now.tv_sec > last.tv_sec + 1)
         {
-            failure = flush_feedback(comp, client->raw_socket, ;
+/*            failure = flush_feedback(comp, client->raw_socket, ;
             last = now;
 #if STOP_ON_FAILURE
             if(failure)
                 alive = 0;
-#endif
-        }*/
+#endif */
+        }
     }
     while(alive);
 
@@ -180,7 +180,6 @@ void* new_client(void* arg) {
      * Cleaning:
      */
 
-destroy_decomp:
     rohc_free_decompressor(decomp);
 destroy_comp:
     rohc_free_compressor(comp);
@@ -193,7 +192,7 @@ close_raw:
 
 int create_socket(struct in_addr laddr) {
     int sock ;
-    int ret, ret2  ;
+    int ret  ;
     struct sockaddr_in addr;
 
     /* create socket */
@@ -206,10 +205,8 @@ int create_socket(struct in_addr laddr) {
     /* enable IP header creation and try to reuse socket */
     char on = 1; 
     ret  = setsockopt(sock,IPPROTO_IP,IP_HDRINCL,&on,sizeof(on)); 
-    ret2 = setsockopt(sock,SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
-    if (ret < 0 || ret2 < 0) {
-        //perror("Can't set setsocket option (%d|%d)\n", ret, ret2) ;
-        perror("Can't set setsocket option\n") ;
+    if (ret < 0) {
+        perror("Can't set setsocket option hdr incl\n") ;
     }
 
     /* bind the socket on given port */
@@ -224,7 +221,8 @@ int create_socket(struct in_addr laddr) {
                 strerror(errno), errno);
         goto close;
     }
-
+	
+	return sock ;
 close:
     close(sock) ;
 quit:
@@ -437,9 +435,120 @@ error:
 }
 
 
-int read_from_tun(int fd, unsigned char *packet, unsigned int *length) {}
-int write_to_tun(int fd, unsigned char *packet, unsigned int length) {}
+int read_from_tun(int fd, unsigned char *packet, unsigned int *length)
+{
+    int ret;
 
-int read_from_raw(int sock, unsigned char *buffer, unsigned int *length) {}
-int write_to_raw(int sock, struct in_addr raddr, unsigned char *packet, unsigned int length){}
+    ret = read(fd, packet, *length);
+
+    if(ret < 0 || ret > *length)
+    {
+        fprintf(stderr, "read failed: %s (%d)\n", strerror(errno), errno);
+        goto error;
+    }
+
+    *length = ret;
+
+#if DEBUG
+    fprintf(stderr, "read %u bytes on fd %d\n", ret, fd);
+#endif
+
+    return 0;
+
+error:
+    *length = 0;
+    return 1;
+}
+
+
+int write_to_tun(int fd, unsigned char *packet, unsigned int length)
+{
+    int ret;
+
+    ret = write(fd, packet, length);
+    if(ret < 0)
+    {
+        fprintf(stderr, "write failed: %s (%d)\n", strerror(errno), errno);
+        goto error;
+    }
+
+#if DEBUG
+    fprintf(stderr, "%u bytes written on fd %d\n", length, fd);
+#endif
+
+    return 0;
+
+error:
+    return 1;
+}
+
+
+int read_from_raw(int sock, unsigned char *buffer, unsigned int *length)
+{
+    struct sockaddr_in addr;
+    socklen_t addr_len;
+    int ret;
+
+    addr_len = sizeof(struct sockaddr_in);
+    bzero(&addr, addr_len);
+
+    /* read data from the RAW socket */
+    ret = recvfrom(sock, buffer, *length, 0, (struct sockaddr *) &addr,
+                   &addr_len);
+
+    if(ret < 0 || ret > *length)
+    {
+        fprintf(stderr, "recvfrom failed: %s (%d)\n", strerror(errno), errno);
+        goto error;
+    }
+
+    if(ret == 0)
+        goto quit;
+
+    *length = ret;
+
+#if DEBUG
+    fprintf(stderr, "read one %u-byte ROHC packet on UDP sock %d\n",
+            *length - 2, sock);
+#endif
+
+quit:
+    return 0;
+
+error:
+    *length = 0;
+    return 1;
+}
+
+int write_to_raw(int sock, struct in_addr raddr, unsigned char *packet, unsigned int length)
+{
+    struct sockaddr_in addr;
+    int ret;
+
+    bzero(&addr, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = raddr.s_addr;
+
+    /* write the tunnel sequence number at the beginning of packet */
+    packet[0] = (htons(seq) >> 8) & 0xff;
+    packet[1] = htons(seq) & 0xff;
+
+    /* send the data on the RAW socket */
+    ret = sendto(sock, packet, length, 0, (struct sockaddr *) &addr,
+                 sizeof(struct sockaddr_in));
+    if(ret < 0)
+    {
+        fprintf(stderr, "sendto failed: %s (%d)\n", strerror(errno), errno);
+        goto error;
+    }
+
+#if DEBUG
+    fprintf(stderr, "%u bytes written on socket %d\n", length, sock);
+#endif
+
+    return 0;
+
+error:
+    return 1;
+}
 

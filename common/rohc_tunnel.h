@@ -32,3 +32,4 @@ int write_to_tun(int fd, unsigned char *packet, unsigned int length);
 int read_from_raw(int sock, unsigned char *buffer, unsigned int *length);
 int write_to_raw(int sock, struct in_addr raddr, unsigned char *packet, unsigned int length);
 
+int create_socket(struct in_addr laddr) ;

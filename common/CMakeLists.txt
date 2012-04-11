@@ -3,11 +3,11 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/")
 
 find_package (Threads REQUIRED)
 set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
+find_package (ROHC REQUIRED)
+set(LIBS ${LIBS} ${ROHC_LIBRARIES})
 
-include_directories("../common")
-
-add_executable (server server.c)
+add_library (rohctunnel SHARED rohc_tunnel.c)
 
 add_definitions("-Wall")
 
-target_link_libraries(server ${LIBS} rohctunnel ) 
+target_link_libraries(rohctunnel ${LIBS} ) 
