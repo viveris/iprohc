@@ -1,4 +1,4 @@
-/* handle_client.c -- Functions handling a client
+/* rohc_tunnel.c -- Functions handling a tunnel, client or server-side
 
 On a client connection :
  *
@@ -39,10 +39,9 @@ On a client connection :
 
 int seq ;
 
-/* Called in a thread on a new client */
-void* new_client(void* arg) {
+void* new_tunnel(void* arg) {
 
-    struct client* client = (struct client*) arg ;
+    struct tunnel* tunnel = (struct tunnel*) arg ;
     int alive ;
 //    char message[255] ;
 //    char s_local[16] ;
@@ -68,8 +67,8 @@ void* new_client(void* arg) {
        (thread, local_address, dest_address, tun, fake_tun) */
 
     /*  Create raw socket */
-    client->raw_socket = create_socket(client->dest_address) ;
-    if (client->raw_socket < 0) {
+    tunnel->raw_socket = create_socket(tunnel->dest_address) ;
+    if (tunnel->raw_socket < 0) {
         perror("Unable to open raw socket") ;
         /* TODO : Handle error */
     }
@@ -111,15 +110,16 @@ void* new_client(void* arg) {
 
     /* initialize the last time we sent a packet */
     gettimeofday(&last, NULL);
-
+	alive = 1 ;
     do
     {
+        printf("pipo\n") ;
         /* poll the read sockets/file descriptors */
         FD_ZERO(&readfds);
-        FD_SET(client->tun, &readfds);
-        FD_SET(client->raw_socket, &readfds);
+        FD_SET(tunnel->tun, &readfds);
+        FD_SET(tunnel->raw_socket, &readfds);
 
-        ret = pselect(max(client->tun, client->raw_socket) + 1, &readfds, NULL, NULL, &timeout, &sigmask);
+        ret = pselect(max(tunnel->tun, tunnel->raw_socket) + 1, &readfds, NULL, NULL, &timeout, &sigmask);
         if(ret < 0)
         {
             fprintf(stderr, "pselect failed: %s (%d)\n", strerror(errno), errno);
@@ -129,16 +129,16 @@ void* new_client(void* arg) {
         else if(ret > 0)
         {
             /* bridge from TUN to RAW */
-            if(FD_ISSET(client->tun, &readfds))
+            if(FD_ISSET(tunnel->tun, &readfds))
             {
                 /* We read the fake TUN device if we are on a server */
-                if (client->fake_tun == NULL) {
+                if (tunnel->fake_tun == NULL) {
                     /* No fake_tun, we use the real TUN */
-                    tun = client->tun ;
+                    tun = tunnel->tun ;
                 } else {
-                    tun = client->fake_tun[0] ; 
+                    tun = tunnel->fake_tun[0] ; 
                 }
-                failure = tun2raw(comp, tun, client->raw_socket, client->dest_address);
+                failure = tun2raw(comp, tun, tunnel->raw_socket, tunnel->dest_address);
                 gettimeofday(&last, NULL);
                 if(failure) {
 #if STOP_ON_FAILURE
@@ -152,9 +152,9 @@ void* new_client(void* arg) {
 #if STOP_ON_FAILURE
                !failure &&
 #endif
-               FD_ISSET(client->raw_socket, &readfds))
+               FD_ISSET(tunnel->raw_socket, &readfds))
             {
-                failure = raw2tun(decomp, client->raw_socket, client->tun);
+                failure = raw2tun(decomp, tunnel->raw_socket, tunnel->tun);
 #if STOP_ON_FAILURE
                 if(failure)
                     alive = 0;
@@ -166,7 +166,7 @@ void* new_client(void* arg) {
         gettimeofday(&now, NULL);
         if(now.tv_sec > last.tv_sec + 1)
         {
-/*            failure = flush_feedback(comp, client->raw_socket, ;
+/*            failure = flush_feedback(comp, tunnel->raw_socket, ;
             last = now;
 #if STOP_ON_FAILURE
             if(failure)
@@ -185,7 +185,7 @@ destroy_comp:
     rohc_free_compressor(comp);
 
 close_raw:
-    close(client->raw_socket) ;
+    close(tunnel->raw_socket) ;
     return NULL ;
 }
 

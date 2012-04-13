@@ -38,8 +38,10 @@ Client are described by a structure containing its raw socket and its VPN addres
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include <syslog.h>
 
 #include "rohc_tunnel.h"
+
 
 // XXX : Config ?
 #define MAX_CLIENTS 50
@@ -47,11 +49,15 @@ Client are described by a structure containing its raw socket and its VPN addres
 /// The maximal size of data that can be received on the virtual interface
 #define TUNTAP_BUFSIZE 1518
 
+#define MAX_LOG LOG_INFO
+#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
 /* Create TCP socket for communication with clients */
 int create_tcp_socket(uint32_t address, uint16_t port) {
 
 	int sock = socket(AF_INET, SOCK_STREAM, 0) ;
+	char on = 1; 
+	setsockopt(sock,SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
 
 	struct	sockaddr_in servaddr ;
 	servaddr.sin_family	  = AF_INET;
@@ -75,7 +81,7 @@ int create_tun(char *name)
 	/* open a file descriptor on the kernel interface */
 	if((fd = open("/dev/net/tun", O_RDWR)) < 0)
 	{
-		fprintf(stderr, "failed to open /dev/net/tun: %s (%d)\n",
+		trace(LOG_ERR, "failed to open /dev/net/tun: %s (%d)\n",
 				strerror(errno), errno);
 		return fd;
 	}
@@ -91,7 +97,7 @@ int create_tun(char *name)
 	/* create the TUN interface */
 	if((err = ioctl(fd, TUNSETIFF, (void *) &ifr)) < 0)
 	{
-		fprintf(stderr, "failed to ioctl(TUNSETIFF) on /dev/net/tun: %s (%d)\n",
+		trace(LOG_ERR, "failed to ioctl(TUNSETIFF) on /dev/net/tun: %s (%d)\n",
 				strerror(errno), errno);
 		close(fd);
 		return err;
@@ -100,27 +106,50 @@ int create_tun(char *name)
 	return fd;
 }
 
+struct route_args {
+	int tun ;
+	struct tunnel** clients ;
+} ;
+
 /* Thread that will be called to monitor tun and route */
 void* route(void* arg)
 {
+	/* Getting args */
+	int tun = ((struct route_args *)arg)->tun ;
+	struct tunnel** clients = ((struct route_args *)arg)->clients ;
+	int i ;
+
 	int ret;
-	int tun = *((int *)arg) ;
     static unsigned char buffer[TUNTAP_BUFSIZE];
     unsigned int buffer_len = TUNTAP_BUFSIZE;
 	struct in_addr addr;
 
 	/// XXX : uint32
 	unsigned int* dest_ip ;
+	
+	trace(LOG_INFO, "Initializing routing thread\n") ;
 
 	while ((ret = read(tun, buffer, buffer_len))) {
 		if(ret < 0 || ret > buffer_len)
 		{
-			fprintf(stderr, "read failed: %s (%d)\n", strerror(errno), errno);
+			trace(LOG_ERR, "read failed: %s (%d)\n", strerror(errno), errno);
 		}
 
-		dest_ip = (unsigned int*) &buffer[12];
+		trace(LOG_DEBUG, "Read %d bytes\n", ret) ;
+		dest_ip = (unsigned int*) &buffer[20];
 		addr.s_addr = *dest_ip ;
-		printf("Packet destination : %s", inet_ntoa(addr)) ;
+		trace(LOG_DEBUG, "Packet destination : %s\n", inet_ntoa(addr)) ;
+		for (i=0; i < MAX_CLIENTS; i++) {
+			if (clients[i] != NULL) {
+				trace(LOG_DEBUG, "Checking %d against %d\n", addr.s_addr, clients[i]->local_address.s_addr) ;
+
+				if (addr.s_addr == clients[i]->local_address.s_addr) {
+					write(clients[i]->fake_tun[1], buffer, ret) ;
+					break ;
+				}
+			}
+		}
+
 	}
 
 	return NULL ;
@@ -129,20 +158,26 @@ void* route(void* arg)
 
 int main(int argc, char *argv[]) {
 
-	struct client clients[MAX_CLIENTS] ;
-//	int ret ;
+	struct tunnel** clients = calloc(MAX_CLIENTS, sizeof(struct tunnel*)) ;
 	int i = 0 ;
 	struct	sockaddr_in src_addr;
 	socklen_t src_addr_len = sizeof(src_addr);
 	pthread_t route_thread; 
 
+	/* Initialize logger */
+	openlog("rohc_ipip_server", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
+
+
 	/* TODO: Check return */
 	int socket = create_tcp_socket(INADDR_ANY, 1989) ;
-	char on = 1; 
-	setsockopt(socket,SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
 	int tun = create_tun("tun_ipip") ;
+	printf("Set ip\n") ;
+	set_ip("tun_ipip", "192.168.99.1") ;
 	/* Routing thread */
-	pthread_create(&route_thread, NULL, route, (void*)&tun) ;
+	struct route_args route_args ;
+	route_args.tun = tun ;
+	route_args.clients = clients ;
+	pthread_create(&route_thread, NULL, route, (void*)&route_args) ;
 
 //	char buffer[255] ;
 	while (1) {
@@ -150,26 +185,30 @@ int main(int argc, char *argv[]) {
 		if (conn < 0) {
 			perror("Fail accept\n") ;
 		}
-		printf("Connection from %s (%d)\n", inet_ntoa(src_addr.sin_addr), src_addr.sin_addr.s_addr) ;
+		trace(LOG_INFO, "Connection from %s (%d)\n", inet_ntoa(src_addr.sin_addr), src_addr.sin_addr.s_addr) ;
 
-		/* client parameters */
+		/* client creation parameters */
+		trace(LOG_DEBUG, "Creation of client") ;
+		clients[i] = malloc(sizeof(struct tunnel)) ;
 
 		/* dest_addr */
-		clients[i].dest_address  = src_addr.sin_addr ;
+		clients[i]->dest_address  = src_addr.sin_addr ;
 		
 		/* local_addr */
 		struct in_addr local;
-		local.s_addr = htonl(inet_network("192.168.1.23")) ;
-		clients[i].local_address = local ;
+		local.s_addr = htonl(inet_network("192.168.99.23")) ;
+		clients[i]->local_address = local ;
 		
 		/* set tun */
-		clients[i].tun = tun ; /* real tun device */
+		clients[i]->tun = tun ; /* real tun device */
 		/* TODO: Check return */
-		pipe(clients[i].fake_tun) ;
+		pipe(clients[i]->fake_tun) ;
  
 		/* Go thread, go ! */
-		pthread_create(&(clients[i].thread), NULL, new_client, (void*)&clients[i]) ;
+		pthread_create(&(clients[i]->thread), NULL, new_tunnel, (void*)clients[i]) ;
 
 		i++ ;
 	}
+
+	return 0 ;
 }

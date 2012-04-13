@@ -1,4 +1,4 @@
-/* handle_client.h -- Functions handling a client
+/* rohc_tunnel.h -- Functions handling a tunnel, client or server-side
 */
 
 #include <arpa/inet.h>
@@ -8,8 +8,8 @@
 #include <rohc_comp.h>
 #include <rohc_decomp.h>
 
-/* Stucture defining a client */
-struct client {
+/* Stucture defining a tunnel */
+struct tunnel {
     struct in_addr local_address;
     struct in_addr dest_address ;
     int      raw_socket   ;   
@@ -19,8 +19,8 @@ struct client {
     int fake_tun[2] ; /* Fake TUN device for server side */
 } ;
 
-/* Called in a thread on a new client */
-void* new_client(void* arg) ;
+/* Called in a thread on a new tunnel */
+void* new_tunnel(void* arg) ;
 
 
 int tun2raw(struct rohc_comp *comp, int from, int to, struct in_addr raddr) ;
