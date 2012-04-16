@@ -16,7 +16,7 @@
 #include <syslog.h>
 
 #include "rohc_tunnel.h"
-
+#include "tun_helpers.h"
 
 #define TUNTAP_BUFSIZE 1518
 
