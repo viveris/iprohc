@@ -41,6 +41,7 @@ Client are described by a structure containing its raw socket and its VPN addres
 #include <syslog.h>
 
 #include "rohc_tunnel.h"
+#include "tun_helpers.h"
 
 
 // XXX : Config ?
@@ -49,7 +50,7 @@ Client are described by a structure containing its raw socket and its VPN addres
 /// The maximal size of data that can be received on the virtual interface
 #define TUNTAP_BUFSIZE 1518
 
-#define MAX_LOG LOG_INFO
+#define MAX_LOG LOG_DEBUG
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
 /* Create TCP socket for communication with clients */
@@ -71,39 +72,6 @@ int create_tcp_socket(uint32_t address, uint16_t port) {
 		perror("Listen failed") ;
 
 	return sock ;
-}
-
-int create_tun(char *name)
-{
-	struct ifreq ifr;
-	int fd, err;
-
-	/* open a file descriptor on the kernel interface */
-	if((fd = open("/dev/net/tun", O_RDWR)) < 0)
-	{
-		trace(LOG_ERR, "failed to open /dev/net/tun: %s (%d)\n",
-				strerror(errno), errno);
-		return fd;
-	}
-
-	/* flags: IFF_TUN   - TUN device (no Ethernet headers)
-	 *		IFF_TAP   - TAP device
-	 *		IFF_NO_PI - Do not provide packet information */
-	bzero(&ifr, sizeof(ifr));
-	strncpy(ifr.ifr_name, name, IFNAMSIZ);
-	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
-	ifr.ifr_flags = IFF_TUN;
-
-	/* create the TUN interface */
-	if((err = ioctl(fd, TUNSETIFF, (void *) &ifr)) < 0)
-	{
-		trace(LOG_ERR, "failed to ioctl(TUNSETIFF) on /dev/net/tun: %s (%d)\n",
-				strerror(errno), errno);
-		close(fd);
-		return err;
-	}
-
-	return fd;
 }
 
 struct route_args {
@@ -170,9 +138,14 @@ int main(int argc, char *argv[]) {
 
 	/* TODO: Check return */
 	int socket = create_tcp_socket(INADDR_ANY, 1989) ;
-	int tun = create_tun("tun_ipip") ;
-	printf("Set ip\n") ;
-	set_ip("tun_ipip", "192.168.99.1") ;
+	int tun ;
+	int tun_itf_id ;
+
+	/* TUN create */
+	tun = create_tun("tun_ipip", &tun_itf_id) ;
+	printf("itf_id : %d\n", tun_itf_id) ;
+	set_ip4(tun_itf_id, htonl(inet_network("192.168.99.1")), 24) ;
+
 	/* Routing thread */
 	struct route_args route_args ;
 	route_args.tun = tun ;

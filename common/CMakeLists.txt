@@ -10,4 +10,4 @@ add_library (rohctunnel SHARED rohc_tunnel.c tun_helpers.c)
 
 add_definitions("-Wall")
 
-target_link_libraries(rohctunnel ${LIBS} ) 
+target_link_libraries(rohctunnel ${LIBS} netlink) 

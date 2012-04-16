@@ -24,6 +24,13 @@ On a client connection :
 #include <rohc_comp.h>
 #include <rohc_decomp.h>
 
+/* Initialize logger */
+#include <syslog.h>
+#define MAX_LOG LOG_INFO
+#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
+
+
+
 /*
  * Macros & definitions:
  */
@@ -43,9 +50,6 @@ void* new_tunnel(void* arg) {
 
     struct tunnel* tunnel = (struct tunnel*) arg ;
     int alive ;
-//    char message[255] ;
-//    char s_local[16] ;
-//    char s_dest[16] ;
 
     int failure = 0;
     int is_umode = 1 ; /* TODO : Handle other mode */
@@ -67,7 +71,7 @@ void* new_tunnel(void* arg) {
        (thread, local_address, dest_address, tun, fake_tun) */
 
     /*  Create raw socket */
-    tunnel->raw_socket = create_socket(tunnel->dest_address) ;
+    tunnel->raw_socket = create_socket() ;
     if (tunnel->raw_socket < 0) {
         perror("Unable to open raw socket") ;
         /* TODO : Handle error */
@@ -190,10 +194,9 @@ close_raw:
 }
 
 
-int create_socket(struct in_addr laddr) {
+int create_socket() {
     int sock ;
     int ret  ;
-    struct sockaddr_in addr;
 
     /* create socket */
     sock = socket(AF_INET, SOCK_RAW, IPPROTO_IPIP) ;
@@ -209,22 +212,8 @@ int create_socket(struct in_addr laddr) {
         perror("Can't set setsocket option hdr incl\n") ;
     }
 
-    /* bind the socket on given port */
-    bzero(&addr, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr = laddr;
-
-    ret = bind(sock, (struct sockaddr *) &addr, sizeof(addr));
-    if(ret < 0)
-    {
-        fprintf(stderr, "cannot bind to RAW socket: %s (%d)\n",
-                strerror(errno), errno);
-        goto close;
-    }
-	
 	return sock ;
-close:
-    close(sock) ;
+
 quit:
     return -1 ;
 }
