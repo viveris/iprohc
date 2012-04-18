@@ -133,14 +133,23 @@ void* new_tunnel(void* arg) {
     /* initialize the last time we sent a packet */
     gettimeofday(&last, NULL);
 	alive = 1 ;
+
+	/* We read the fake TUN device if we are on a server */
+	if (tunnel->fake_tun[0] == -1 && tunnel->fake_tun[1] == -1) {
+		/* No fake_tun, we use the real TUN */
+		tun = tunnel->tun ;
+	} else {
+		tun = tunnel->fake_tun[0] ; 
+	}
+
     do
     {
         /* poll the read sockets/file descriptors */
         FD_ZERO(&readfds);
-        FD_SET(tunnel->tun, &readfds);
+        FD_SET(tun, &readfds);
         FD_SET(tunnel->raw_socket, &readfds);
 
-        ret = pselect(max(tunnel->tun, tunnel->raw_socket) + 1, &readfds, NULL, NULL, &timeout, &sigmask);
+        ret = pselect(max(tun, tunnel->raw_socket) + 1, &readfds, NULL, NULL, &timeout, &sigmask);
         if(ret < 0)
         {
             trace(LOG_ERR, "pselect failed: %s (%d)\n", strerror(errno), errno);
@@ -151,18 +160,9 @@ void* new_tunnel(void* arg) {
         {
             trace(LOG_DEBUG, "Packet received...\n") ;
             /* bridge from TUN to RAW */
-            if(FD_ISSET(tunnel->tun, &readfds))
+            if(FD_ISSET(tun, &readfds))
             {
-                trace(LOG_DEBUG, "...from tun...\n") ;
-                /* We read the fake TUN device if we are on a server */
-                if (tunnel->fake_tun[0] == -1 && tunnel->fake_tun[1] == -1) {
-                    /* No fake_tun, we use the real TUN */
-                    trace(LOG_DEBUG, "...which is a true tun\n") ;
-                    tun = tunnel->tun ;
-                } else {
-                    trace(LOG_DEBUG, "...which is a fake tun\n") ;
-                    tun = tunnel->fake_tun[0] ; 
-                }
+                trace(LOG_DEBUG, "...from tun\n") ;
                 trace(LOG_DEBUG, "Tunnel dest : %d\n", tunnel->dest_address.s_addr) ;
                 failure = tun2raw(comp, tun, tunnel->raw_socket, tunnel->dest_address);
                 gettimeofday(&last, NULL);
