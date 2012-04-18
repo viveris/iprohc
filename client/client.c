@@ -53,10 +53,13 @@ int main(int argc, char *argv[]) {
 	openlog("rohc_ipip_client", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
 
 	/* Create socket to neogotiate parameters */
-    serv_addr = htonl(inet_network("10.0.2.211")) ;
+    serv_addr = htonl(inet_network("10.0.2.212")) ;
 	socket = create_tcp_socket(serv_addr, 1989) ;
-	printf("Dummy usage of socket %d\n", socket) ;
-	
+	if (socket < 0) {
+		perror("Can't open socket") ;
+		exit(1) ;
+	}	
+
 	/* Tun creation */
 	tun = create_tun("tun42", &tun_itf_id) ;
 	set_ip4(tun_itf_id, 392407232, 24) ; /* 192.168.99.23/24 */
@@ -74,8 +77,8 @@ int main(int argc, char *argv[]) {
 
 	/* set tun */
 	tunnel.tun = tun ; /* real tun device */
-	tunnel.fake_tun[0] = 0 ;
-	tunnel.fake_tun[1] = 0 ;
+	tunnel.fake_tun[0] = -1 ;
+	tunnel.fake_tun[1] = -1 ;
  
 	/* Go go go ! */
 	new_tunnel(&tunnel) ;

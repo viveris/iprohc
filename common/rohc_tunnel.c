@@ -44,7 +44,7 @@ On a client connection :
 /// The maximal size of a ROHC packet
 #define MAX_ROHC_SIZE   (5 * 1024)
 
-int seq ;
+void dump_packet(char *descr, unsigned char *packet, unsigned int length) ;
 
 void* new_tunnel(void* arg) {
 
@@ -99,9 +99,6 @@ void* new_tunnel(void* arg) {
         goto destroy_comp;
     }
 
-    /* init the tunnel sequence number */
-    seq = 0;
-
     /* poll network interfaces each second */
     timeout.tv_sec = 1;
     timeout.tv_nsec = 0;
@@ -117,7 +114,6 @@ void* new_tunnel(void* arg) {
 	alive = 1 ;
     do
     {
-        printf("pipo\n") ;
         /* poll the read sockets/file descriptors */
         FD_ZERO(&readfds);
         FD_SET(tunnel->tun, &readfds);
@@ -126,43 +122,44 @@ void* new_tunnel(void* arg) {
         ret = pselect(max(tunnel->tun, tunnel->raw_socket) + 1, &readfds, NULL, NULL, &timeout, &sigmask);
         if(ret < 0)
         {
-            fprintf(stderr, "pselect failed: %s (%d)\n", strerror(errno), errno);
+            trace(LOG_ERR, "pselect failed: %s (%d)\n", strerror(errno), errno);
             failure = 1;
             alive = 0;
         }
         else if(ret > 0)
         {
+            trace(LOG_DEBUG, "Packet received...\n") ;
             /* bridge from TUN to RAW */
             if(FD_ISSET(tunnel->tun, &readfds))
             {
+                trace(LOG_DEBUG, "...from tun...\n") ;
                 /* We read the fake TUN device if we are on a server */
-                if (tunnel->fake_tun == NULL) {
+                if (tunnel->fake_tun[0] == -1 && tunnel->fake_tun[1] == -1) {
                     /* No fake_tun, we use the real TUN */
+                    trace(LOG_DEBUG, "...which is a true tun\n") ;
                     tun = tunnel->tun ;
                 } else {
+                    trace(LOG_DEBUG, "...which is a fake tun\n") ;
                     tun = tunnel->fake_tun[0] ; 
                 }
+                trace(LOG_DEBUG, "Tunnel dest : %d\n", tunnel->dest_address.s_addr) ;
                 failure = tun2raw(comp, tun, tunnel->raw_socket, tunnel->dest_address);
                 gettimeofday(&last, NULL);
                 if(failure) {
-#if STOP_ON_FAILURE
+                    trace(LOG_ERR, "tun2raw failed\n") ;
                     alive = 0;
-#endif          
                 }
             }
   
             /* bridge from RAW to TUN */
-            if(
-#if STOP_ON_FAILURE
-               !failure &&
-#endif
-               FD_ISSET(tunnel->raw_socket, &readfds))
+            if(FD_ISSET(tunnel->raw_socket, &readfds))
             {
+                trace(LOG_DEBUG, "...from raw\n") ;
                 failure = raw2tun(decomp, tunnel->raw_socket, tunnel->tun);
-#if STOP_ON_FAILURE
-                if(failure)
+                if(failure) {
+                    trace(LOG_ERR, "raw2tun failed\n") ;
                     alive = 0;
-#endif
+                }
             }
         }
 
@@ -170,6 +167,7 @@ void* new_tunnel(void* arg) {
         gettimeofday(&now, NULL);
         if(now.tv_sec > last.tv_sec + 1)
         {
+            trace(LOG_INFO, "It's been a while since I sent my last packet") ;
 /*            failure = flush_feedback(comp, tunnel->raw_socket, ;
             last = now;
 #if STOP_ON_FAILURE
@@ -196,20 +194,12 @@ close_raw:
 
 int create_socket() {
     int sock ;
-    int ret  ;
 
     /* create socket */
     sock = socket(AF_INET, SOCK_RAW, IPPROTO_IPIP) ;
     if (sock < 0) {
         perror("Can't open RAW socket\n") ;
         goto quit ;
-    }
-
-    /* enable IP header creation and try to reuse socket */
-    char on = 1; 
-    ret  = setsockopt(sock,IPPROTO_IP,IP_HDRINCL,&on,sizeof(on)); 
-    if (ret < 0) {
-        perror("Can't set setsocket option hdr incl\n") ;
     }
 
 	return sock ;
@@ -235,7 +225,7 @@ int tun2raw(struct rohc_comp *comp,
             struct in_addr raddr)
 {
 	static unsigned char buffer[TUNTAP_BUFSIZE];
-	static unsigned char rohc_packet[2 + MAX_ROHC_SIZE];
+	static unsigned char rohc_packet[MAX_ROHC_SIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
 	unsigned char *packet;
 	unsigned int packet_len;
@@ -246,9 +236,10 @@ int tun2raw(struct rohc_comp *comp,
 	ret = read_from_tun(from, buffer, &buffer_len);
 	if(ret != 0)
 	{
-		fprintf(stderr, "read_from_tun failed\n");
+		trace(LOG_ERR, "read_from_tun failed\n");
 		goto error;
 	}
+	dump_packet("Read from tun : ", buffer, buffer_len) ;
 
 	if(buffer_len == 0)
 		goto quit;
@@ -256,26 +247,22 @@ int tun2raw(struct rohc_comp *comp,
 	packet = &buffer[4];
 	packet_len = buffer_len - 4;
 
-	/* increment the tunnel sequence number */
-	seq++;
-
 	/* compress the IP packet */
-#if DEBUG
-	fprintf(stderr, "compress packet #%u (%u bytes)\n", seq, packet_len);
-#endif
+	trace(LOG_DEBUG, "compress packet (%u bytes)\n", packet_len);
 	rohc_size = rohc_compress(comp, packet, packet_len,
-	                          rohc_packet + 2, MAX_ROHC_SIZE);
+	                          rohc_packet, MAX_ROHC_SIZE);
 	if(rohc_size <= 0)
 	{
-		fprintf(stderr, "compression of packet #%u failed\n", seq);
+		trace(LOG_ERR, "compression of packet failed\n");
 		goto error;
 	}
 
-	/* write the ROHC packet in the UDP tunnel if not dropped */
-    ret = write_to_raw(to, raddr, rohc_packet, 2 + rohc_size);
+	dump_packet("Packet ROHC : ", rohc_packet, rohc_size) ;
+	/* write the ROHC packet in the RAW tunnel */
+    ret = write_to_raw(to, raddr, rohc_packet, rohc_size);
     if(ret != 0)
     {
-        fprintf(stderr, "write_to_raw failed\n");
+        trace(LOG_ERR, "write_to_raw failed\n");
         goto error;
     }
 
@@ -287,7 +274,7 @@ error:
 
 
 /**
- * @brief Forward ROHC packets received on the UDP socket to the TUN interface
+ * @brief Forward ROHC packets received on the RAW socket to the TUN interface
  *
  * The function decompresses the ROHC packets thanks to the ROHC library before
  * sending them on the TUN interface.
@@ -299,67 +286,28 @@ error:
  */
 int raw2tun(struct rohc_decomp *decomp, int from, int to)
 {
-	static unsigned char packet[2 + MAX_ROHC_SIZE];
+	static unsigned char packet[MAX_ROHC_SIZE];
 	static unsigned char decomp_packet[MAX_ROHC_SIZE + 4];
-	unsigned int packet_len = TUNTAP_BUFSIZE;
+	unsigned int packet_len = MAX_ROHC_SIZE;
 	int decomp_size;
 	int ret;
-	static unsigned int max_seq = 0;
-	unsigned int new_seq;
-	static unsigned long lost_packets = 0;
 
-#if DEBUG
-	fprintf(stderr, "\n");
-#endif
-
-	/* read the sequence number + ROHC packet from the UDP tunnel */
+	/* read the sequence number + ROHC packet from the RAW tunnel */
 	ret = read_from_raw(from, packet, &packet_len);
 	if(ret != 0)
 	{
-		fprintf(stderr, "read_from_raw failed\n");
+		trace(LOG_ERR, "read_from_raw failed\n");
 		goto error;
 	}
 
-	if(packet_len <= 2)
+	if(packet_len <= 20) {
+		trace(LOG_ERR, "Bad packet received\n") ;
 		goto quit;
-
-	/* find out if some ROHC packets were lost between compressor and
-	 * decompressor (use the tunnel sequence number) */
-	new_seq = ntohs((packet[0] << 8) + packet[1]);
-
-	if(new_seq < max_seq)
-	{
-		/* some packets were reordered, the packet was wrongly
-		 * considered as lost */
-		fprintf(stderr, "ROHC packet with seq = %u received after seq = %u\n",
-		        new_seq, max_seq);
-		lost_packets--;
 	}
-	else if(new_seq > max_seq + 1)
-	{
-		/* there is a gap between sequence numbers, some packets were lost */
-		fprintf(stderr, "ROHC packet(s) probably lost between "
-		        "seq = %u and seq = %u\n", max_seq, new_seq);
-		lost_packets += new_seq - (max_seq + 1);
-	}
-	else if(new_seq == max_seq)
-	{
-		/* should not happen */
-		fprintf(stderr, "ROHC packet #%u duplicated\n", new_seq);
-	}
-	
-	if(new_seq > max_seq)
-	{
-		/* update max sequence numbers */
-		max_seq = new_seq;
-	}
-
+	dump_packet("Decompressing : ", packet + 20, packet_len - 20) ;
 	/* decompress the ROHC packet */
-#if DEBUG
-	fprintf(stderr, "decompress ROHC packet #%u (%u bytes)\n",
-	        new_seq, packet_len - 2);
-#endif
-	decomp_size = rohc_decompress(decomp, packet + 2, packet_len - 2,
+	fprintf(stderr, "decompress ROHC packet (%u bytes)\n", packet_len - 20);
+	decomp_size = rohc_decompress(decomp, packet + 20, packet_len - 20,
 	                              &decomp_packet[4], MAX_ROHC_SIZE);
 	if(decomp_size <= 0)
 	{
@@ -370,7 +318,7 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to)
 		}
 		else
 		{
-			fprintf(stderr, "decompression of packet #%u failed\n", new_seq);
+			trace(LOG_ERR, "decompression of packet failed\n");
 			goto drop;
 		}
 	}
@@ -402,23 +350,10 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to)
 		goto drop;
 	}
 
-//	/* print packet statistics */
-//	ret = print_decomp_stats(decomp, new_seq, lost_packets);
-//	if(ret != 0)
-//	{
-//		fprintf(stderr, "cannot display stats (print_decomp_stats failed)\n");
-//		goto drop;
-//	}
-
+drop:
 quit:
 	return 0;
 
-drop:
-//	/* print packet statistics */
-//	ret = print_decomp_stats(decomp, new_seq, lost_packets);
-//	if(ret != 0)
-//		fprintf(stderr, "cannot display stats (print_decomp_stats failed)\n");
-//
 error:
 	return 1;
 }
@@ -429,18 +364,15 @@ int read_from_tun(int fd, unsigned char *packet, unsigned int *length)
     int ret;
 
     ret = read(fd, packet, *length);
-
     if(ret < 0 || ret > *length)
     {
-        fprintf(stderr, "read failed: %s (%d)\n", strerror(errno), errno);
+        trace(LOG_ERR, "read failed: %s (%d)\n", strerror(errno), errno);
         goto error;
     }
 
     *length = ret;
 
-#if DEBUG
-    fprintf(stderr, "read %u bytes on fd %d\n", ret, fd);
-#endif
+    trace(LOG_DEBUG, "read %u bytes on tun fd %d\n", ret, fd);
 
     return 0;
 
@@ -457,13 +389,11 @@ int write_to_tun(int fd, unsigned char *packet, unsigned int length)
     ret = write(fd, packet, length);
     if(ret < 0)
     {
-        fprintf(stderr, "write failed: %s (%d)\n", strerror(errno), errno);
+        trace(LOG_ERR, "write failed: %s (%d)\n", strerror(errno), errno);
         goto error;
     }
 
-#if DEBUG
-    fprintf(stderr, "%u bytes written on fd %d\n", length, fd);
-#endif
+    trace(LOG_DEBUG, "%u bytes written on fd %d\n", length, fd);
 
     return 0;
 
@@ -487,19 +417,18 @@ int read_from_raw(int sock, unsigned char *buffer, unsigned int *length)
 
     if(ret < 0 || ret > *length)
     {
-        fprintf(stderr, "recvfrom failed: %s (%d)\n", strerror(errno), errno);
+        trace(LOG_ERR, "recvfrom failed: %s (%d)\n", strerror(errno), errno);
         goto error;
     }
 
-    if(ret == 0)
+    if(ret == 0) {
+		trace(LOG_ERR, "recvfrom failed") ;
         goto quit;
+    }
 
     *length = ret;
 
-#if DEBUG
-    fprintf(stderr, "read one %u-byte ROHC packet on UDP sock %d\n",
-            *length - 2, sock);
-#endif
+    trace(LOG_DEBUG, "read one %u-byte ROHC packet on RAW sock\n",*length);
 
 quit:
     return 0;
@@ -518,22 +447,16 @@ int write_to_raw(int sock, struct in_addr raddr, unsigned char *packet, unsigned
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = raddr.s_addr;
 
-    /* write the tunnel sequence number at the beginning of packet */
-    packet[0] = (htons(seq) >> 8) & 0xff;
-    packet[1] = htons(seq) & 0xff;
-
     /* send the data on the RAW socket */
+    trace(LOG_DEBUG, "Sending on raw socket to %s\n",  inet_ntoa(raddr)) ;
     ret = sendto(sock, packet, length, 0, (struct sockaddr *) &addr,
                  sizeof(struct sockaddr_in));
     if(ret < 0)
     {
-        fprintf(stderr, "sendto failed: %s (%d)\n", strerror(errno), errno);
+        trace(LOG_ERR, "sendto failed: %s (%d)\n", strerror(errno), errno);
         goto error;
     }
-
-#if DEBUG
-    fprintf(stderr, "%u bytes written on socket %d\n", length, sock);
-#endif
+    trace(LOG_DEBUG, "%u bytes written on socket %d\n", length, sock);
 
     return 0;
 
@@ -541,3 +464,30 @@ error:
     return 1;
 }
 
+/**
+ * @brief Display the content of a IP or ROHC packet
+ *
+ * This function is used for debugging purposes.
+ *
+ * @param descr   A string that describes the packet
+ * @param packet  The packet to display
+ * @param length  The length of the packet to display
+ */
+void dump_packet(char *descr, unsigned char *packet, unsigned int length)
+{
+    unsigned int i;
+
+    fprintf(stderr, "-------------------------------\n");
+    fprintf(stderr, "%s (%u bytes):\n", descr, length);
+    for(i = 0; i < length; i++)
+    {
+        if(i > 0 && (i % 16) == 0)
+            fprintf(stderr, "\n");
+        else if(i > 0 && (i % 8) == 0)
+            fprintf(stderr, "\t");
+
+        fprintf(stderr, "%.2x ", packet[i]);
+    }
+    fprintf(stderr, "\n");
+    fprintf(stderr, "-------------------------------\n");
+}

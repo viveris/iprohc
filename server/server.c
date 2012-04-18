@@ -57,7 +57,7 @@ Client are described by a structure containing its raw socket and its VPN addres
 int create_tcp_socket(uint32_t address, uint16_t port) {
 
 	int sock = socket(AF_INET, SOCK_STREAM, 0) ;
-	char on = 1; 
+	int on = 1; 
 	setsockopt(sock,SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
 
 	struct	sockaddr_in servaddr ;
@@ -126,35 +126,43 @@ void* route(void* arg)
 
 int main(int argc, char *argv[]) {
 
-	struct tunnel** clients = calloc(MAX_CLIENTS, sizeof(struct tunnel*)) ;
-	int i = 0 ;
+	int i ;
+
+	int socket ;
+
+	int tun ;
+	int tun_itf_id ;
+
+	int conn ;
 	struct	sockaddr_in src_addr;
 	socklen_t src_addr_len = sizeof(src_addr);
+	struct in_addr local;
+
+	struct route_args route_args ;
 	pthread_t route_thread; 
+
+	struct tunnel** clients = calloc(MAX_CLIENTS, sizeof(struct tunnel*)) ;
 
 	/* Initialize logger */
 	openlog("rohc_ipip_server", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
 
 
-	/* TODO: Check return */
-	int socket = create_tcp_socket(INADDR_ANY, 1989) ;
-	int tun ;
-	int tun_itf_id ;
+	if ((socket = create_tcp_socket(INADDR_ANY, 1989)) < 0) {
+		perror("Can't open TCP socket") ;
+		exit(1) ;
+	}
 
 	/* TUN create */
 	tun = create_tun("tun_ipip", &tun_itf_id) ;
-	printf("itf_id : %d\n", tun_itf_id) ;
 	set_ip4(tun_itf_id, htonl(inet_network("192.168.99.1")), 24) ;
 
 	/* Routing thread */
-	struct route_args route_args ;
 	route_args.tun = tun ;
 	route_args.clients = clients ;
 	pthread_create(&route_thread, NULL, route, (void*)&route_args) ;
 
-//	char buffer[255] ;
 	while (1) {
-		int conn = accept(socket, (struct sockaddr*)&src_addr, &src_addr_len) ;
+		conn = accept(socket, (struct sockaddr*)&src_addr, &src_addr_len) ;
 		if (conn < 0) {
 			perror("Fail accept\n") ;
 		}
@@ -168,14 +176,16 @@ int main(int argc, char *argv[]) {
 		clients[i]->dest_address  = src_addr.sin_addr ;
 		
 		/* local_addr */
-		struct in_addr local;
 		local.s_addr = htonl(inet_network("192.168.99.23")) ;
 		clients[i]->local_address = local ;
 		
 		/* set tun */
 		clients[i]->tun = tun ; /* real tun device */
-		/* TODO: Check return */
-		pipe(clients[i]->fake_tun) ;
+		if (pipe(clients[i]->fake_tun) < 0) {
+			perror("Can't open pipe for tun") ;
+			/* TODO  : Flush */
+			break ;
+		}
  
 		/* Go thread, go ! */
 		pthread_create(&(clients[i]->thread), NULL, new_tunnel, (void*)clients[i]) ;
