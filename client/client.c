@@ -39,26 +39,21 @@ int create_tcp_socket(uint32_t address, uint16_t port) {
 	return sock ;
 }
 
-int main(int argc, char *argv[]) {
+int client_connect(int socket, struct tunnel_params* tp)
+{
+	printf("Hello\n") ;
+	send(socket, "KIKOOO\n", 10 ,0) ;
+	return 1 ;
+}
 
-    uint32_t serv_addr ;
+int client_tunnel(struct tunnel* tunnel, 
+                  uint32_t serv_addr,
+                  uint32_t local_addr) {
 	int tun ;
 	int tun_itf_id ;
 	struct in_addr serv;
 	struct in_addr local;
-	struct tunnel tunnel ;
-	int socket ;
-
-	/* Initialize logger */
-	openlog("rohc_ipip_client", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
-
-	/* Create socket to neogotiate parameters */
-    serv_addr = htonl(inet_network("10.0.2.212")) ;
-	socket = create_tcp_socket(serv_addr, 1989) ;
-	if (socket < 0) {
-		perror("Can't open socket") ;
-		exit(1) ;
-	}	
+	pthread_t tunnel_thread ;
 
 	/* Tun creation */
 	tun = create_tun("tun42", &tun_itf_id) ;
@@ -69,19 +64,52 @@ int main(int argc, char *argv[]) {
 
 	/* dest addr */
 	serv.s_addr = serv_addr ;
-	tunnel.dest_address = serv ;
+	tunnel->dest_address = serv ;
 
 	/* local_addr */
-	local.s_addr = htonl(inet_network("192.168.99.23")) ;
-	tunnel.local_address = local ;
+	local.s_addr = local_addr ;
+	tunnel->local_address = local ;
 
 	/* set tun */
-	tunnel.tun = tun ; /* real tun device */
-	tunnel.fake_tun[0] = -1 ;
-	tunnel.fake_tun[1] = -1 ;
+	tunnel->tun = tun ; /* real tun device */
+	tunnel->fake_tun[0] = -1 ;
+	tunnel->fake_tun[1] = -1 ;
  
-	/* Go go go ! */
-	new_tunnel(&tunnel) ;
+    /* Go thread, go ! */
+	pthread_create(&tunnel_thread, NULL, new_tunnel, (void*)tunnel) ;
 
-	return 1 ;
+
+	return 0 ;
+}
+
+int main(int argc, char *argv[]) {
+
+	struct tunnel tunnel ;
+    uint32_t serv_addr ;
+    uint32_t local_addr ;
+	int socket ;
+	int alive = 1 ;
+	struct tunnel_params tp ;
+
+	/* Initialize logger */
+	openlog("rohc_ipip_client", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
+
+	/* Create socket to neogotiate parameters and maintain it */
+    serv_addr = htonl(inet_network("10.0.2.212")) ;
+	socket = create_tcp_socket(serv_addr, 1989) ;
+	if (socket < 0) {
+		perror("Can't open socket") ;
+		exit(1) ;
+	}	
+
+	client_connect(socket, &tp) ;
+
+	local_addr = htonl(inet_network("192.168.99.23")) ;	
+	client_tunnel(&tunnel, serv_addr, local_addr) ; /* TODO: Check return */
+
+	do {
+		// Nothing
+	} while (alive) ;
+
+	return 0 ;
 }

@@ -3,6 +3,7 @@
 
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <stdbool.h>
 
 #include <rohc.h>
 #include <rohc_comp.h>
@@ -12,6 +13,7 @@
 struct tunnel {
     struct in_addr local_address;
     struct in_addr dest_address ;
+    int      tcp_socket   ;
     int      raw_socket   ;   
     pthread_t thread      ;
 
@@ -33,3 +35,16 @@ int read_from_raw(int sock, unsigned char *buffer, unsigned int *length);
 int write_to_raw(int sock, struct in_addr raddr, unsigned char *packet, unsigned int length);
 
 int create_socket() ;
+
+/* Structure defining param negotiated */
+struct tunnel_params {
+    uint32_t  local_address ;
+    char      packing ;
+    size_t    max_cid ;
+    bool      is_unidirectional ;
+    size_t    wlsb_window_width ; /* No ROHC API yet */
+    int       refresh           ; /* No ROHC API yet */
+    int       keepalive_timeout ;
+    unsigned int rohc_compat_version ;
+} ;
+

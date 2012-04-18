@@ -123,34 +123,82 @@ void* route(void* arg)
 	return NULL ;
 }
 
+int new_client(int socket, int tun, struct tunnel** clients) {
+	int conn; 
+	struct	sockaddr_in src_addr;
+	socklen_t src_addr_len = sizeof(src_addr);
+	struct in_addr local;
+
+	int i = 4 ;
+
+	/* New client */
+	conn = accept(socket, (struct sockaddr*)&src_addr, &src_addr_len) ;
+	if (conn < 0) {
+		perror("Fail accept\n") ;
+	}
+	trace(LOG_INFO, "Connection from %s (%d)\n", inet_ntoa(src_addr.sin_addr), src_addr.sin_addr.s_addr) ;
+
+	/* client creation parameters */
+	trace(LOG_DEBUG, "Creation of client") ;
+	clients[i] = malloc(sizeof(struct tunnel)) ;
+
+	/* dest_addr */
+	clients[i]->dest_address  = src_addr.sin_addr ;
+	
+	/* local_addr */
+	local.s_addr = htonl(inet_network("192.168.99.23")) ;
+	clients[i]->local_address = local ;
+
+	clients[i]->tcp_socket = conn ;
+	
+	/* set tun */
+	clients[i]->tun = tun ; /* real tun device */
+	if (pipe(clients[i]->fake_tun) < 0) {
+		perror("Can't open pipe for tun") ;
+		/* TODO  : Flush */
+		return 1 ;
+	}
+
+	/* Go thread, go ! */
+	pthread_create(&(clients[i]->thread), NULL, new_tunnel, (void*)clients[i]) ;
+
+	return 0 ;
+}
+
+int handle_client_request(struct tunnel* client) {
+	char buffer[1024] ;
+
+	recv(client->tcp_socket, buffer, 1024, 0) ;
+	printf("RECU : %s", buffer) ;
+
+	return 0 ;
+}
 
 int main(int argc, char *argv[]) {
 
-	int i ;
-
-	int socket ;
+	int serv_socket ;
 
 	int tun ;
 	int tun_itf_id ;
 
-	int conn ;
-	struct	sockaddr_in src_addr;
-	socklen_t src_addr_len = sizeof(src_addr);
-	struct in_addr local;
 
 	struct route_args route_args ;
 	pthread_t route_thread; 
 
 	struct tunnel** clients = calloc(MAX_CLIENTS, sizeof(struct tunnel*)) ;
+	fd_set rdfs;
+	int max ;
+	int j ;
 
 	/* Initialize logger */
 	openlog("rohc_ipip_server", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
 
 
-	if ((socket = create_tcp_socket(INADDR_ANY, 1989)) < 0) {
+	if ((serv_socket = create_tcp_socket(INADDR_ANY, 1989)) < 0) {
 		perror("Can't open TCP socket") ;
 		exit(1) ;
 	}
+	max = serv_socket ;
 
 	/* TUN create */
 	tun = create_tun("tun_ipip", &tun_itf_id) ;
@@ -162,35 +210,30 @@ int main(int argc, char *argv[]) {
 	pthread_create(&route_thread, NULL, route, (void*)&route_args) ;
 
 	while (1) {
-		conn = accept(socket, (struct sockaddr*)&src_addr, &src_addr_len) ;
-		if (conn < 0) {
-			perror("Fail accept\n") ;
+		FD_ZERO(&rdfs); 
+		FD_SET(serv_socket, &rdfs);		
+		for (j=0; j<MAX_CLIENTS; j++) {
+			if (clients[j] != NULL) {
+				FD_SET(clients[j]->tcp_socket, &rdfs) ;
+				max = (clients[j]->tcp_socket > max)? clients[j]->tcp_socket : max ;
+			}
 		}
-		trace(LOG_INFO, "Connection from %s (%d)\n", inet_ntoa(src_addr.sin_addr), src_addr.sin_addr.s_addr) ;
 
-		/* client creation parameters */
-		trace(LOG_DEBUG, "Creation of client") ;
-		clients[i] = malloc(sizeof(struct tunnel)) ;
-
-		/* dest_addr */
-		clients[i]->dest_address  = src_addr.sin_addr ;
-		
-		/* local_addr */
-		local.s_addr = htonl(inet_network("192.168.99.23")) ;
-		clients[i]->local_address = local ;
-		
-		/* set tun */
-		clients[i]->tun = tun ; /* real tun device */
-		if (pipe(clients[i]->fake_tun) < 0) {
-			perror("Can't open pipe for tun") ;
-			/* TODO  : Flush */
-			break ;
+		if(select(max + 1, &rdfs, NULL, NULL, NULL) == -1) {
+			perror("select()");
+			exit(errno);
 		}
- 
-		/* Go thread, go ! */
-		pthread_create(&(clients[i]->thread), NULL, new_tunnel, (void*)clients[i]) ;
 
-		i++ ;
+		if (FD_ISSET(serv_socket, &rdfs)) {
+			new_client(serv_socket, tun, clients) ;
+		}
+
+		for (j=0; j<MAX_CLIENTS; j++) {
+			if (clients[j] != NULL && FD_ISSET(clients[j]->tcp_socket, &rdfs)) {
+				printf("handle client\n") ;
+				handle_client_request(clients[j]) ;												
+			}
+		}
 	}
 
 	return 0 ;
