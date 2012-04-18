@@ -16,6 +16,7 @@ On a client connection :
 #include <sys/time.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #include "rohc_tunnel.h"
 
@@ -28,8 +29,6 @@ On a client connection :
 #include <syslog.h>
 #define MAX_LOG LOG_INFO
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
-
-
 
 /*
  * Macros & definitions:
@@ -44,7 +43,18 @@ On a client connection :
 /// The maximal size of a ROHC packet
 #define MAX_ROHC_SIZE   (5 * 1024)
 
+#define MAX_TRACE_SIZE 256
+
+/* Prototypes for local functions */
+
 void dump_packet(char *descr, unsigned char *packet, unsigned int length) ;
+static void print_rohc_traces(rohc_trace_level_t level,
+                              rohc_trace_entity_t entity,
+                              int profile,
+                              const char *format, ...)
+                              __attribute__ ((format (printf, 4, 5)));
+
+/* Main functions */
 
 void* new_tunnel(void* arg) {
 
@@ -82,7 +92,7 @@ void* new_tunnel(void* arg) {
     comp = rohc_alloc_compressor(15, 0, 0, 0);
     if(comp == NULL)
     {
-        fprintf(stderr, "cannot create the ROHC compressor\n");
+        trace(LOG_ERR, "cannot create the ROHC compressor\n");
         goto close_raw;
     }
     rohc_activate_profile(comp, ROHC_PROFILE_UNCOMPRESSED);
@@ -91,13 +101,24 @@ void* new_tunnel(void* arg) {
     rohc_activate_profile(comp, ROHC_PROFILE_UDPLITE);
     rohc_activate_profile(comp, ROHC_PROFILE_RTP);
 
+    ret = rohc_comp_trace(comp, print_rohc_traces);
+    if(ret != ROHC_OK) {
+		trace(LOG_ERR, "cannot set trace callback for compressor\n") ;
+		goto destroy_comp ;	
+	}
+
     /* create the decompressor (associate it with the compressor) */
     decomp = rohc_alloc_decompressor(is_umode ? NULL : comp);
-    if(decomp == NULL)
-    {
+    if(decomp == NULL) {
         fprintf(stderr, "cannot create the ROHC decompressor\n");
         goto destroy_comp;
     }
+
+    ret = rohc_decomp_trace(decomp, print_rohc_traces);
+    if(ret != ROHC_OK) {
+		trace(LOG_ERR, "cannot set trace callback for decompressor\n") ;
+		goto destroy_decomp ;	
+	}
 
     /* poll network interfaces each second */
     timeout.tv_sec = 1;
@@ -182,6 +203,7 @@ void* new_tunnel(void* arg) {
      * Cleaning:
      */
 
+destroy_decomp:
     rohc_free_decompressor(decomp);
 destroy_comp:
     rohc_free_compressor(comp);
@@ -464,6 +486,9 @@ error:
     return 1;
 }
 
+
+/* Trace functions */
+
 /**
  * @brief Display the content of a IP or ROHC packet
  *
@@ -491,3 +516,71 @@ void dump_packet(char *descr, unsigned char *packet, unsigned int length)
     fprintf(stderr, "\n");
     fprintf(stderr, "-------------------------------\n");
 }
+
+/**
+ * @brief Callback to print traces of the ROHC library
+ *
+ * @param level    The priority level of the trace
+ * @param entity   The entity that emitted the trace among:
+ *                  \li ROHC_TRACE_COMPRESSOR
+ *                  \li ROHC_TRACE_DECOMPRESSOR
+ * @param profile  The ID of the ROHC compression/decompression profile
+ *                 the trace is related to
+ * @param format   The format string of the trace
+ */
+
+static void print_rohc_traces(rohc_trace_level_t level,
+                              rohc_trace_entity_t entity,
+                              int profile,
+                              const char *format, ...)
+{
+	va_list args;
+	int syslog_level ;
+	char* entity_s ;
+	char extended[MAX_TRACE_SIZE] ;
+	char message[MAX_TRACE_SIZE] ;
+
+	/* Bijection between ROHC levels and syslog ones */
+	switch (level) {
+		case ROHC_TRACE_DEBUG:
+			syslog_level = LOG_DEBUG ;
+			break ;
+		case ROHC_TRACE_INFO:
+			syslog_level = LOG_INFO ;
+			break;
+		case ROHC_TRACE_WARNING:
+			syslog_level = LOG_WARNING ;
+			break ;
+		case ROHC_TRACE_ERROR:
+			syslog_level = LOG_ERR ;
+			break;
+		case ROHC_TRACE_LEVEL_MAX:
+			syslog_level = LOG_CRIT ;
+			break ;
+		default:
+			syslog_level = LOG_ERR ;
+	}
+	
+	switch (entity) {
+		case ROHC_TRACE_COMPRESSOR:
+			entity_s = "ROHC compressor" ;	
+			break ;
+		case ROHC_TRACE_DECOMPRESSOR:
+			entity_s = "ROHC decompressor" ;
+			break ;
+		default :
+			entity_s = "Unknown ROHC entity" ;
+	}
+
+	va_start(args, format);
+	if (vsnprintf(extended, MAX_TRACE_SIZE, format, args) >= MAX_TRACE_SIZE) {
+		trace(LOG_WARNING, "Following trace has been truncated\n") ;
+	}
+	va_end(args);
+
+	if (snprintf(message, MAX_TRACE_SIZE, "%s[%d] : %s", entity_s, profile, extended) >= MAX_TRACE_SIZE) {
+		trace(LOG_WARNING, "Following trace has been truncated\n") ;
+	}
+	trace(syslog_level, message) ;
+}
+
