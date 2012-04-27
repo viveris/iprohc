@@ -36,15 +36,4 @@ int write_to_raw(int sock, struct in_addr raddr, unsigned char *packet, unsigned
 
 int create_socket() ;
 
-/* Structure defining param negotiated */
-struct tunnel_params {
-    uint32_t  local_address ;
-    char      packing ;
-    size_t    max_cid ;
-    bool      is_unidirectional ;
-    size_t    wlsb_window_width ; /* No ROHC API yet */
-    int       refresh           ; /* No ROHC API yet */
-    int       keepalive_timeout ;
-    unsigned int rohc_compat_version ;
-} ;
 

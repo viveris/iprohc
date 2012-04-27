@@ -169,7 +169,6 @@ int handle_client_request(struct tunnel* client) {
 	char buffer[1024] ;
 
 	recv(client->tcp_socket, buffer, 1024, 0) ;
-	printf("RECU : %s", buffer) ;
 
 	return 0 ;
 }
@@ -230,7 +229,6 @@ int main(int argc, char *argv[]) {
 
 		for (j=0; j<MAX_CLIENTS; j++) {
 			if (clients[j] != NULL && FD_ISSET(clients[j]->tcp_socket, &rdfs)) {
-				printf("handle client\n") ;
 				handle_client_request(clients[j]) ;												
 			}
 		}

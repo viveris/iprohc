@@ -6,8 +6,10 @@ set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
 find_package (ROHC REQUIRED)
 set(LIBS ${LIBS} ${ROHC_LIBRARIES})
 
-add_library (rohctunnel SHARED rohc_tunnel.c tun_helpers.c)
+add_library (rohctunnel SHARED rohc_tunnel.c tun_helpers.c tlv.c)
 
 add_definitions("-Wall")
 
 target_link_libraries(rohctunnel ${LIBS} netlink) 
+
+add_subdirectory (tests)

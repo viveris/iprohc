@@ -18,6 +18,8 @@
 #include "rohc_tunnel.h"
 #include "tun_helpers.h"
 
+#include "tlv.h"
+
 #define TUNTAP_BUFSIZE 1518
 
 #define MAX_LOG LOG_INFO
