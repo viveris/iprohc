@@ -1,6 +1,17 @@
 #include <stdint.h>
 
-/* Golbal structures */
+#ifndef ROHC_IPIP_TLV_H
+#define ROHC_IPIP_TLV_H
+
+/* Global structures */
+enum commands {
+    C_CONNECT,
+    C_CONNECT_OK,
+    C_CONNECT_KO,
+    C_CONNECT_DONE,
+    C_DISCONNECT,
+    C_KEEPALIVE
+} ;
 
 enum types {
     END,
@@ -28,16 +39,15 @@ struct tlv_result {
 } ;
 
 /* Global parsing and generation functions */
-int parse_tlv(char* tlv, struct tlv_result** results, int max_results) ;
-
-int gen_tlv(char* dest, struct tlv_result* tlvs, int max_numbers) ;
+char* parse_tlv(char* tlv, struct tlv_result** results, int max_results) ;
+size_t gen_tlv(char* dest, struct tlv_result* tlvs, int max_numbers) ;
 
 /* Callbacks for generation */
 
-typedef char* (*gen_tlv_callback_t) (char* dest, struct tlv_result tlv) ;
+typedef char* (*gen_tlv_callback_t) (char* dest, struct tlv_result tlv, size_t* len) ;
 
-char* gen_tlv_uint32(char* dest, struct tlv_result tlv) ;
-char* gen_tlv_char(char* dest, struct tlv_result tlv) ;
+char* gen_tlv_uint32(char* dest, struct tlv_result tlv, size_t* len) ;
+char* gen_tlv_char(char* dest, struct tlv_result tlv, size_t* len) ;
 
 /* Association between callbacks and type */
 gen_tlv_callback_t get_gen_cb_for_type(enum types type) ;
@@ -61,5 +71,7 @@ struct tunnel_params {
     char      rohc_compat_version ;
 } ;
 
-int parse_connect(char* buffer, struct tunnel_params* params) ;
-int gen_connect(char* dest, struct tunnel_params params) ;
+char*  parse_connect(char* buffer, struct tunnel_params* params) ;
+size_t gen_connect(char* dest, struct tunnel_params params) ;
+
+#endif

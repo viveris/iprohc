@@ -59,7 +59,6 @@ static void print_rohc_traces(rohc_trace_level_t level,
 void* new_tunnel(void* arg) {
 
     struct tunnel* tunnel = (struct tunnel*) arg ;
-    int alive ;
 
     int failure = 0;
     int is_umode = 1 ; /* TODO : Handle other mode */
@@ -71,21 +70,14 @@ void* new_tunnel(void* arg) {
     struct timeval last;
     struct timeval now;
 
-    int tun;
+    int tun, raw;
     int ret;
 
     struct rohc_comp *comp;
     struct rohc_decomp *decomp;
 
     /* TODO : Check assumed present attributes
-       (thread, local_address, dest_address, tun, fake_tun) */
-
-    /*  Create raw socket */
-    tunnel->raw_socket = create_socket() ;
-    if (tunnel->raw_socket < 0) {
-        perror("Unable to open raw socket") ;
-        /* TODO : Handle error */
-    }
+       (thread, local_address, dest_address, tun, fake_tun, raw_socket) */
 
     /* ROHC */
     /* create the compressor and activate profiles */
@@ -93,7 +85,7 @@ void* new_tunnel(void* arg) {
     if(comp == NULL)
     {
         trace(LOG_ERR, "cannot create the ROHC compressor\n");
-        goto close_raw;
+        return NULL ;
     }
     rohc_activate_profile(comp, ROHC_PROFILE_UNCOMPRESSED);
     rohc_activate_profile(comp, ROHC_PROFILE_UDP);
@@ -132,7 +124,7 @@ void* new_tunnel(void* arg) {
 
     /* initialize the last time we sent a packet */
     gettimeofday(&last, NULL);
-	alive = 1 ;
+	tunnel->alive = 1 ;
 
 	/* We read the fake TUN device if we are on a server */
 	if (tunnel->fake_tun[0] == -1 && tunnel->fake_tun[1] == -1) {
@@ -142,19 +134,27 @@ void* new_tunnel(void* arg) {
 		tun = tunnel->fake_tun[0] ; 
 	}
 
+	/* We read the fake raw device if we are on a server */
+	if (tunnel->fake_raw[0] == -1 && tunnel->fake_raw[1] == -1) {
+		/* No fake_raw, we use the real raw */
+		raw = tunnel->raw_socket ;
+	} else {
+		raw = tunnel->fake_raw[0] ; 
+	}
+
     do
     {
         /* poll the read sockets/file descriptors */
         FD_ZERO(&readfds);
         FD_SET(tun, &readfds);
-        FD_SET(tunnel->raw_socket, &readfds);
+        FD_SET(raw, &readfds);
 
-        ret = pselect(max(tun, tunnel->raw_socket) + 1, &readfds, NULL, NULL, &timeout, &sigmask);
+        ret = pselect(max(tun, raw) + 1, &readfds, NULL, NULL, &timeout, &sigmask);
         if(ret < 0)
         {
             trace(LOG_ERR, "pselect failed: %s (%d)\n", strerror(errno), errno);
             failure = 1;
-            alive = 0;
+            tunnel->alive = 0;
         }
         else if(ret > 0)
         {
@@ -168,18 +168,18 @@ void* new_tunnel(void* arg) {
                 gettimeofday(&last, NULL);
                 if(failure) {
                     trace(LOG_ERR, "tun2raw failed\n") ;
-                    alive = 0;
+                    tunnel->alive = 0;
                 }
             }
   
             /* bridge from RAW to TUN */
-            if(FD_ISSET(tunnel->raw_socket, &readfds))
+            if(FD_ISSET(raw, &readfds))
             {
                 trace(LOG_DEBUG, "...from raw\n") ;
-                failure = raw2tun(decomp, tunnel->raw_socket, tunnel->tun);
+                failure = raw2tun(decomp, raw, tunnel->tun);
                 if(failure) {
                     trace(LOG_ERR, "raw2tun failed\n") ;
-                    alive = 0;
+                    tunnel->alive = 0;
                 }
             }
         }
@@ -197,7 +197,7 @@ void* new_tunnel(void* arg) {
 #endif */
         }
     }
-    while(alive);
+    while(tunnel->alive);
 
     /*
      * Cleaning:
@@ -208,13 +208,11 @@ destroy_decomp:
 destroy_comp:
     rohc_free_compressor(comp);
 
-close_raw:
-    close(tunnel->raw_socket) ;
     return NULL ;
 }
 
 
-int create_socket() {
+int create_raw() {
     int sock ;
 
     /* create socket */
@@ -426,16 +424,10 @@ error:
 
 int read_from_raw(int sock, unsigned char *buffer, unsigned int *length)
 {
-    struct sockaddr_in addr;
-    socklen_t addr_len;
     int ret;
 
-    addr_len = sizeof(struct sockaddr_in);
-    bzero(&addr, addr_len);
-
     /* read data from the RAW socket */
-    ret = recvfrom(sock, buffer, *length, 0, (struct sockaddr *) &addr,
-                   &addr_len);
+    ret = read(sock, buffer, *length);
 
     if(ret < 0 || ret > *length)
     {

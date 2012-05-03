@@ -3,7 +3,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/")
 
 include_directories("../common")
 
-add_executable (client client.c)
+add_executable (client client.c messages.c)
 
 add_definitions("-Wall")
 

@@ -1,5 +1,7 @@
 /* rohc_tunnel.h -- Functions handling a tunnel, client or server-side
 */
+#ifndef ROHC_IPIP_TUNNEL_H
+#define ROHC_IPIP_TUNNEL_H
 
 #include <arpa/inet.h>
 #include <pthread.h>
@@ -14,16 +16,21 @@ struct tunnel {
     struct in_addr local_address;
     struct in_addr dest_address ;
     int      tcp_socket   ;
-    int      raw_socket   ;   
     pthread_t thread      ;
+
+    int      raw_socket /* Real RAW */  ;   
+    int fake_raw[2] ; /* Fake RAW device for server side */
 
     int tun;  /* Real TUN device */
     int fake_tun[2] ; /* Fake TUN device for server side */
+
+    char alive ;
 } ;
 
 /* Called in a thread on a new tunnel */
 void* new_tunnel(void* arg) ;
 
+int create_raw() ;
 
 int tun2raw(struct rohc_comp *comp, int from, int to, struct in_addr raddr) ;
 int raw2tun(struct rohc_decomp *decomp, int from, int to) ;
@@ -36,4 +43,6 @@ int write_to_raw(int sock, struct in_addr raddr, unsigned char *packet, unsigned
 
 int create_socket() ;
 
+
+#endif
 

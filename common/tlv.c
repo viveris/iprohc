@@ -14,7 +14,7 @@
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 #define DEBUG_STR_SIZE 1024
 
-int parse_tlv(char* tlv, struct tlv_result** results, int max_results)
+char* parse_tlv(char* tlv, struct tlv_result** results, int max_results)
 {
 	enum parse_step step = TYPE ;
 	struct tlv_result* result ;
@@ -60,41 +60,44 @@ int parse_tlv(char* tlv, struct tlv_result** results, int max_results)
 		step = (step + 1) % 3 ;
 		if (step == TYPE && *c == END) {
 			alive = 0 ;
+			c++ ;
 		}
 	}
 
 	if (i == max_results && alive) {
-		return -1 ;
+		return NULL ;
 	}
 
-	return 0 ;
+	return c ;
 }
 
-int gen_tlv(char* dest, struct tlv_result* tlvs, int max_numbers)
+size_t gen_tlv(char* dest, struct tlv_result* tlvs, int max_numbers)
 {
 	int i ;
 	gen_tlv_callback_t cb ;
+	size_t len = 0 ;
 
 	for (i=0; i < max_numbers; i++) {
 		/* type */
 		*dest = tlvs[i].type ;		
 		dest += sizeof(tlvs[i].type) ;
+		len  += sizeof(tlvs[i].type) ;
 		/* length, value */
 		cb = get_gen_cb_for_type(tlvs[i].type) ;	
 		if (cb == NULL) {
 			trace(LOG_ERR, "TLV parser was unable to gen type %d\n" , tlvs[i].type) ;
 			return -1 ;
 		}
-		dest = cb(dest, tlvs[i]) ;
+		dest = cb(dest, tlvs[i], &len) ;
 	}
 
-	return 0 ;
+	return len ;
 }
 
 
 /* Generation callbacks */
 
-char* gen_tlv_uint32(char* dest, struct tlv_result tlv)
+char* gen_tlv_uint32(char* dest, struct tlv_result tlv, size_t* len)
 {
 	uint16_t* length ;
 	uint32_t* res ;
@@ -108,10 +111,12 @@ char* gen_tlv_uint32(char* dest, struct tlv_result tlv)
 	*res = htonl(*((uint32_t*) tlv.value)) ;	
 	dest += sizeof(uint32_t) ;
 
+	*len += sizeof(uint16_t) + sizeof(uint32_t) ;
+
 	return dest ;
 }
 
-char* gen_tlv_char(char* dest, struct tlv_result tlv)
+char* gen_tlv_char(char* dest, struct tlv_result tlv, size_t* len)
 {
 	uint16_t* length ;
 	char* res ;
@@ -124,6 +129,8 @@ char* gen_tlv_char(char* dest, struct tlv_result tlv)
 	res = (char*) dest ;
 	*res = *((char*) tlv.value) ;	
 	dest += sizeof(char) ;
+
+	*len += sizeof(uint16_t) + sizeof(char) ;
 
 	return dest ;
 }
@@ -170,17 +177,19 @@ void mark_received(enum types* list, int n_list, enum types type)
 }
 
 
-int parse_connect(char* buffer, struct tunnel_params* params)
+char* parse_connect(char* buffer, struct tunnel_params* params)
 {
 	int i ;
+	char* newbuf ;
 	/* At most n parameters can be retrieved */
 	struct tlv_result** results = calloc(N_TUNNEL_PARAMS, sizeof(struct tlv_result*)) ;
 	enum types required[N_TUNNEL_PARAMS] = { IP_ADDR, PACKING, MAXCID, UNID, WINDOWSIZE, REFRESH,
 	                        KEEPALIVE, ROHC_COMPAT} ;
 	
-	if (parse_tlv(buffer, results, N_TUNNEL_PARAMS) < 0) {
+	newbuf = parse_tlv(buffer, results, N_TUNNEL_PARAMS) ;
+	if (newbuf == NULL) {
 		trace(LOG_ERR, "Parsing ERR") ;
-		return -1 ;
+		return NULL ;
 	}
 	trace(LOG_DEBUG, "Parsing ok") ;
 
@@ -214,7 +223,7 @@ int parse_connect(char* buffer, struct tunnel_params* params)
 					break ;
 				default :
 					trace(LOG_ERR, "Unexpected field in connect : %x\n", results[i]->type) ;
-					return -1 ;
+					return NULL ;
 			}
 			free(results[i]) ;
 		}
@@ -223,14 +232,14 @@ int parse_connect(char* buffer, struct tunnel_params* params)
 	for (i=0; i<N_TUNNEL_PARAMS; i++) {
 		if (required[i] != -1) {
 			trace(LOG_ERR, "Missing field in connect : %d\n", required[i]) ;
-			return -1 ;
+			return NULL ;
 		}
 	}
 
-	return 0 ;
+	return newbuf ;
 }
 
-int gen_connect(char* dest, struct tunnel_params params)
+size_t gen_connect(char* dest, struct tunnel_params params)
 {
 	int i=0 ;
 	struct tlv_result* results = calloc(N_TUNNEL_PARAMS, sizeof(struct tlv_result)) ;

@@ -42,6 +42,7 @@ Client are described by a structure containing its raw socket and its VPN addres
 
 #include "rohc_tunnel.h"
 #include "tun_helpers.h"
+#include "tlv.h"
 
 
 // XXX : Config ?
@@ -74,17 +75,22 @@ int create_tcp_socket(uint32_t address, uint16_t port) {
 	return sock ;
 }
 
+/* Thread that will be called to monitor tun or raw and route */
+enum type_route { TUN, RAW } ;
+
 struct route_args {
-	int tun ;
+	int fd ;
 	struct tunnel** clients ;
+	enum type_route type ;
 } ;
 
-/* Thread that will be called to monitor tun and route */
+
 void* route(void* arg)
 {
 	/* Getting args */
-	int tun = ((struct route_args *)arg)->tun ;
+	int fd = ((struct route_args *)arg)->fd ;
 	struct tunnel** clients = ((struct route_args *)arg)->clients ;
+	int type = ((struct route_args *)arg)->type ;
 	int i ;
 
 	int ret;
@@ -92,38 +98,49 @@ void* route(void* arg)
     unsigned int buffer_len = TUNTAP_BUFSIZE;
 	struct in_addr addr;
 
-	/// XXX : uint32
-	unsigned int* dest_ip ;
+	uint32_t* src_ip ;
+	uint32_t* dest_ip ;
 	
 	trace(LOG_INFO, "Initializing routing thread\n") ;
 
-	while ((ret = read(tun, buffer, buffer_len))) {
+	while ((ret = read(fd, buffer, buffer_len))) {
 		if(ret < 0 || ret > buffer_len)
 		{
 			trace(LOG_ERR, "read failed: %s (%d)\n", strerror(errno), errno);
 		}
 
 		trace(LOG_DEBUG, "Read %d bytes\n", ret) ;
-		dest_ip = (unsigned int*) &buffer[20];
-		addr.s_addr = *dest_ip ;
-		trace(LOG_DEBUG, "Packet destination : %s\n", inet_ntoa(addr)) ;
+		if (type == TUN) {
+			dest_ip = (uint32_t*) &buffer[20];
+			addr.s_addr = *dest_ip ;
+			trace(LOG_DEBUG, "Packet destination : %s\n", inet_ntoa(addr)) ;
+		} else {
+			src_ip = (uint32_t*) &buffer[12];
+			addr.s_addr = *src_ip ;
+			trace(LOG_DEBUG, "Packet source : %s\n", inet_ntoa(addr)) ;
+		}
+
 		for (i=0; i < MAX_CLIENTS; i++) {
 			if (clients[i] != NULL) {
-				trace(LOG_DEBUG, "Checking %d against %d\n", addr.s_addr, clients[i]->local_address.s_addr) ;
-
-				if (addr.s_addr == clients[i]->local_address.s_addr) {
-					write(clients[i]->fake_tun[1], buffer, ret) ;
+				if (type == TUN) {
+					if (addr.s_addr == clients[i]->local_address.s_addr) {
+						write(clients[i]->fake_tun[1], buffer, ret) ;
+						break ;
+					}
+				} else {
+					if (addr.s_addr == clients[i]->dest_address.s_addr) {
+						write(clients[i]->fake_raw[1], buffer, ret) ;
+					}
 					break ;
 				}
 			}
 		}
-
 	}
 
 	return NULL ;
 }
 
-int new_client(int socket, int tun, struct tunnel** clients) {
+int new_client(int socket, int tun, int raw, struct tunnel** clients) {
 	int conn; 
 	struct	sockaddr_in src_addr;
 	socklen_t src_addr_len = sizeof(src_addr);
@@ -140,6 +157,7 @@ int new_client(int socket, int tun, struct tunnel** clients) {
 
 	/* client creation parameters */
 	trace(LOG_DEBUG, "Creation of client") ;
+
 	clients[i] = malloc(sizeof(struct tunnel)) ;
 
 	/* dest_addr */
@@ -159,17 +177,86 @@ int new_client(int socket, int tun, struct tunnel** clients) {
 		return 1 ;
 	}
 
+	/* set raw */
+	clients[i]->raw_socket = raw ; /* real tun device */
+	if (pipe(clients[i]->fake_raw) < 0) {
+		perror("Can't open pipe for tun") ;
+		/* TODO  : Flush */
+		return 1 ;
+	}
+
+
+	return 0 ;
+}
+
+int handle_connect(struct tunnel* client)
+{
+	struct tunnel_params params ;
+	char tlv[1024] ;
+	tlv[0] = C_CONNECT_OK ;
+	size_t len ;
+	
+    params.local_address       = client->local_address.s_addr ;
+    params.packing             = 5 ;
+    params.max_cid             = 14 ;
+    params.is_unidirectional   = 1 ;
+    params.wlsb_window_width   = 23 ;
+    params.refresh             = 9 ;
+    params.keepalive_timeout   = 1000 ;
+    params.rohc_compat_version = 1 ;
+
+	len = gen_connect(tlv+1, params) ;
+	send(client->tcp_socket, tlv, len, 0) ;
+
+	return 0 ;
+}
+
+int close_client(struct tunnel* client)
+{
+	client->alive = 0 ;
+	close(client->raw_socket) ;
+	free(client) ;
+
+	return 0 ;
+}
+
+int start_client_tunnel(struct tunnel* client)
+{
 	/* Go thread, go ! */
-	pthread_create(&(clients[i]->thread), NULL, new_tunnel, (void*)clients[i]) ;
+	pthread_create(&(client->thread), NULL, new_tunnel, (void*)client) ;
 
 	return 0 ;
 }
 
 int handle_client_request(struct tunnel* client) {
-	char buffer[1024] ;
+	char buf[1024] ;
+	int length;
+	char* cur ;
+	char* bufmax;
 
-	recv(client->tcp_socket, buffer, 1024, 0) ;
 
+	length = recv(client->tcp_socket, buf, 1024, 0) ;
+	if (length == 0) {
+		return -1 ;
+	}
+	bufmax = buf + length ;
+	trace(LOG_DEBUG, "[%s] Received %d bytes on TCP socket", inet_ntoa(client->dest_address),
+					 length) ;
+	cur = buf ;
+	while (cur < bufmax) {
+		switch (*cur) {
+			case C_CONNECT:
+				trace(LOG_INFO, "[%s] Connection asked, negotating parameters", inet_ntoa(client->dest_address)) ;
+				handle_connect(client) ;
+				cur++ ;
+				break ;
+			case C_CONNECT_DONE :
+				trace(LOG_INFO, "[%s] Connection started", inet_ntoa(client->dest_address)) ;
+				start_client_tunnel(client) ;
+				cur++ ;
+				break;
+		}
+	}
 	return 0 ;
 }
 
@@ -177,17 +264,20 @@ int main(int argc, char *argv[]) {
 
 	int serv_socket ;
 
-	int tun ;
+	int tun, raw ;
 	int tun_itf_id ;
 
 
-	struct route_args route_args ;
+	struct route_args route_args_tun ;
+	struct route_args route_args_raw ;
 	pthread_t route_thread; 
 
 	struct tunnel** clients = calloc(MAX_CLIENTS, sizeof(struct tunnel*)) ;
 	fd_set rdfs;
 	int max ;
 	int j ;
+
+	int ret ;
 
 	/* Initialize logger */
 	openlog("rohc_ipip_server", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
@@ -201,13 +291,32 @@ int main(int argc, char *argv[]) {
 
 	/* TUN create */
 	tun = create_tun("tun_ipip", &tun_itf_id) ;
+	if (tun < 0) {
+		trace(LOG_ERR, "Unable to create TUN device") ;
+		return 1 ;
+	}
 	set_ip4(tun_itf_id, htonl(inet_network("192.168.99.1")), 24) ;
 
-	/* Routing thread */
-	route_args.tun = tun ;
-	route_args.clients = clients ;
-	pthread_create(&route_thread, NULL, route, (void*)&route_args) ;
+	/* TUN routing thread */
+	route_args_tun.fd = tun ;
+	route_args_tun.clients = clients ;
+	route_args_tun.type = TUN ;
+	pthread_create(&route_thread, NULL, route, (void*)&route_args_tun) ;
 
+	/* RAW create */
+	raw = create_raw() ;
+	if (raw < -1) {
+		trace(LOG_ERR, "Unable to create TUN device") ;
+		return 1 ;
+	}
+
+	/* RAW routing thread */
+	route_args_raw.fd = raw ;
+	route_args_raw.clients = clients ;
+	route_args_raw.type = RAW ;
+	pthread_create(&route_thread, NULL, route, (void*)&route_args_raw) ;
+
+	/* Start listening and looping on TCP socket */
 	while (1) {
 		FD_ZERO(&rdfs); 
 		FD_SET(serv_socket, &rdfs);		
@@ -224,12 +333,18 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (FD_ISSET(serv_socket, &rdfs)) {
-			new_client(serv_socket, tun, clients) ;
+			new_client(serv_socket, tun, raw, clients) ;
 		}
 
 		for (j=0; j<MAX_CLIENTS; j++) {
 			if (clients[j] != NULL && FD_ISSET(clients[j]->tcp_socket, &rdfs)) {
-				handle_client_request(clients[j]) ;												
+				ret = handle_client_request(clients[j]) ;
+				if (ret < 0) {
+					trace(LOG_WARNING, "[%s] Client disconnected", inet_ntoa(clients[j]->dest_address)) ;
+					close_client(clients[j]) ;
+					clients[j] = NULL ;
+				}
+
 			}
 		}
 	}

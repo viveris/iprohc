@@ -1,29 +1,19 @@
 /* client.c -- Implements client side of the ROHC IP-IP tunnel
 */
 
-
 #include <sys/socket.h> 
 #include <sys/types.h> 
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <net/if.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <sys/ioctl.h>
 #include <syslog.h>
-
-#include "rohc_tunnel.h"
-#include "tun_helpers.h"
-
-#include "tlv.h"
-
-#define TUNTAP_BUFSIZE 1518
 
 #define MAX_LOG LOG_INFO
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
+
+#include "tlv.h"
+#include "messages.h"
 
 /* Create TCP socket for communication with server */
 int create_tcp_socket(uint32_t address, uint16_t port) {
@@ -34,6 +24,7 @@ int create_tcp_socket(uint32_t address, uint16_t port) {
 	servaddr.sin_family	  = AF_INET;
 	servaddr.sin_addr.s_addr = address;
 	servaddr.sin_port		= htons(port);
+	trace(LOG_INFO, "Connecting to %s\n", inet_ntoa(servaddr.sin_addr)) ;
 
 	if (connect(sock,  (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
 		perror("Connect failed") ;
@@ -41,46 +32,22 @@ int create_tcp_socket(uint32_t address, uint16_t port) {
 	return sock ;
 }
 
-int client_connect(int socket, struct tunnel_params* tp)
+int handle_message(struct tunnel* tunnel, char* buf, int length)
 {
-	printf("Hello\n") ;
-	send(socket, "KIKOOO\n", 10 ,0) ;
-	return 1 ;
-}
-
-int client_tunnel(struct tunnel* tunnel, 
-                  uint32_t serv_addr,
-                  uint32_t local_addr) {
-	int tun ;
-	int tun_itf_id ;
-	struct in_addr serv;
-	struct in_addr local;
-	pthread_t tunnel_thread ;
-
-	/* Tun creation */
-	tun = create_tun("tun42", &tun_itf_id) ;
-	set_ip4(tun_itf_id, 392407232, 24) ; /* 192.168.99.23/24 */
-
-	/* Tunnel definition */
-	trace(LOG_DEBUG, "Creation of tunnel") ;
-
-	/* dest addr */
-	serv.s_addr = serv_addr ;
-	tunnel->dest_address = serv ;
-
-	/* local_addr */
-	local.s_addr = local_addr ;
-	tunnel->local_address = local ;
-
-	/* set tun */
-	tunnel->tun = tun ; /* real tun device */
-	tunnel->fake_tun[0] = -1 ;
-	tunnel->fake_tun[1] = -1 ;
- 
-    /* Go thread, go ! */
-	pthread_create(&tunnel_thread, NULL, new_tunnel, (void*)tunnel) ;
-
-
+	char* bufmax = buf + length ;
+	while (buf < bufmax) {
+		switch (*buf) {
+			case C_CONNECT_OK:
+				buf = handle_okconnect(tunnel, ++buf) ;
+				if (buf == NULL) {
+					trace(LOG_ERR, "Unable to decode TCP message") ;
+				}
+				break ;
+			default :
+				trace(LOG_ERR, "Unexpected %d in command\n", *buf) ;
+				return -1 ;
+		}
+	}
 	return 0 ;
 }
 
@@ -88,30 +55,40 @@ int main(int argc, char *argv[]) {
 
 	struct tunnel tunnel ;
     uint32_t serv_addr ;
-    uint32_t local_addr ;
+    char buf[1024] ;
 	int socket ;
-	int alive = 1 ;
-	struct tunnel_params tp ;
+
+	struct in_addr serv;
+	size_t len ;
 
 	/* Initialize logger */
 	openlog("rohc_ipip_client", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
 
 	/* Create socket to neogotiate parameters and maintain it */
-    serv_addr = htonl(inet_network("10.0.2.212")) ;
+    serv_addr = htonl(inet_network(argv[1])) ;
 	socket = create_tcp_socket(serv_addr, 1989) ;
 	if (socket < 0) {
 		perror("Can't open socket") ;
 		exit(1) ;
 	}	
 
-	client_connect(socket, &tp) ;
+	/* Set some tunnel parameters */
+	tunnel.tcp_socket = socket ;
+	serv.s_addr = serv_addr ;
+	tunnel.dest_address = serv ;
 
-	local_addr = htonl(inet_network("192.168.99.23")) ;	
-	client_tunnel(&tunnel, serv_addr, local_addr) ; /* TODO: Check return */
+	/* Ask for connection */
+	client_connect(tunnel) ;
 
-	do {
-		// Nothing
-	} while (alive) ;
+	/* Wait for answer and other messages, close when
+	   socket is close */
+	while ((len = recv(socket, buf, 1024, 0))) {
+		trace(LOG_DEBUG, "Received %ld bytes of data", len) ;
+		trace(LOG_DEBUG, "%s", buf) ;
+		if (handle_message(&tunnel, buf, len) < 0) {
+			break ;
+		}
+	}
 
 	return 0 ;
 }
