@@ -15,12 +15,12 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-
 #include <syslog.h>
 #define MAX_LOG LOG_INFO
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
 #include "tun_helpers.h"
+#include "config.h"
 
 int set_link_up(char* dev)
 {
@@ -109,6 +109,7 @@ int create_tun(char *name, int* tun_itf_id)
 
 int set_ip4(int iface_index, uint32_t address, uint8_t network)
 {
+	int ret ;
 	struct {
 	   struct nlmsghdr  nh;
 	   struct ifaddrmsg ip;
@@ -116,8 +117,8 @@ int set_ip4(int iface_index, uint32_t address, uint8_t network)
 	} req;
 	
 	struct rtnl_handle rth = { .fd = -1 };
-    if (rtnl_open(&rth, 0) < 0)
-        exit(1);
+	if (rtnl_open(&rth, 0) < 0)
+		exit(1);
 	
 	uint32_t* ip_data = calloc(8, sizeof(uint32_t));
 	ip_data[0] = address ;
@@ -132,13 +133,18 @@ int set_ip4(int iface_index, uint32_t address, uint8_t network)
 	/* ifaddrmsg info */
 	req.ip.ifa_family = AF_INET ;        /* IPv4 */
 	req.ip.ifa_prefixlen = network ;    
-    req.ip.ifa_index = iface_index ;
+	req.ip.ifa_index = iface_index ;
 
 	addattr_l(&req.nh, sizeof(req), IFA_LOCAL,   ip_data, 4);
 	addattr_l(&req.nh, sizeof(req), IFA_ADDRESS, ip_data, 4);
 
 	/* GOGOGO */
-	if (rtnl_talk(&rth, &req.nh, 0, 0, NULL) < 0) {
+#ifdef NEW_RTNL
+	ret = rtnl_talk(&rth, &req.nh, 0, 0, NULL) ;
+#else
+	ret = rtnl_talk(&rth, &req.nh, 0, 0, NULL, NULL, NULL) ;
+#endif
+	if (ret < 0) {
 		return 1 ;
 	}
 
