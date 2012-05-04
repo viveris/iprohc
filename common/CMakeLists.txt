@@ -12,6 +12,7 @@ set(CMAKE_REQUIRED_LIBRARIES "netlink")
 check_c_source_compiles("#include <stdio.h>
 #include <stdlib.h>
 #include <libnetlink.h>
+#include <sys/socket.h>
 int main(int argc, char* argv[]){rtnl_talk(NULL, NULL, 0, 0, NULL);}" NEW_RTNL)
 
 if (NEW_RTNL)
