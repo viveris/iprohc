@@ -194,7 +194,7 @@ int handle_connect(struct tunnel* client)
 	struct tunnel_params params ;
 	char tlv[1024] ;
 	tlv[0] = C_CONNECT_OK ;
-	size_t len ;
+	size_t len = 1 ;
 	
     params.local_address       = client->local_address.s_addr ;
     params.packing             = 5 ;
@@ -205,7 +205,7 @@ int handle_connect(struct tunnel* client)
     params.keepalive_timeout   = 1000 ;
     params.rohc_compat_version = 1 ;
 
-	len = gen_connect(tlv+1, params) ;
+	len += gen_connect(tlv+1, params) ;
 	send(client->tcp_socket, tlv, len, 0) ;
 
 	return 0 ;

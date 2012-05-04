@@ -71,17 +71,18 @@ char* parse_tlv(char* tlv, struct tlv_result** results, int max_results)
 	return c ;
 }
 
-size_t gen_tlv(char* dest, struct tlv_result* tlvs, int max_numbers)
+size_t gen_tlv(char* f_dest, struct tlv_result* tlvs, int max_numbers)
 {
 	int i ;
 	gen_tlv_callback_t cb ;
 	size_t len = 0 ;
+	char* dest = f_dest ;
 
 	for (i=0; i < max_numbers; i++) {
 		/* type */
 		*dest = tlvs[i].type ;		
-		dest += sizeof(tlvs[i].type) ;
-		len  += sizeof(tlvs[i].type) ;
+		dest += sizeof(char) ;
+		len  += sizeof(char) ;
 		/* length, value */
 		cb = get_gen_cb_for_type(tlvs[i].type) ;	
 		if (cb == NULL) {
@@ -91,16 +92,20 @@ size_t gen_tlv(char* dest, struct tlv_result* tlvs, int max_numbers)
 		dest = cb(dest, tlvs[i], &len) ;
 	}
 
+	*dest = END ;
+	len+= sizeof(char) ;
+
 	return len ;
 }
 
 
 /* Generation callbacks */
 
-char* gen_tlv_uint32(char* dest, struct tlv_result tlv, size_t* len)
+char* gen_tlv_uint32(char* f_dest, struct tlv_result tlv, size_t* len)
 {
 	uint16_t* length ;
 	uint32_t* res ;
+	char* dest = f_dest ;
 	
 	/* length */
 	length  = (uint16_t*) dest ;
@@ -116,10 +121,11 @@ char* gen_tlv_uint32(char* dest, struct tlv_result tlv, size_t* len)
 	return dest ;
 }
 
-char* gen_tlv_char(char* dest, struct tlv_result tlv, size_t* len)
+char* gen_tlv_char(char* f_dest, struct tlv_result tlv, size_t* len)
 {
 	uint16_t* length ;
 	char* res ;
+	char* dest = f_dest ;
 	
 	/* length */
 	length  = (uint16_t*) dest ;
