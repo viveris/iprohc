@@ -7,12 +7,12 @@ find_package (ROHC REQUIRED)
 set(LIBS ${LIBS} ${ROHC_LIBRARIES})
 
 # Check for rtnl_talk prototype
-include(CheckPrototypeDefinition)
-check_prototype_definition(rtnl_talk
-    "extern int rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n, pid_t peer, unsigned groups, struct nlmsghdr *answer)"
-    "NULL"
-    "stdlib.h;stdio.h;libnetlink.h"
-    NEW_RTNL)
+include(CheckCSourceCompiles)
+set(CMAKE_REQUIRED_LIBRARIES "netlink")
+check_c_source_compiles("#include <stdio.h>
+#include <stdlib.h>
+#include <libnetlink.h>
+int main(int argc, char* argv[]){rtnl_talk(NULL, NULL, 0, 0, NULL);}" NEW_RTNL)
 
 if (NEW_RTNL)
     message("Using new rtnl_talk prototype")
