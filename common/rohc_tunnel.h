@@ -6,10 +6,15 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <sys/time.h>
 
 #include <rohc.h>
 #include <rohc_comp.h>
 #include <rohc_decomp.h>
+
+#include "tlv.h"
+
+typedef void (*tunnel_close_callback_t) (void* tunnel) ;
 
 /* Stucture defining a tunnel */
 struct tunnel {
@@ -25,6 +30,11 @@ struct tunnel {
     int fake_tun[2] ; /* Fake TUN device for server side */
 
     char alive ;
+    struct timeval last_keepalive ;
+
+    struct tunnel_params params ;
+
+    tunnel_close_callback_t close_callback ;
 } ;
 
 /* Called in a thread on a new tunnel */

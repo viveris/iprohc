@@ -26,8 +26,10 @@ int create_tcp_socket(uint32_t address, uint16_t port) {
 	servaddr.sin_port		= htons(port);
 	trace(LOG_INFO, "Connecting to %s\n", inet_ntoa(servaddr.sin_addr)) ;
 
-	if (connect(sock,  (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+	if (connect(sock,  (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
 		perror("Connect failed") ;
+		return -1 ;
+	}
 	
 	return sock ;
 }

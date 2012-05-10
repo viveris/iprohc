@@ -61,7 +61,7 @@ void* new_tunnel(void* arg) {
     struct tunnel* tunnel = (struct tunnel*) arg ;
 
     int failure = 0;
-    int is_umode = 1 ; /* TODO : Handle other mode */
+    int is_umode = tunnel->params.is_unidirectional ;
 
     fd_set readfds;
     struct timespec timeout;
@@ -69,6 +69,7 @@ void* new_tunnel(void* arg) {
 
     struct timeval last;
     struct timeval now;
+    int kp_timeout = tunnel->params.keepalive_timeout ;
 
     int tun, raw;
     int ret;
@@ -76,12 +77,13 @@ void* new_tunnel(void* arg) {
     struct rohc_comp *comp;
     struct rohc_decomp *decomp;
 
+
     /* TODO : Check assumed present attributes
        (thread, local_address, dest_address, tun, fake_tun, raw_socket) */
 
     /* ROHC */
     /* create the compressor and activate profiles */
-    comp = rohc_alloc_compressor(15, 0, 0, 0);
+    comp = rohc_alloc_compressor(tunnel->params.max_cid, 0, 0, 0);
     if(comp == NULL)
     {
         trace(LOG_ERR, "cannot create the ROHC compressor\n");
@@ -123,7 +125,7 @@ void* new_tunnel(void* arg) {
     sigaddset(&sigmask, SIGINT);
 
     /* initialize the last time we sent a packet */
-    gettimeofday(&last, NULL);
+    gettimeofday(&(tunnel->last_keepalive), NULL);
 	tunnel->alive = 1 ;
 
 	/* We read the fake TUN device if we are on a server */
@@ -184,20 +186,15 @@ void* new_tunnel(void* arg) {
             }
         }
 
-        /* flush feedback data if nothing is sent in the tunnel for a moment */
         gettimeofday(&now, NULL);
-        if(now.tv_sec > last.tv_sec + 1)
+        trace(LOG_DEBUG, "Keepalive : %d vs. %d + %d", now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout) ;
+        if(now.tv_sec > tunnel->last_keepalive.tv_sec + kp_timeout)
         {
-            trace(LOG_INFO, "It's been a while since I sent my last packet") ;
-/*            failure = flush_feedback(comp, tunnel->raw_socket, ;
-            last = now;
-#if STOP_ON_FAILURE
-            if(failure)
-                alive = 0;
-#endif */
+            trace(LOG_ERR, "Keepalive timeout detected (%d > %d + %d), exiting", now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout) ;
+            tunnel->alive = 0 ;
         }
     }
-    while(tunnel->alive);
+    while(tunnel->alive > 0);
 
     /*
      * Cleaning:
@@ -207,6 +204,10 @@ destroy_decomp:
     rohc_free_decompressor(decomp);
 destroy_comp:
     rohc_free_compressor(comp);
+
+	if (tunnel->close_callback != NULL) {
+		tunnel->close_callback((void*) tunnel) ;
+	}
 
     return NULL ;
 }

@@ -43,7 +43,6 @@ char* handle_okconnect(struct tunnel* tunnel, char* tlv) {
 		return NULL ;
 	}
 
-
 	/* Tunnel definition */
 	debug_addr.s_addr = tp.local_address ;
 	trace(LOG_DEBUG, "Creation of tunnel, local address : %s\n", inet_ntoa(debug_addr)) ;
@@ -68,6 +67,9 @@ char* handle_okconnect(struct tunnel* tunnel, char* tlv) {
 	tunnel->raw_socket  = raw ;
 	tunnel->fake_raw[0] = -1 ;
 	tunnel->fake_raw[1] = -1 ;
+
+	/* set params */
+	tunnel->params = tp ;
  
     /* Go thread, go ! */
 	pthread_create(&tunnel_thread, NULL, new_tunnel, (void*)tunnel) ;
