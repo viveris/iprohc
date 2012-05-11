@@ -1,4 +1,4 @@
 #include "rohc_tunnel.h"
 
-int handle_client_request(struct tunnel* client, struct tunnel_params params) ;
+int handle_client_request(struct client* client, struct tunnel_params params) ;
 

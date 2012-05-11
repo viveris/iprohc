@@ -13,10 +13,12 @@
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
 #include "tlv.h"
+#include "keepalive.h"
 #include "messages.h"
 
 /* Create TCP socket for communication with server */
-int create_tcp_socket(uint32_t address, uint16_t port) {
+int create_tcp_socket(uint32_t address, uint16_t port) 
+{
 
 	int sock = socket(AF_INET, SOCK_STREAM, 0) ;
 
@@ -34,27 +36,8 @@ int create_tcp_socket(uint32_t address, uint16_t port) {
 	return sock ;
 }
 
-int handle_message(struct tunnel* tunnel, char* buf, int length)
+int main(int argc, char *argv[])
 {
-	char* bufmax = buf + length ;
-	while (buf < bufmax) {
-		switch (*buf) {
-			case C_CONNECT_OK:
-				buf = handle_okconnect(tunnel, ++buf) ;
-				if (buf == NULL) {
-					trace(LOG_ERR, "Unable to decode TCP message") ;
-				}
-				break ;
-			default :
-				trace(LOG_ERR, "Unexpected %d in command\n", *buf) ;
-				return -1 ;
-		}
-	}
-	return 0 ;
-}
-
-int main(int argc, char *argv[]) {
-
 	struct tunnel tunnel ;
     uint32_t serv_addr ;
     char buf[1024] ;
@@ -75,19 +58,18 @@ int main(int argc, char *argv[]) {
 	}	
 
 	/* Set some tunnel parameters */
-	tunnel.tcp_socket = socket ;
 	serv.s_addr = serv_addr ;
 	tunnel.dest_address = serv ;
 
 	/* Ask for connection */
-	client_connect(tunnel) ;
+	client_connect(tunnel, socket) ;
 
 	/* Wait for answer and other messages, close when
 	   socket is close */
 	while ((len = recv(socket, buf, 1024, 0))) {
 		trace(LOG_DEBUG, "Received %ld bytes of data", len) ;
 		trace(LOG_DEBUG, "%s", buf) ;
-		if (handle_message(&tunnel, buf, len) < 0) {
+		if (handle_message(&tunnel, socket, buf, len) < 0) {
 			break ;
 		}
 	}

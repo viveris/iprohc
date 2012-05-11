@@ -18,10 +18,7 @@ typedef void (*tunnel_close_callback_t) (void* tunnel) ;
 
 /* Stucture defining a tunnel */
 struct tunnel {
-    struct in_addr local_address;
     struct in_addr dest_address ;
-    int      tcp_socket   ;
-    pthread_t thread      ;
 
     int      raw_socket /* Real RAW */  ;   
     int fake_raw[2] ; /* Fake RAW device for server side */

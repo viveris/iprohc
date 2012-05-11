@@ -12,6 +12,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <math.h>
 
 #include "rohc_tunnel.h"
 #include "tun_helpers.h"
@@ -55,7 +56,7 @@ enum type_route { TUN, RAW } ;
 
 struct route_args {
 	int fd ;
-	struct tunnel** clients ;
+	struct client** clients ;
 	enum type_route type ;
 } ;
 
@@ -67,8 +68,8 @@ void* route(void* arg)
 {
 	/* Getting args */
 	int fd = ((struct route_args *)arg)->fd ;
-	struct tunnel** clients = ((struct route_args *)arg)->clients ;
-	int type = ((struct route_args *)arg)->type ;
+	struct client** clients = ((struct route_args *)arg)->clients ;
+	enum type_route type = ((struct route_args *)arg)->type ;
 
 	int i ;
 	int ret;
@@ -104,12 +105,12 @@ void* route(void* arg)
 			if (clients[i] != NULL) {
 				if (type == TUN) {
 					if (addr.s_addr == clients[i]->local_address.s_addr) {
-						write(clients[i]->fake_tun[1], buffer, ret) ;
+						write(clients[i]->tunnel.fake_tun[1], buffer, ret) ;
 						break ;
 					}
 				} else {
-					if (addr.s_addr == clients[i]->dest_address.s_addr) {
-						write(clients[i]->fake_raw[1], buffer, ret) ;
+					if (addr.s_addr == clients[i]->tunnel.dest_address.s_addr) {
+						write(clients[i]->tunnel.fake_raw[1], buffer, ret) ;
 					}
 					break ;
 				}
@@ -132,7 +133,7 @@ int main(int argc, char *argv[]) {
 	struct route_args route_args_raw ;
 	pthread_t route_thread; 
 
-	struct tunnel** clients = calloc(MAX_CLIENTS, sizeof(struct tunnel*)) ;
+	struct client** clients = calloc(MAX_CLIENTS, sizeof(struct clients*)) ;
 	fd_set rdfs;
 	int max ;
 	int j ;
@@ -183,48 +184,72 @@ int main(int argc, char *argv[]) {
     params.is_unidirectional   = 1 ;
     params.wlsb_window_width   = 23 ;
     params.refresh             = 9 ;
-    params.keepalive_timeout   = 1000 ;
+    params.keepalive_timeout   = 10 ;
     params.rohc_compat_version = 1 ;
 
 
+	struct timespec timeout ;
+
+	struct timeval now ;
+
 	/* Start listening and looping on TCP socket */
 	while (1) {
+		gettimeofday(&now, NULL) ;
 		FD_ZERO(&rdfs); 
 		FD_SET(serv_socket, &rdfs);		
+		max = serv_socket ;
+
 		for (j=0; j<MAX_CLIENTS; j++) {
-			if (clients[j] != NULL) {
+			if (clients[j] != NULL && clients[j]->tunnel.alive >= 0) {
+				// trace(LOG_DEBUG, "Client alive : %d", clients[j]->tunnel.alive) ;
 				FD_SET(clients[j]->tcp_socket, &rdfs) ;
 				max = (clients[j]->tcp_socket > max)? clients[j]->tcp_socket : max ;
-				if (clients[j]->alive == -1) {
-					trace(LOG_DEBUG, "Freeing %p", clients[j]) ;
-					free(clients[j]) ;
-					trace(LOG_DEBUG, "Ok") ;
-					clients[j] = NULL ;
-				}
 			}
 		}
+		timeout.tv_sec = 1;
+		timeout.tv_nsec = 0;
 
-		if(select(max + 1, &rdfs, NULL, NULL, NULL) == -1) {
+		if(pselect(max + 1, &rdfs, NULL, NULL, &timeout, NULL) == -1) {
 			perror("select()");
-			exit(errno);
 		}
 
 		if (FD_ISSET(serv_socket, &rdfs)) {
-			new_client(serv_socket, tun, raw, clients, params) ;
+			ret = new_client(serv_socket, tun, raw, clients, MAX_CLIENTS, params) ;
+			if (ret < 0) {
+				trace(LOG_ERR, "new_client returned %d\n", ret) ;
+				/* TODO : HANDLE THAT */
+			}
 		}
 
 		for (j=0; j<MAX_CLIENTS; j++) {
-			if (clients[j] != NULL && FD_ISSET(clients[j]->tcp_socket, &rdfs)) {
+			if (clients[j] == NULL) {
+				continue ;
+			}
+			// trace(LOG_DEBUG, "Client alive2 : %d", clients[j]->tunnel.alive) ;
+
+			if (clients[j]->tunnel.alive == 1 && 
+				(clients[j]->last_keepalive.tv_sec == -1 || 
+				 clients[j]->last_keepalive.tv_sec + ceil(clients[j]->tunnel.params.keepalive_timeout/3) < now.tv_sec)) {
+				/* send keepalive */
+				keepalive(clients[j]->tcp_socket) ;
+				gettimeofday(&(clients[j]->last_keepalive), NULL) ;
+			} else if (clients[j]->tunnel.alive == -1) {
+				/* free dead client */
+				trace(LOG_DEBUG, "Freeing %p", clients[j]) ;
+				close(clients[j]->tcp_socket) ;
+				free(clients[j]) ;
+				clients[j] = NULL ;
+			} else if (FD_ISSET(clients[j]->tcp_socket, &rdfs)) {
+				/* handle request */
 				ret = handle_client_request(clients[j], params) ;
 				if (ret < 0) {
-					trace(LOG_WARNING, "[%s] Client disconnected", inet_ntoa(clients[j]->dest_address)) ;
-					if (clients[j]->alive > 0) {
-						clients[j]->alive = 0 ;
+					if (clients[j]->tunnel.alive > 0) {
+						trace(LOG_WARNING, "[%s] Client disconnected", inet_ntoa(clients[j]->tunnel.dest_address)) ;
+						clients[j]->tunnel.alive = 0 ;
 					}
 				}
 			}
 		}
-		sleep(1) ;
 	}
 
 	return 0 ;

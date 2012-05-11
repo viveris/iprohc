@@ -24,9 +24,7 @@ endif (NEW_RTNL)
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
-#
-
-add_library (rohctunnel SHARED rohc_tunnel.c tun_helpers.c tlv.c)
+add_library (rohctunnel SHARED rohc_tunnel.c tun_helpers.c tlv.c keepalive.c)
 add_definitions("-Wall")
 target_link_libraries(rohctunnel ${LIBS} netlink) 
 

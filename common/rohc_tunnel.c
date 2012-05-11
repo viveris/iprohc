@@ -187,10 +187,10 @@ void* new_tunnel(void* arg) {
         }
 
         gettimeofday(&now, NULL);
-        trace(LOG_DEBUG, "Keepalive : %d vs. %d + %d", now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout) ;
+//        trace(LOG_DEBUG, "Keepalive : %ld vs. %ld + %d", now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout) ;
         if(now.tv_sec > tunnel->last_keepalive.tv_sec + kp_timeout)
         {
-            trace(LOG_ERR, "Keepalive timeout detected (%d > %d + %d), exiting", now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout) ;
+            trace(LOG_ERR, "Keepalive timeout detected (%ld > %ld + %d), exiting", now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout) ;
             tunnel->alive = 0 ;
         }
     }
