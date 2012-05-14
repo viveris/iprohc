@@ -68,7 +68,6 @@ int main(int argc, char *argv[])
 	   socket is close */
 	while ((len = recv(socket, buf, 1024, 0))) {
 		trace(LOG_DEBUG, "Received %ld bytes of data", len) ;
-		trace(LOG_DEBUG, "%s", buf) ;
 		if (handle_message(&tunnel, socket, buf, len) < 0) {
 			break ;
 		}

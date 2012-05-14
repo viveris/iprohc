@@ -10,6 +10,7 @@
 #include <sys/ioctl.h>
 
 #include "tlv.h"
+#include "keepalive.h"
 #include "rohc_tunnel.h"
 #include "tun_helpers.h"
 

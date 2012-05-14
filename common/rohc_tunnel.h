@@ -39,8 +39,12 @@ void* new_tunnel(void* arg) ;
 
 int create_raw() ;
 
-int tun2raw(struct rohc_comp *comp, int from, int to, struct in_addr raddr) ;
-int raw2tun(struct rohc_decomp *decomp, int from, int to) ;
+int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing) ;
+int tun2raw(struct rohc_comp *comp,
+            int from, int to,
+            struct in_addr raddr, 
+            int* act_comp, int packing, unsigned char* compressed_packet,
+            int* total_size) ;
 
 int read_from_tun(int fd, unsigned char *packet, unsigned int *length);
 int write_to_tun(int fd, unsigned char *packet, unsigned int length);

@@ -56,7 +56,7 @@ int new_client(int socket, int tun, int raw, struct client** clients, int max_cl
 
 	/* set tun */
 	clients[i]->tunnel.tun = tun ; /* real tun device */
-	if (pipe(clients[i]->tunnel.fake_tun) < 0) {
+	if (socketpair(AF_UNIX, SOCK_RAW, 0, clients[i]->tunnel.fake_tun) < 0) {
 		perror("Can't open pipe for tun") ;
 		/* TODO  : Flush */
 		return 1 ;
@@ -64,7 +64,7 @@ int new_client(int socket, int tun, int raw, struct client** clients, int max_cl
 
 	/* set raw */
 	clients[i]->tunnel.raw_socket = raw ; /* real tun device */
-	if (pipe(clients[i]->tunnel.fake_raw) < 0) {
+	if (socketpair(AF_UNIX, SOCK_RAW, 0, clients[i]->tunnel.fake_raw) < 0) {
 		perror("Can't open pipe for tun") ;
 		/* TODO  : Flush */
 		return -1 ;
