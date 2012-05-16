@@ -3,6 +3,14 @@ project (RoHCIPIPtunnel)
 
 add_definitions("-g")
 
-add_subdirectory (client) 
+option(BUILD_CLIENT "Build the ROHC IPIP client" ON)
+option(BUILD_SERVER "Build the ROHC IPIP server" ON)
+
 add_subdirectory (common) 
-add_subdirectory (server) 
+if (BUILD_CLIENT)
+    add_subdirectory (client) 
+endif (BUILD_CLIENT)
+
+if (BUILD_SERVER)
+    add_subdirectory (server) 
+endif (BUILD_SERVER)

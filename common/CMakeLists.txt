@@ -24,8 +24,16 @@ endif (NEW_RTNL)
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
-add_library (rohctunnel SHARED rohc_tunnel.c tun_helpers.c tlv.c keepalive.c)
+add_library (rohc_ipip_common SHARED rohc_tunnel.c tun_helpers.c tlv.c keepalive.c)
 add_definitions("-Wall")
-target_link_libraries(rohctunnel ${LIBS} netlink) 
+target_link_libraries(rohc_ipip_common ${LIBS} netlink) 
 
-add_subdirectory (tests)
+install (TARGETS rohc_ipip_common DESTINATION lib)
+install (FILES  keepalive.h  rohc_tunnel.h  tlv.h  tun_helpers.h 
+        DESTINATION include/rohc_ipip_common/) 
+
+option (BUILD_TEST "Also build test programs" OFF)
+
+if (BUILD_TEST)
+    add_subdirectory (tests)
+endif (BUILD_TEST)

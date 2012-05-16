@@ -6,8 +6,10 @@ set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
 
 include_directories("../common")
 
-add_executable (server server.c client.c messages.c)
+add_executable (rohc_ipip_server server.c client.c messages.c)
 
 add_definitions("-Wall")
 
-target_link_libraries(server ${LIBS} rohctunnel ) 
+target_link_libraries(rohc_ipip_server ${LIBS} rohc_ipip_common) 
+
+install(TARGETS rohc_ipip_server DESTINATION bin)
