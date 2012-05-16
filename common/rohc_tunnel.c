@@ -317,7 +317,7 @@ int tun2raw(struct rohc_comp *comp,
 		rohc_packet_p += 2 ;
 		*total_size   += 2 ; 
 	} else {
-		*rohc_packet_p = rohc_size & 0b01111111 ;
+		*rohc_packet_p = rohc_size ;
 		rohc_packet_p += 1 ;
 		*total_size   += 1 ; 
 	}
