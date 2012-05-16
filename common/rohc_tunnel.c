@@ -313,7 +313,7 @@ int tun2raw(struct rohc_comp *comp,
 	dump_packet("Compressed packet", rohc_packet_temp, rohc_size) ;
 
 	if (rohc_size > 128) {
-		*((uint16_t*) rohc_packet_p) = htons(rohc_size) | 0b1000000000000000 ;
+		*((uint16_t*) rohc_packet_p) = htons(rohc_size) | (1 << 15) ; /* 0b1000000000000000 */
 		rohc_packet_p += 2 ;
 		*total_size   += 2 ; 
 	} else {
@@ -393,7 +393,7 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
 
 	while(packet_p < packet + packet_len) {
 		if (*packet_p >= 128) {
-		    len = ntohs(*((uint16_t*) packet_p) & 0b0111111111111111) ;
+		    len = ntohs(*((uint16_t*) packet_p) & (~(1 << 15))); /* 0b0111111111111111 */ ;
 		    packet_p += 2 ;
 		} else {
 			len = *packet_p ;
@@ -689,7 +689,7 @@ int callback_rtp_detect(const unsigned char *ip,
     }
 
     /* check RTP version field */
-    rtp_version = (*((uint8_t *) (payload)) & 0b11000000) >> 6;
+    rtp_version = (*((uint8_t *) (payload)) & 0xA0) >> 6; /* 0xA0 : 0b11000000 */
     if(rtp_version != 2)
     {
         trace(LOG_DEBUG, "RTP packet not detected (wrong RTP version)\n");
