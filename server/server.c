@@ -179,7 +179,7 @@ int main(int argc, char *argv[]) {
 
 	/* params */
 	struct tunnel_params params ;
-    params.packing             = 5 ;
+    params.packing             = 4 ;
     params.max_cid             = 14 ;
     params.is_unidirectional   = 1 ;
     params.wlsb_window_width   = 23 ;

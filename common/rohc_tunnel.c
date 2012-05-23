@@ -60,6 +60,20 @@ int callback_rtp_detect(const unsigned char *ip,
                         void *rtp_private);
 
 /* Main functions */
+void send_puree(int to, struct in_addr raddr, unsigned char* compressed_packet, int* total_size, int* act_comp)
+{
+		int ret ;
+
+		dump_packet("Packet ROHC : ", compressed_packet, *total_size) ;
+		/* write the ROHC packet in the RAW tunnel */
+		ret = write_to_raw(to, raddr, compressed_packet, *total_size);
+		if(ret != 0)
+		{
+			trace(LOG_ERR, "write_to_raw failed\n");
+		}
+		*total_size = 0 ;
+		*act_comp   = 0 ;
+}
 
 void* new_tunnel(void* arg) {
 
@@ -101,11 +115,11 @@ void* new_tunnel(void* arg) {
     rohc_activate_profile(comp, ROHC_PROFILE_UDPLITE);
     rohc_activate_profile(comp, ROHC_PROFILE_RTP);
 
-/*    ret = rohc_comp_trace(comp, print_rohc_traces);
+    ret = rohc_comp_trace(comp, print_rohc_traces);
     if(ret != ROHC_OK) {
 		trace(LOG_ERR, "cannot set trace callback for compressor\n") ;
 		goto destroy_comp ;	
-	} */
+	} 
 
 
 	ret = rohc_comp_set_rtp_detection_callback(comp, callback_rtp_detect, NULL) ;
@@ -123,12 +137,11 @@ void* new_tunnel(void* arg) {
         goto destroy_comp;
     }
 
-/*    ret = rohc_decomp_trace(decomp, print_rohc_traces);
+    ret = rohc_decomp_trace(decomp, print_rohc_traces);
     if(ret != ROHC_OK) {
 		trace(LOG_ERR, "cannot set trace callback for decompressor\n") ;
 		goto destroy_decomp ;	
-	} */
-
+	}
 
     /* poll network interfaces each second */
     timeout.tv_sec = 1;
@@ -208,6 +221,11 @@ void* new_tunnel(void* arg) {
             }
         }
 
+		if (! FD_ISSET(tun, &readfds) && ! FD_ISSET(raw, &readfds)) {
+			trace(LOG_DEBUG, "No packets since a while, sending...") ;
+			send_puree(tunnel->raw_socket, tunnel->dest_address, compressed_packet, &total_size, &act_comp) ;
+		}
+
         gettimeofday(&now, NULL);
 //        trace(LOG_DEBUG, "Keepalive : %ld vs. %ld + %d", now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout) ;
         if(now.tv_sec > tunnel->last_keepalive.tv_sec + kp_timeout)
@@ -222,7 +240,7 @@ void* new_tunnel(void* arg) {
      * Cleaning:
      */
 
-//destroy_decomp:
+destroy_decomp:
     rohc_free_decompressor(decomp);
 destroy_comp:
     rohc_free_compressor(comp);
@@ -251,6 +269,7 @@ quit:
     return -1 ;
 }
 
+
 /**
  * @brief Forward IP packets received on the TUN interface to the RAW socket
  *
@@ -273,7 +292,7 @@ int tun2raw(struct rohc_comp *comp,
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
 
 	unsigned char* rohc_packet_temp = calloc(MAX_ROHC_SIZE, sizeof(char));
-	unsigned char *rohc_packet_p = compressed_packet + *total_size;
+	unsigned char *rohc_packet_p ; 
 
 	unsigned char *packet;
 	unsigned int packet_len;
@@ -293,6 +312,7 @@ int tun2raw(struct rohc_comp *comp,
 
 	if(buffer_len == 0)
 		goto quit;
+	
 
 	/* We skip the 4 bytes TUN header */
 	packet = &buffer[4];
@@ -300,7 +320,6 @@ int tun2raw(struct rohc_comp *comp,
 	
 
 	/* compress the IP packet */
-	trace(LOG_DEBUG, "Compress packet #%d/%d : %d bytes", *act_comp, packing, packet_len) ;
 	rohc_size = rohc_compress(comp, packet, packet_len,
 							  rohc_packet_temp, MAX_ROHC_SIZE);
 	if(rohc_size <= 0)
@@ -308,12 +327,19 @@ int tun2raw(struct rohc_comp *comp,
 		trace(LOG_ERR, "compression of packet failed\n");
 		goto error;
 	}
+
+	if (*total_size + rohc_size + 4 > TUNTAP_BUFSIZE) {
+		send_puree(to, raddr, compressed_packet, total_size, act_comp) ;
+	}
+	trace(LOG_DEBUG, "Compress packet #%d/%d : %d bytes", *act_comp, packing, packet_len) ;
+	
+	rohc_packet_p = compressed_packet + *total_size;
 	
 	trace(LOG_DEBUG, "Packet #%d/%d compressed : %d bytes", *act_comp, packing, rohc_size) ;
 	dump_packet("Compressed packet", rohc_packet_temp, rohc_size) ;
 
 	if (rohc_size > 128) {
-		*((uint16_t*) rohc_packet_p) = htons(rohc_size) | (1 << 15) ; /* 0b1000000000000000 */
+		*((uint16_t*) rohc_packet_p) = htons(rohc_size | (1 << 15)) ; /* 0b1000000000000000 */
 		rohc_packet_p += 2 ;
 		*total_size   += 2 ; 
 	} else {
@@ -328,16 +354,7 @@ int tun2raw(struct rohc_comp *comp,
 	*act_comp = *act_comp + 1 ;
 
 	if (*act_comp == packing) {
-		dump_packet("Packet ROHC : ", compressed_packet, *total_size) ;
-		/* write the ROHC packet in the RAW tunnel */
-		ret = write_to_raw(to, raddr, compressed_packet, *total_size);
-		if(ret != 0)
-		{
-			trace(LOG_ERR, "write_to_raw failed\n");
-			goto error;
-		}
-		*total_size = 0 ;
-		*act_comp   = 0 ;
+		send_puree(to, raddr, compressed_packet, total_size, act_comp) ;
 	}
 
 quit:
@@ -393,14 +410,20 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
 
 	while(packet_p < packet + packet_len) {
 		if (*packet_p >= 128) {
-		    len = ntohs(*((uint16_t*) packet_p) & (~(1 << 15))); /* 0b0111111111111111 */ ;
+		    len = ntohs(*((uint16_t*) packet_p)) & (~(1 << 15)); /* 0b0111111111111111 */ ;
 		    packet_p += 2 ;
 		} else {
 			len = *packet_p ;
 		    packet_p += 1 ;
 		}
+
 		trace(LOG_DEBUG, "Packet #%d : %d bytes", i, len) ;
 		i++ ;
+
+		if (len > MAX_ROHC_SIZE) {
+			trace(LOG_ERR, "Packet to big, skipping") ;
+			continue ;
+		}
 
 		dump_packet("Packet : ", packet_p, len) ;
 		decomp_size = rohc_decompress(decomp, packet_p, len,
@@ -415,7 +438,7 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
 			else
 			{
 				trace(LOG_ERR, "decompression of packet failed\n");
-				goto drop;
+				goto error;
 			}
 		}
 
@@ -675,9 +698,9 @@ int callback_rtp_detect(const unsigned char *ip,
 
     /* check UDP destination port => range 10000 - 20000 fixed by asterisk */
     /* even is for RTP, odd for RTCP, so we check the parity               */
-    if (ntohs(udp->source)  < 10000 || ntohs(udp->source)  > 20000 || ntohs(udp->source) % 2 == 0)
+    if (ntohs(udp->source)  < 10000 || ntohs(udp->source)  > 20000 || ntohs(udp->source) % 2 == 1)
     {
-        trace(LOG_DEBUG, "RTP packet not detected (wrong UDP port)\n");
+        trace(LOG_DEBUG, "RTP packet not detected (wrong UDP port (%d))\n", udp->source);
         goto not_rtp;
     }
 

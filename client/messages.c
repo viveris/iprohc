@@ -41,6 +41,7 @@ int handle_message(struct tunnel* tunnel, int socket, char* buf, int length)
 				break ;
 			default :
 				trace(LOG_ERR, "Unexpected %d in command\n", *buf) ;
+				buf++ ;
 		}
 	}
 	return 0 ;
