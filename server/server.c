@@ -184,7 +184,7 @@ int main(int argc, char *argv[]) {
     params.is_unidirectional   = 1 ;
     params.wlsb_window_width   = 23 ;
     params.refresh             = 9 ;
-    params.keepalive_timeout   = 10 ;
+    params.keepalive_timeout   = 60 ;
     params.rohc_compat_version = 1 ;
 
 

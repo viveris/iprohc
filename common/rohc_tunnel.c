@@ -257,7 +257,7 @@ int create_raw() {
     int sock ;
 
     /* create socket */
-    sock = socket(AF_INET, SOCK_RAW, IPPROTO_IPIP) ;
+    sock = socket(AF_INET, SOCK_RAW, 142) ;
     if (sock < 0) {
         perror("Can't open RAW socket\n") ;
         goto quit ;
