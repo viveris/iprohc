@@ -22,13 +22,13 @@
 #define MAX_LOG LOG_INFO
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
-int handle_message(struct tunnel* tunnel, int socket, char* buf, int length)
+int handle_message(struct tunnel* tunnel, int socket, char* buf, int length, struct client_opts opts)
 {
 	char* bufmax = buf + length ;
 	while (buf < bufmax) {
 		switch (*buf) {
 			case C_CONNECT_OK:
-				buf = handle_okconnect(tunnel, socket, ++buf) ;
+				buf = handle_okconnect(tunnel, socket, ++buf, opts) ;
 				if (buf == NULL) {
 					trace(LOG_ERR, "Unable to decode TCP message") ;
 				}
@@ -57,7 +57,7 @@ int client_connect(struct tunnel tunnel, int socket)
 	return 1 ;
 }
 
-char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv)
+char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct client_opts opts)
 {
 	int tun, raw ;
 	int tun_itf_id ;
@@ -77,7 +77,7 @@ char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv)
 	trace(LOG_DEBUG, "Creation of tunnel, local address : %s\n", inet_ntoa(debug_addr)) ;
 
 	/* set tun */
-	tun = create_tun("rohc_ipc", &tun_itf_id) ;
+	tun = create_tun(opts.tun_name, &tun_itf_id) ;
 	set_ip4(tun_itf_id, tp.local_address, 24) ; /* 192.168.99.23/24 */
 	tunnel->tun = tun ; /* real tun device */
 	tunnel->fake_tun[0] = -1 ;

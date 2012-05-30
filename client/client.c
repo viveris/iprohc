@@ -16,6 +16,9 @@
 #include "keepalive.h"
 #include "messages.h"
 
+#include <unistd.h>
+#include <getopt.h>
+
 /* Create TCP socket for communication with server */
 int create_tcp_socket(uint32_t address, uint16_t port) 
 {
@@ -36,21 +39,89 @@ int create_tcp_socket(uint32_t address, uint16_t port)
 	return sock ;
 }
 
+void usage(char* arg0) {
+	printf("Usage : %s --remote addr --dev itf_name  [opts]\n", arg0) ;
+	printf("\n") ;
+	printf("Options : \n") ;
+	printf(" --remote : Address of the remote server \n") ;
+	printf(" --port : Port of the remote server \n") ;
+	printf(" --dev : Name of the TUN interface that will be created \n") ;
+	printf(" --up : Path to a shell script that will be executed when network is up\n") ;
+	exit(2) ;
+}
+
 int main(int argc, char *argv[])
 {
 	struct tunnel tunnel ;
-    uint32_t serv_addr ;
+    uint32_t serv_addr = 0 ;
+    int      port ;
     char buf[1024] ;
 	int socket ;
+	int c;
 
 	struct in_addr serv;
 	size_t len ;
 
+	struct client_opts client_opts ;
+	client_opts.tun_name = calloc(32, sizeof(char)) ;
+	client_opts.up_script_path = calloc(1024, sizeof(char)) ;
+
 	/* Initialize logger */
 	openlog("rohc_ipip_client", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
 
+	/* Parsing options */
+	struct option options[] = {
+		{ "dev",    required_argument, NULL, 'i' },
+		{ "remote", required_argument, NULL, 'r' },
+		{ "port",   required_argument, NULL, 'p' },
+		{ "up",     required_argument, NULL, 'U' },
+		{ "help",   no_argument, NULL, 'h' },
+		{NULL, 0, 0, 0}
+							  } ;
+	int option_index = 0;
+	do {
+		c = getopt_long(argc, argv, "i:r:p:u:h", options, &option_index) ;
+		switch (c) {
+			case 'i' :
+				trace(LOG_DEBUG, "TUN interface name : %s", optarg) ;
+				if (strlen(optarg) >= 32) {
+					trace(LOG_ERR, "TUN interface name too long") ;
+					exit(1) ;
+				}
+				strncpy(client_opts.tun_name, optarg, 32) ;
+				break;
+			case 'r' :
+				trace(LOG_DEBUG, "Remote address : %s", optarg) ;
+				serv_addr = htonl(inet_network(optarg)) ;
+				break;
+			case 'p' :
+				port = atoi(optarg) ;
+				trace(LOG_DEBUG, "Remote port : %d", port) ;
+				break ;
+			case 'u' :
+				trace(LOG_DEBUG, "Up script path: %s", optarg) ;
+				if (strlen(optarg) >= 1024) {
+					trace(LOG_ERR, "Up script path too long") ;
+					exit(1) ;
+				}
+				strncpy(client_opts.up_script_path, optarg, 1024) ;
+				break;
+			case 'h' :
+				usage(argv[0]) ;
+				break;
+		}			
+	} while (c != -1) ;
+
+	if (serv_addr == 0) {
+		trace(LOG_ERR, "Remote address is mandatory") ;
+		exit(1) ;
+	}
+
+	if (strcmp(client_opts.tun_name, "") == 0) {
+		trace(LOG_ERR, "TUN interface name is mandatory") ;
+		exit(1) ;
+	}
 	/* Create socket to neogotiate parameters and maintain it */
-    serv_addr = htonl(inet_network(argv[1])) ;
 	socket = create_tcp_socket(serv_addr, 1989) ;
 	if (socket < 0) {
 		perror("Can't open socket") ;
@@ -68,7 +139,7 @@ int main(int argc, char *argv[])
 	   socket is close */
 	while ((len = recv(socket, buf, 1024, 0))) {
 		trace(LOG_DEBUG, "Received %ld bytes of data", len) ;
-		if (handle_message(&tunnel, socket, buf, len) < 0) {
+		if (handle_message(&tunnel, socket, buf, len, client_opts) < 0) {
 			break ;
 		}
 	}
