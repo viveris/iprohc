@@ -14,7 +14,7 @@ struct client {
     struct timeval last_keepalive ;
 } ;
 
-int  new_client(int socket, int tun, int raw, struct client** clients, int max_clients, struct tunnel_params params) ;
+int  new_client(int socket, int tun, struct client** clients, int max_clients, struct tunnel_params params) ;
 void close_tunnel(void* tunnel) ;
 int  start_client_tunnel(struct client* client) ;
 

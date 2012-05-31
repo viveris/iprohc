@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <math.h>
+#include <string.h>
 
 #include <syslog.h>
 #define MAX_LOG LOG_DEBUG
@@ -22,12 +23,13 @@ void close_tunnel(void* v_tunnel)
 	tunnel->alive = -1 ; /* Mark to be deleted */
 }
 
-int new_client(int socket, int tun, int raw, struct client** clients, int max_clients, struct tunnel_params params) {
+int new_client(int socket, int tun, struct client** clients, int max_clients, struct tunnel_params params) {
 	int conn; 
 	struct	sockaddr_in src_addr;
 	socklen_t src_addr_len = sizeof(src_addr);
 	struct in_addr local;
 	int i = 0 ;
+	int raw ;
 
 	/* New client */
 	conn = accept(socket, (struct sockaddr*)&src_addr, &src_addr_len) ;
@@ -51,7 +53,7 @@ int new_client(int socket, int tun, int raw, struct client** clients, int max_cl
 	/* dest_addr */
 	clients[i]->tunnel.dest_address  = src_addr.sin_addr ;
 	/* local_addr */
-	local.s_addr = inet_addr("192.168.99.23") ;
+	local.s_addr = htonl(ntohl(params.local_address) + i + 10) ;
 	clients[i]->local_address = local ;
 
 	/* set tun */
@@ -63,14 +65,19 @@ int new_client(int socket, int tun, int raw, struct client** clients, int max_cl
 	}
 
 	/* set raw */
-	clients[i]->tunnel.raw_socket = raw ; /* real tun device */
+	raw = create_raw() ;
+	if (raw < 0) {
+		trace(LOG_ERR, "Unable to create raw socket") ;
+	}
+	clients[i]->tunnel.raw_socket = raw ;
 	if (socketpair(AF_UNIX, SOCK_RAW, 0, clients[i]->tunnel.fake_raw) < 0) {
-		perror("Can't open pipe for tun") ;
+		perror("Can't open pipe for raw") ;
 		/* TODO  : Flush */
 		return -1 ;
 	}
 
-	clients[i]->tunnel.params =  params ;
+	memcpy(&(clients[i]->tunnel.params),  &params, sizeof(struct tunnel_params)) ;
+	clients[i]->tunnel.params.local_address = local.s_addr ;
 	clients[i]->tunnel.alive =   0 ;
 	clients[i]->tunnel.close_callback = close_tunnel ;
 

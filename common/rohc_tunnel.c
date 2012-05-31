@@ -222,8 +222,10 @@ void* new_tunnel(void* arg) {
         }
 
 		if (! FD_ISSET(tun, &readfds) && ! FD_ISSET(raw, &readfds)) {
-			trace(LOG_DEBUG, "No packets since a while, sending...") ;
-			send_puree(tunnel->raw_socket, tunnel->dest_address, compressed_packet, &total_size, &act_comp) ;
+			if (total_size > 0) {
+				trace(LOG_DEBUG, "No packets since a while, sending...") ;
+				send_puree(raw, tunnel->dest_address, compressed_packet, &total_size, &act_comp) ;
+			}
 		}
 
         gettimeofday(&now, NULL);

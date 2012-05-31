@@ -150,13 +150,24 @@ int main(int argc, char *argv[]) {
 	}
 	max = serv_socket ;
 
+	/* params */
+	struct tunnel_params params ;
+    params.local_address       = inet_addr("192.168.99.1") ;
+    params.packing             = 4 ;
+    params.max_cid             = 14 ;
+    params.is_unidirectional   = 1 ;
+    params.wlsb_window_width   = 23 ;
+    params.refresh             = 9 ;
+    params.keepalive_timeout   = 60 ;
+    params.rohc_compat_version = 1 ;
+
 	/* TUN create */
 	tun = create_tun("tun_ipip", &tun_itf_id) ;
 	if (tun < 0) {
 		trace(LOG_ERR, "Unable to create TUN device") ;
 		return 1 ;
 	}
-	set_ip4(tun_itf_id, htonl(inet_network("192.168.99.1")), 24) ;
+	set_ip4(tun_itf_id, params.local_address, 24) ;
 
 	/* TUN routing thread */
 	route_args_tun.fd = tun ;
@@ -167,7 +178,7 @@ int main(int argc, char *argv[]) {
 	/* RAW create */
 	raw = create_raw() ;
 	if (raw < -1) {
-		trace(LOG_ERR, "Unable to create TUN device") ;
+		trace(LOG_ERR, "Unable to create RAW socket") ;
 		return 1 ;
 	}
 
@@ -176,17 +187,6 @@ int main(int argc, char *argv[]) {
 	route_args_raw.clients = clients ;
 	route_args_raw.type = RAW ;
 	pthread_create(&route_thread, NULL, route, (void*)&route_args_raw) ;
-
-	/* params */
-	struct tunnel_params params ;
-    params.packing             = 4 ;
-    params.max_cid             = 14 ;
-    params.is_unidirectional   = 1 ;
-    params.wlsb_window_width   = 23 ;
-    params.refresh             = 9 ;
-    params.keepalive_timeout   = 60 ;
-    params.rohc_compat_version = 1 ;
-
 
 	struct timespec timeout ;
 
@@ -214,7 +214,7 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (FD_ISSET(serv_socket, &rdfs)) {
-			ret = new_client(serv_socket, tun, raw, clients, MAX_CLIENTS, params) ;
+			ret = new_client(serv_socket, tun, clients, MAX_CLIENTS, params) ;
 			if (ret < 0) {
 				trace(LOG_ERR, "new_client returned %d\n", ret) ;
 				/* TODO : HANDLE THAT */

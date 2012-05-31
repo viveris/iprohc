@@ -78,7 +78,11 @@ char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct clie
 
 	/* set tun */
 	tun = create_tun(opts.tun_name, &tun_itf_id) ;
-	set_ip4(tun_itf_id, tp.local_address, 24) ; /* 192.168.99.23/24 */
+    if (tun < -1) {
+        trace(LOG_ERR, "Unable to create TUN device") ;
+        return NULL ;
+    }
+	set_ip4(tun_itf_id, tp.local_address, 24) ;
 	tunnel->tun = tun ; /* real tun device */
 	tunnel->fake_tun[0] = -1 ;
 	tunnel->fake_tun[1] = -1 ;
@@ -86,7 +90,7 @@ char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct clie
     /* set RAW  */
     raw = create_raw() ;
     if (raw < -1) {
-        trace(LOG_ERR, "Unable to create TUN device") ;
+        trace(LOG_ERR, "Unable to create RAW socket") ;
         return NULL ;
     }
 	tunnel->raw_socket  = raw ;
