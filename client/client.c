@@ -54,7 +54,7 @@ int main(int argc, char *argv[])
 {
 	struct tunnel tunnel ;
     uint32_t serv_addr = 0 ;
-    int      port ;
+    int      port  = 1989;
     char buf[1024] ;
 	int socket ;
 	int c;
@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
 		exit(1) ;
 	}
 	/* Create socket to neogotiate parameters and maintain it */
-	socket = create_tcp_socket(serv_addr, 1989) ;
+	socket = create_tcp_socket(serv_addr, port) ;
 	if (socket < 0) {
 		perror("Can't open socket") ;
 		exit(1) ;

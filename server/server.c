@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
 	openlog("rohc_ipip_server", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
 
 	/* Create TCP socket */
-	if ((serv_socket = create_tcp_socket(INADDR_ANY, 1989)) < 0) {
+	if ((serv_socket = create_tcp_socket(INADDR_ANY, atoi(argv[1]))) < 0) {
 		perror("Can't open TCP socket") ;
 		exit(1) ;
 	}

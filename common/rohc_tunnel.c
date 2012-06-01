@@ -205,7 +205,7 @@ void* new_tunnel(void* arg) {
                 gettimeofday(&last, NULL);
                 if(failure) {
                     trace(LOG_ERR, "tun2raw failed\n") ;
-                    tunnel->alive = 0;
+                //    tunnel->alive = 0;
                 }
             }
   
@@ -216,7 +216,7 @@ void* new_tunnel(void* arg) {
                 failure = raw2tun(decomp, raw, tunnel->tun, packing);
                 if(failure) {
                     trace(LOG_ERR, "raw2tun failed\n") ;
-                    tunnel->alive = 0;
+               //     tunnel->alive = 0;
                 }
             }
         }
@@ -224,7 +224,7 @@ void* new_tunnel(void* arg) {
 		if (! FD_ISSET(tun, &readfds) && ! FD_ISSET(raw, &readfds)) {
 			if (total_size > 0) {
 				trace(LOG_DEBUG, "No packets since a while, sending...") ;
-				send_puree(raw, tunnel->dest_address, compressed_packet, &total_size, &act_comp) ;
+				send_puree(tunnel->raw_socket, tunnel->dest_address, compressed_packet, &total_size, &act_comp) ;
 			}
 		}
 
@@ -423,8 +423,13 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
 		i++ ;
 
 		if (len > MAX_ROHC_SIZE) {
-			trace(LOG_ERR, "Packet to big, skipping") ;
-			continue ;
+			trace(LOG_ERR, "Packet too big, skipping") ;
+			goto error ;
+		}
+
+		if (len > packet_len) {
+			trace(LOG_ERR, "Packet bigger than containing packet, skipping all") ;
+			goto error ;
 		}
 
 		dump_packet("Packet : ", packet_p, len) ;
