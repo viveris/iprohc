@@ -27,7 +27,7 @@
 #define TUNTAP_BUFSIZE 1518
 
 #include <syslog.h>
-#define MAX_LOG LOG_DEBUG
+#define MAX_LOG LOG_INFO
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
 /* Create TCP socket for communication with clients */

@@ -25,6 +25,8 @@ On a client connection :
 #include <rohc_comp.h>
 #include <rohc_decomp.h>
 
+#include "ip_chksum.h"
+
 /* Initialize logger */
 #include <syslog.h>
 #define MAX_LOG LOG_INFO
@@ -406,6 +408,18 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
 	}
 
 	dump_packet("Decompressing : ", packet + 20, packet_len - 20) ;
+	/* XXX : We assume here all packets are IPv4 */
+	/* Check checksum */
+	uint16_t* p_chksum =  (uint16_t*) &packet[10] ;
+	uint16_t csum2 = *p_chksum ;
+	*p_chksum = 0 ;
+	uint16_t csum1 = ip_fast_csum(packet, 5) ; 
+
+	if (csum1 != csum2) {
+		trace(LOG_ERR, "Wrong IP checksum (%d != %d)", csum1, csum2) ;
+		goto error ;
+	}
+
 	/* decompress the ROHC packet */
 	packet_p += 20 ;
 	int i = 0;
