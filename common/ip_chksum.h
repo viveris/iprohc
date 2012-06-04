@@ -30,7 +30,7 @@ static inline unsigned short ip_fast_csum(unsigned char *iph, unsigned int ihl)
 {
 	unsigned int sum;
 
-	_ck _asm__ __volatile__(" \n\
+	__asm__ __volatile__(" \n\
        movl (%1), %0      \n\
        subl $4, %2		\n\
        jbe 2f		\n\
