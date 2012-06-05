@@ -644,20 +644,24 @@ error:
 void dump_packet(char *descr, unsigned char *packet, unsigned int length)
 {
     unsigned int i;
+	char line[1024] ; 
+	char tmp[4] ; 
 
-    fprintf(stderr, "-------------------------------\n");
-    fprintf(stderr, "%s (%u bytes):\n", descr, length);
+    trace(LOG_DEBUG, "-------------------------------\n");
+    trace(LOG_DEBUG, "%s (%u bytes):\n", descr, length);
+    line[0] = '\0' ;
     for(i = 0; i < length; i++)
     {
-        if(i > 0 && (i % 16) == 0)
-            fprintf(stderr, "\n");
-        else if(i > 0 && (i % 8) == 0)
-            fprintf(stderr, "\t");
-
-        fprintf(stderr, "%.2x ", packet[i]);
+        if(i > 0 && (i % 16) == 0) {
+            trace(LOG_DEBUG, line);
+            line[0] = '\0' ;
+        } else if(i > 0 && (i % 8) == 0) {
+        	strcat(line, "\t") ;
+        }
+        snprintf(tmp, 4, "%.2x ", packet[i]);
+        strcat(line, tmp) ;
     }
-    fprintf(stderr, "\n");
-    fprintf(stderr, "-------------------------------\n");
+    trace(LOG_DEBUG, "-------------------------------\n");
 }
 
 /**
@@ -720,6 +724,11 @@ static void print_rohc_traces(rohc_trace_level_t level,
 		trace(LOG_WARNING, "Following trace has been truncated\n") ;
 	}
 	va_end(args);
+	
+	if (strlen(extended) == 5 && extended[0] == '0' && extended[1] == 'x') {
+		/* annoying packet dump trace, don't trace it */
+		return ;
+	}
 
 	if (snprintf(message, MAX_TRACE_SIZE, "%s[%d] : %s", entity_s, profile, extended) >= MAX_TRACE_SIZE) {
 		trace(LOG_WARNING, "Following trace has been truncated\n") ;
