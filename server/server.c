@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <math.h>
+#include <signal.h>
 
 #include "rohc_tunnel.h"
 #include "tun_helpers.h"
@@ -27,7 +28,7 @@
 #define TUNTAP_BUFSIZE 1518
 
 #include <syslog.h>
-#define MAX_LOG LOG_INFO
+#define MAX_LOG LOG_DEBUG
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
 /* Create TCP socket for communication with clients */
@@ -121,7 +122,30 @@ void* route(void* arg)
 	return NULL ;
 }
 
-int main(int argc, char *argv[]) {
+struct client** clients ; 
+void dump_stats(int sig)
+{
+	int j ;
+
+	for (j=0; j<MAX_CLIENTS; j++) {
+		if (clients[j] != NULL && clients[j]->tunnel.alive >= 0) {
+			trace(LOG_NOTICE, "------------------------------------------------------") ;
+			trace(LOG_NOTICE, "Client %s", inet_ntoa(clients[j]->tunnel.dest_address)) ;
+			trace(LOG_NOTICE, "Stats : ") ;
+			trace(LOG_NOTICE, " . Failed decompression : %d", clients[j]->tunnel.stats.decomp_failed) ;
+			trace(LOG_NOTICE, " . Total  decompression : %d", clients[j]->tunnel.stats.decomp_total) ;
+			trace(LOG_NOTICE, " . Failed compression   : %d", clients[j]->tunnel.stats.comp_failed) ;
+			trace(LOG_NOTICE, " . Total  compression   : %d", clients[j]->tunnel.stats.comp_total) ;
+			trace(LOG_NOTICE, " . Total compressed header size  : %d bytes", clients[j]->tunnel.stats.head_comp_size) ;
+			trace(LOG_NOTICE, " . Total compressed packet size  : %d bytes", clients[j]->tunnel.stats.total_comp_size) ;
+			trace(LOG_NOTICE, " . Total header size before comp : %d bytes", clients[j]->tunnel.stats.head_uncomp_size) ;
+			trace(LOG_NOTICE, " . Total packet size before comp : %d bytes", clients[j]->tunnel.stats.total_uncomp_size) ;
+		}
+	}
+}
+
+int main(int argc, char *argv[])
+{
 
 	int serv_socket ;
 
@@ -133,15 +157,19 @@ int main(int argc, char *argv[]) {
 	struct route_args route_args_raw ;
 	pthread_t route_thread; 
 
-	struct client** clients = calloc(MAX_CLIENTS, sizeof(struct clients*)) ;
 	fd_set rdfs;
 	int max ;
 	int j ;
 
 	int ret ;
+	
+	clients = calloc(MAX_CLIENTS, sizeof(struct clients*)) ;
 
 	/* Initialize logger */
 	openlog("rohc_ipip_server", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
+
+	/* Signal for stats */
+	signal(SIGUSR1, dump_stats) ;
 
 	/* Create TCP socket */
 	if ((serv_socket = create_tcp_socket(INADDR_ANY, atoi(argv[1]))) < 0) {

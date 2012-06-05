@@ -16,6 +16,21 @@
 
 typedef void (*tunnel_close_callback_t) (void* tunnel) ;
 
+struct statitics {
+    int decomp_failed ;
+    int decomp_total ;
+
+    int comp_failed ;
+    int comp_total ;
+
+    int head_comp_size ;
+    int head_uncomp_size ;
+
+    int total_comp_size ;
+    int total_uncomp_size ;
+} ;
+
+
 /* Stucture defining a tunnel */
 struct tunnel {
     struct in_addr dest_address ;
@@ -31,6 +46,8 @@ struct tunnel {
 
     struct tunnel_params params ;
 
+    struct statitics stats;
+
     tunnel_close_callback_t close_callback ;
 } ;
 
@@ -39,12 +56,12 @@ void* new_tunnel(void* arg) ;
 
 int create_raw() ;
 
-int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing) ;
+int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct statitics* stats) ;
 int tun2raw(struct rohc_comp *comp,
             int from, int to,
             struct in_addr raddr, 
             int* act_comp, int packing, unsigned char* compressed_packet,
-            int* total_size) ;
+            int* total_size, struct statitics* stats) ;
 
 int read_from_tun(int fd, unsigned char *packet, unsigned int *length);
 int write_to_tun(int fd, unsigned char *packet, unsigned int length);

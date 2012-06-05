@@ -175,6 +175,18 @@ void* new_tunnel(void* arg) {
 		raw = tunnel->fake_raw[0] ; 
 	}
 
+	/* Initialize stats */
+	tunnel->stats.decomp_failed     = 0 ;
+	tunnel->stats.decomp_total      = 0 ;
+	tunnel->stats.comp_failed       = 0 ;
+	tunnel->stats.comp_total        = 0 ;
+	tunnel->stats.head_comp_size    = 0 ;
+	tunnel->stats.head_uncomp_size  = 0 ;
+	tunnel->stats.total_comp_size   = 0 ;
+	tunnel->stats.total_uncomp_size = 0 ;
+
+	/* Initalize packing */
+
 	int act_comp   = 0 ; /* Counter for packing */
 	int total_size = 0 ; /* Size counter for packing */
 	/* Max size is MAX_ROHC_SIZE + 2 bytes max for packet len multiplied by the packing */
@@ -203,7 +215,7 @@ void* new_tunnel(void* arg) {
             {
                 trace(LOG_DEBUG, "...from tun\n") ;
                 trace(LOG_DEBUG, "Tunnel dest : %d\n", tunnel->dest_address.s_addr) ;
-                failure = tun2raw(comp, tun, tunnel->raw_socket, tunnel->dest_address, &act_comp, packing, compressed_packet, &total_size);
+                failure = tun2raw(comp, tun, tunnel->raw_socket, tunnel->dest_address, &act_comp, packing, compressed_packet, &total_size, &(tunnel->stats));
                 gettimeofday(&last, NULL);
                 if(failure) {
                     trace(LOG_ERR, "tun2raw failed\n") ;
@@ -215,7 +227,7 @@ void* new_tunnel(void* arg) {
             if(FD_ISSET(raw, &readfds))
             {
                 trace(LOG_DEBUG, "...from raw\n") ;
-                failure = raw2tun(decomp, raw, tunnel->tun, packing);
+                failure = raw2tun(decomp, raw, tunnel->tun, packing, &(tunnel->stats));
                 if(failure) {
                     trace(LOG_ERR, "raw2tun failed\n") ;
                //     tunnel->alive = 0;
@@ -290,7 +302,7 @@ int tun2raw(struct rohc_comp *comp,
             int from, int to,
             struct in_addr raddr, 
             int* act_comp, int packing, unsigned char* compressed_packet,
-            int* total_size)
+            int* total_size, struct statitics* stats)
 {
 	static unsigned char buffer[TUNTAP_BUFSIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
@@ -300,6 +312,8 @@ int tun2raw(struct rohc_comp *comp,
 
 	unsigned char *packet;
 	unsigned int packet_len;
+
+	rohc_comp_last_packet_info_t last_packet_info;
 
 	int rohc_size;
 
@@ -322,7 +336,7 @@ int tun2raw(struct rohc_comp *comp,
 	packet = &buffer[4];
 	packet_len = buffer_len - 4;
 	
-
+	stats->comp_total++ ;
 	/* compress the IP packet */
 	rohc_size = rohc_compress(comp, packet, packet_len,
 							  rohc_packet_temp, MAX_ROHC_SIZE);
@@ -341,6 +355,17 @@ int tun2raw(struct rohc_comp *comp,
 	
 	trace(LOG_DEBUG, "Packet #%d/%d compressed : %d bytes", *act_comp, packing, rohc_size) ;
 	dump_packet("Compressed packet", rohc_packet_temp, rohc_size) ;
+
+    /* print packet statistics */
+    ret = rohc_comp_get_last_packet_info(comp, &last_packet_info);
+    if(ret != ROHC_OK) {
+        trace(LOG_ERR, "Cannot get stats about the last compressed packet\n");
+    } else {
+		stats->head_comp_size    += last_packet_info.header_last_comp_size ;
+		stats->head_uncomp_size  += last_packet_info.header_last_uncomp_size ;
+		stats->total_comp_size   += last_packet_info.total_last_comp_size ;
+		stats->total_uncomp_size += last_packet_info.total_last_uncomp_size ;
+	}
 
 	if (rohc_size > 128) {
 		*((uint16_t*) rohc_packet_p) = htons(rohc_size | (1 << 15)) ; /* 0b1000000000000000 */
@@ -364,6 +389,7 @@ int tun2raw(struct rohc_comp *comp,
 quit:
 	return 0;
 error:
+	stats->comp_failed++ ;
 	return 1;
 }
 
@@ -379,7 +405,7 @@ error:
  * @param to      The TUN file descriptor to write to
  * @return        0 in case of success, a non-null value otherwise
  */
-int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
+int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct statitics* stats)
 {
 	/* Max size is MAX_ROHC_SIZE + 2 bytes max for packet len multiplied by the packing */
 	unsigned int packet_len = 20 + packing*(MAX_ROHC_SIZE+2) ;
@@ -432,6 +458,7 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
 			len = *packet_p ;
 		    packet_p += 1 ;
 		}
+		stats->decomp_total++ ;
 
 		trace(LOG_DEBUG, "Packet #%d : %d bytes", i, len) ;
 		i++ ;
@@ -479,7 +506,7 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
 			default:
 				trace(LOG_ERR, "bad IP version (%d)\n",
 						(decomp_packet[4] >> 4) & 0x0f);
-				goto drop;
+				goto error;
 		}
 
 		/* write the IP packet on the virtual interface */
@@ -487,10 +514,9 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing)
 		if(ret != 0)
 		{
 			trace(LOG_ERR, "write_to_tun failed\n");
-			goto drop ;
+			goto error ;
 		}
 	
-drop:
 		packet_p += len ;
 	}
 	
@@ -499,6 +525,7 @@ quit:
 	return 0;
 
 error:
+	stats->decomp_failed++ ;
 	return 1;
 }
 
