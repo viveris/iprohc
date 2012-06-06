@@ -7,6 +7,7 @@
 #include <net/if.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/wait.h>
 #include <sys/ioctl.h>
 
 #include "tlv.h"
@@ -67,6 +68,9 @@ char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct clie
 	char message[1] = { C_CONNECT_DONE } ;
 	char* newbuf ;
 
+	int pid ;
+	int status ;
+
 	newbuf = parse_connect(tlv, &tp) ;
 	if (newbuf == NULL) {
 		return NULL ;
@@ -99,6 +103,26 @@ char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct clie
 
 	/* set params */
 	tunnel->params = tp ;
+
+	/* up script */
+	if (strcmp(opts.up_script_path, "") != 0) {
+		if ((pid = fork()) == 0) {
+			char* argv[4] = { "sh", "-c", opts.up_script_path, NULL} ;
+
+			setenv("ifconfig_local", inet_ntoa(debug_addr), 1) ;
+			execve("/bin/sh", argv, __environ) ;
+		}			
+
+		if (waitpid(pid, &status, 0) < 0) {
+			trace(LOG_ERR, "Unable to start up script") ;
+		} else {
+			if (status == 0) {
+				trace(LOG_INFO, "%s sucessfully executed", opts.up_script_path) ;
+			} else {
+				trace(LOG_WARNING, "%s return code : %d", opts.up_script_path, status) ;
+			}
+		}
+	}
  
     /* Go thread, go ! */
 	pthread_create(&tunnel_thread, NULL, new_tunnel, (void*)tunnel) ;
