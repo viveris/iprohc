@@ -162,6 +162,8 @@ int main(int argc, char *argv[])
 	int j ;
 
 	int ret ;
+	sigset_t sigmask;
+
 	
 	clients = calloc(MAX_CLIENTS, sizeof(struct clients*)) ;
 
@@ -220,6 +222,13 @@ int main(int argc, char *argv[])
 
 	struct timeval now ;
 
+    /* mask signals during interface polling */
+    sigemptyset(&sigmask);
+    sigaddset(&sigmask, SIGKILL);
+    sigaddset(&sigmask, SIGTERM);
+    sigaddset(&sigmask, SIGINT);
+    sigaddset(&sigmask, SIGUSR1);
+
 	/* Start listening and looping on TCP socket */
 	while (1) {
 		gettimeofday(&now, NULL) ;
@@ -237,7 +246,7 @@ int main(int argc, char *argv[])
 		timeout.tv_sec = 1;
 		timeout.tv_nsec = 0;
 
-		if(pselect(max + 1, &rdfs, NULL, NULL, &timeout, NULL) == -1) {
+		if(pselect(max + 1, &rdfs, NULL, NULL, &timeout, &sigmask) == -1) {
 			perror("select()");
 		}
 
