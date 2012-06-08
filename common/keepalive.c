@@ -8,6 +8,7 @@
 #define MAX_LOG LOG_INFO
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
+/* Send a keepalive */
 int keepalive(int socket)
 {
 	char command[1] = { C_KEEPALIVE } ;

@@ -1,12 +1,6 @@
-#include <sys/types.h>
-#include <arpa/inet.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <net/if.h>
-#include <fcntl.h>
-#include <errno.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 
@@ -23,6 +17,7 @@
 #define MAX_LOG LOG_INFO
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
+/* Generic functions for handling messages */
 int handle_message(struct tunnel* tunnel, int socket, char* buf, int length, struct client_opts opts)
 {
 	char* bufmax = buf + length ;
@@ -48,16 +43,16 @@ int handle_message(struct tunnel* tunnel, int socket, char* buf, int length, str
 	return 0 ;
 }
 
-
+/* Send connection request */
 int client_connect(struct tunnel tunnel, int socket)
 {
 	char command[1] = { C_CONNECT } ;
 	trace(LOG_DEBUG, "Emit connect message") ;
 	/* Emit a simple connect message */
-	send(socket, command, 1 ,0) ;
-	return 1 ;
+	return send(socket, command, 1 ,0) ;
 }
 
+/* Handler of okconnect message from server */
 char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct client_opts opts)
 {
 	int tun, raw ;
@@ -71,6 +66,7 @@ char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct clie
 	int pid ;
 	int status ;
 
+	/* Parse options received in tlv form from the server */
 	newbuf = parse_connect(tlv, &tp) ;
 	if (newbuf == NULL) {
 		return NULL ;

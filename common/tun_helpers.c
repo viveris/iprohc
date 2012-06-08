@@ -1,15 +1,10 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdint.h>
-#include <sys/socket.h>
 #include <asm/types.h>
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
 #include <libnetlink.h>
-#include <string.h>
-#include <linux/if_tun.h>
 #include <fcntl.h>
 #include <sys/types.h>
+#include <linux/if_tun.h>
 #include <net/if.h>
 #include <errno.h>
 #include <sys/ioctl.h>
@@ -152,5 +147,21 @@ int set_ip4(int iface_index, uint32_t address, uint8_t network)
 	return 0;
 }
 
+
+int create_raw() {
+    int sock ;
+
+    /* create socket */
+    sock = socket(AF_INET, SOCK_RAW, 142) ;
+    if (sock < 0) {
+        perror("Can't open RAW socket\n") ;
+        goto quit ;
+    }
+
+	return sock ;
+
+quit:
+    return -1 ;
+}
 
 

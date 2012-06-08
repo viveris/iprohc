@@ -1,7 +1,9 @@
 /* 
+tlv.c -- Implements function to parse and generate tlv sequence for
+communications between server and client
 */
-#include <arpa/inet.h>
 
+#include <arpa/inet.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include "tlv.h"
@@ -14,6 +16,7 @@
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 #define DEBUG_STR_SIZE 1024
 
+/* Generic function to parse tlv string */
 char* parse_tlv(char* tlv, struct tlv_result** results, int max_results)
 {
 	enum parse_step step = TYPE ;
@@ -71,6 +74,7 @@ char* parse_tlv(char* tlv, struct tlv_result** results, int max_results)
 	return c ;
 }
 
+/* Generic function to generate tlv string */
 size_t gen_tlv(char* f_dest, struct tlv_result* tlvs, int max_numbers)
 {
 	int i ;

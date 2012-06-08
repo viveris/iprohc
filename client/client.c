@@ -1,4 +1,20 @@
-/* client.c -- Implements client side of the ROHC IP-IP tunnel
+/* 
+client.c -- Implements client side of the ROHC IP-IP tunnel
+
+The client will initiate the TCP connection and maintain it
+while alive.
+
+The sequence is as described below :
+ * Initialization of the TCP socket
+ * Connection request on TCP socket (message with C_CONNECT)
+ * When C_CONNECTOK received, with server parameters, create the
+   raw socket, the tun and initialize a rohc_tunnel
+ * Answer keepalive message of the server with a keepalive message.
+
+Returns :
+ * 0 : Finished successfully (SIG*)
+ * 1 : Server disconnected
+ * 2 : Unable to connect
 */
 
 #include <sys/socket.h> 
@@ -8,36 +24,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <syslog.h>
+#include <unistd.h>
+#include <errno.h>
+#include <getopt.h>
 
 #define MAX_LOG LOG_INFO
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
-#include "tlv.h"
-#include "keepalive.h"
 #include "messages.h"
-
-#include <unistd.h>
-#include <getopt.h>
-
-/* Create TCP socket for communication with server */
-int create_tcp_socket(uint32_t address, uint16_t port) 
-{
-
-	int sock = socket(AF_INET, SOCK_STREAM, 0) ;
-
-	struct	sockaddr_in servaddr ;
-	servaddr.sin_family	  = AF_INET;
-	servaddr.sin_addr.s_addr = address;
-	servaddr.sin_port		= htons(port);
-	trace(LOG_INFO, "Connecting to %s\n", inet_ntoa(servaddr.sin_addr)) ;
-
-	if (connect(sock,  (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
-		perror("Connect failed") ;
-		return -1 ;
-	}
-	
-	return sock ;
-}
 
 void usage(char* arg0) {
 	printf("Usage : %s --remote addr --dev itf_name  [opts]\n", arg0) ;
@@ -56,7 +50,7 @@ int main(int argc, char *argv[])
     uint32_t serv_addr = 0 ;
     int      port  = 1989;
     char buf[1024] ;
-	int socket ;
+	int sock ;
 	int c;
 
 	struct in_addr serv;
@@ -69,7 +63,10 @@ int main(int argc, char *argv[])
 	/* Initialize logger */
 	openlog("rohc_ipip_client", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
 
-	/* Parsing options */
+	/* 
+	 * Parsing options 
+	 */
+
 	struct option options[] = {
 		{ "dev",    required_argument, NULL, 'i' },
 		{ "remote", required_argument, NULL, 'r' },
@@ -121,26 +118,41 @@ int main(int argc, char *argv[])
 		trace(LOG_ERR, "TUN interface name is mandatory") ;
 		exit(1) ;
 	}
-	/* Create socket to neogotiate parameters and maintain it */
-	socket = create_tcp_socket(serv_addr, port) ;
-	if (socket < 0) {
+
+	/* 
+	 *	Creation of TCP socket to neogotiate parameters and maintain it
+	 */
+
+	sock = socket(AF_INET, SOCK_STREAM, 0) ;
+	if (sock < 0) {
 		perror("Can't open socket") ;
 		exit(1) ;
 	}	
 
-	/* Set some tunnel parameters */
+	struct	sockaddr_in servaddr ;
+	servaddr.sin_family	  = AF_INET;
+	servaddr.sin_addr.s_addr = serv_addr;
+	servaddr.sin_port		= htons(port);
+	trace(LOG_INFO, "Connecting to %s\n", inet_ntoa(servaddr.sin_addr)) ;
+
+	if (connect(sock,  (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
+		trace(LOG_ERR, "Connection failed : %s", strerror(errno)) ;
+		return 2 ;
+	}
+
+	/* Set destination tunnel parameter */
 	serv.s_addr = serv_addr ;
 	tunnel.dest_address = serv ;
 
 	/* Ask for connection */
-	client_connect(tunnel, socket) ;
+	client_connect(tunnel, sock) ;
 
 	/* Wait for answer and other messages, close when
 	   socket is close */
-	while ((len = recv(socket, buf, 1024, 0))) {
+	while ((len = recv(sock, buf, 1024, 0))) {
 		trace(LOG_DEBUG, "Received %ld bytes of data", len) ;
-		if (handle_message(&tunnel, socket, buf, len, client_opts) < 0) {
-			break ;
+		if (handle_message(&tunnel, sock, buf, len, client_opts) < 0) {
+			return 1 ;
 		}
 	}
 

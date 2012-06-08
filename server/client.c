@@ -11,7 +11,7 @@
 #define MAX_LOG LOG_DEBUG
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
-
+#include "tun_helpers.h"
 #include "rohc_tunnel.h"
 #include "client.h"
 
