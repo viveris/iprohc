@@ -565,6 +565,7 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 		}
 
 		/* build the TUN header */
+		/* XXX : If not tun ?? */
 		decomp_packet[0] = 0;
 		decomp_packet[1] = 0;
 		switch((decomp_packet[4] >> 4) & 0x0f)

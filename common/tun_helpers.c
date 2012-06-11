@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <asm/types.h>
-#include <libnetlink.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <linux/if_tun.h>
@@ -9,6 +8,8 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <string.h>
+#include <libnetlink.h>
 
 #include <syslog.h>
 #define MAX_LOG LOG_INFO

@@ -1,21 +1,16 @@
 /* server.c -- Implements server side of the ROHC IP-IP tunnel
-
 */
 
-
 #include <sys/socket.h> 
-#include <sys/types.h> 
-#include <arpa/inet.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <pthread.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
 #include <math.h>
 #include <signal.h>
+#include <getopt.h>
 
-#include "rohc_tunnel.h"
 #include "tun_helpers.h"
 
 #include "client.h"
@@ -31,28 +26,13 @@
 #define MAX_LOG LOG_DEBUG
 #define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
 
-/* Create TCP socket for communication with clients */
-int create_tcp_socket(uint32_t address, uint16_t port) {
+/* List of clients */
+struct client** clients ; 
 
-	int sock = socket(AF_INET, SOCK_STREAM, 0) ;
-	int on = 1; 
-	setsockopt(sock,SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
-
-	struct	sockaddr_in servaddr ;
-	servaddr.sin_family	  = AF_INET;
-	servaddr.sin_addr.s_addr = htonl(address);
-	servaddr.sin_port		= htons(port);
-
-	if (bind(sock,  (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
-		perror("Bind failed") ;
-	
-	if (listen(sock, 10) < 0)
-		perror("Listen failed") ;
-
-	return sock ;
-}
-
-/* Thread that will be called to monitor tun or raw and route */
+/* 
+ * Route function that will be threaded twice to route
+ * from tun to fake_tun and from raw to fake_raw 
+*/
 enum type_route { TUN, RAW } ;
 
 struct route_args {
@@ -61,10 +41,7 @@ struct route_args {
 	enum type_route type ;
 } ;
 
-/* Route function that will be threaded twice to route
-from tun to fake_tun and from raw to fake_raw 
-
-*/
+/* Thread that will be called to monitor tun or raw and route */
 void* route(void* arg)
 {
 	/* Getting args */
@@ -92,6 +69,7 @@ void* route(void* arg)
 		}
 
 		trace(LOG_DEBUG, "Read %d bytes\n", ret) ;
+		/* Get packet destination IP if tun or source IP if raw */
 		if (type == TUN) {
 			dest_ip = (uint32_t*) &buffer[20];
 			addr.s_addr = *dest_ip ;
@@ -103,7 +81,9 @@ void* route(void* arg)
 		}
 
 		for (i=0; i < MAX_CLIENTS; i++) {
+			/* Find associated client */
 			if (clients[i] != NULL) {
+				/* Send to fake raw or tun device */
 				if (type == TUN) {
 					if (addr.s_addr == clients[i]->local_address.s_addr) {
 						write(clients[i]->tunnel.fake_tun[1], buffer, ret) ;
@@ -121,8 +101,9 @@ void* route(void* arg)
 
 	return NULL ;
 }
-
-struct client** clients ; 
+/*
+ * Fonction called on SIGUSR1 to dump statistics to log
+ */
 void dump_stats(int sig)
 {
 	int j ;
@@ -136,12 +117,22 @@ void dump_stats(int sig)
 			trace(LOG_NOTICE, " . Total  decompression : %d", clients[j]->tunnel.stats.decomp_total) ;
 			trace(LOG_NOTICE, " . Failed compression   : %d", clients[j]->tunnel.stats.comp_failed) ;
 			trace(LOG_NOTICE, " . Total  compression   : %d", clients[j]->tunnel.stats.comp_total) ;
+			trace(LOG_NOTICE, " . Failed depacketization        : %d", clients[j]->tunnel.stats.unpack_failed) ;
+			trace(LOG_NOTICE, " . Total received packets on raw : %d", clients[j]->tunnel.stats.total_received) ;
 			trace(LOG_NOTICE, " . Total compressed header size  : %d bytes", clients[j]->tunnel.stats.head_comp_size) ;
 			trace(LOG_NOTICE, " . Total compressed packet size  : %d bytes", clients[j]->tunnel.stats.total_comp_size) ;
 			trace(LOG_NOTICE, " . Total header size before comp : %d bytes", clients[j]->tunnel.stats.head_uncomp_size) ;
 			trace(LOG_NOTICE, " . Total packet size before comp : %d bytes", clients[j]->tunnel.stats.total_uncomp_size) ;
 		}
 	}
+}
+
+void usage(char* arg0) {
+    printf("Usage : %s [opts]\n", arg0) ;
+    printf("\n") ;
+    printf("Options : \n") ;
+    printf(" --port : Port to listen on (default: 1989)\n") ;
+    exit(2) ;
 }
 
 int main(int argc, char *argv[])
@@ -151,7 +142,6 @@ int main(int argc, char *argv[])
 
 	int tun, raw ;
 	int tun_itf_id ;
-
 
 	struct route_args route_args_tun ;
 	struct route_args route_args_raw ;
@@ -164,7 +154,11 @@ int main(int argc, char *argv[])
 	int ret ;
 	sigset_t sigmask;
 
+	int address = INADDR_ANY ;
+	int port    = 1989       ;
 	
+	int c;
+
 	clients = calloc(MAX_CLIENTS, sizeof(struct clients*)) ;
 
 	/* Initialize logger */
@@ -173,16 +167,55 @@ int main(int argc, char *argv[])
 	/* Signal for stats */
 	signal(SIGUSR1, dump_stats) ;
 
-	/* Create TCP socket */
-	if ((serv_socket = create_tcp_socket(INADDR_ANY, atoi(argv[1]))) < 0) {
-		perror("Can't open TCP socket") ;
+	/*
+	 * Parsing options
+	 */
+    struct option options[] = {
+        { "port",   required_argument, NULL, 'p' },
+        { "help",   no_argument,       NULL, 'h' },
+        {NULL, 0, 0, 0}
+                              } ;
+    int option_index = 0;
+    do {
+        c = getopt_long(argc, argv, "p:h", options, &option_index) ;
+        switch (c) {
+            case 'p' :
+                port = atoi(optarg) ;
+                trace(LOG_DEBUG, "Remote port : %d", port) ;
+                break ;
+            case 'h' :
+                usage(argv[0]) ;
+                break;
+        }
+    } while (c != -1) ;	
+
+	/* 
+	 * Create TCP socket 
+	 */
+	serv_socket = socket(AF_INET, SOCK_STREAM, 0) ;
+	int on = 1; 
+	setsockopt(serv_socket,SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); 
+
+	struct	sockaddr_in servaddr ;
+	servaddr.sin_family	  = AF_INET;
+	servaddr.sin_addr.s_addr = htonl(address);
+	servaddr.sin_port		= htons(port);
+
+	if (bind(serv_socket, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
+		trace(LOG_ERR, "Bind failed : %s", strerror(errno)) ;
 		exit(1) ;
 	}
+	
+	if (listen(serv_socket, 10) < 0) {
+		trace(LOG_ERR, "Listen failed : %s", strerror(errno)) ;
+		exit(1) ;
+	}
+
 	max = serv_socket ;
 
 	/* params */
 	struct tunnel_params params ;
-    params.local_address       = inet_addr("192.168.99.1") ;
+    params.local_address       = inet_addr("192.168.99.1") ; /* Sets the IP address of the server */
     params.packing             = 4 ;
     params.max_cid             = 14 ;
     params.is_unidirectional   = 1 ;
@@ -195,9 +228,13 @@ int main(int argc, char *argv[])
 	tun = create_tun("tun_ipip", &tun_itf_id) ;
 	if (tun < 0) {
 		trace(LOG_ERR, "Unable to create TUN device") ;
-		return 1 ;
+		exit(1) ;
 	}
-	set_ip4(tun_itf_id, params.local_address, 24) ;
+
+	if (set_ip4(tun_itf_id, params.local_address, 24) < 0) {
+		trace(LOG_ERR, "Unable to set IPv4 on tun device") ;
+		exit(1) ;
+	}
 
 	/* TUN routing thread */
 	route_args_tun.fd = tun ;
@@ -236,20 +273,23 @@ int main(int argc, char *argv[])
 		FD_SET(serv_socket, &rdfs);		
 		max = serv_socket ;
 
+		/* Add client to select readfds */
 		for (j=0; j<MAX_CLIENTS; j++) {
 			if (clients[j] != NULL && clients[j]->tunnel.alive >= 0) {
-				// trace(LOG_DEBUG, "Client alive : %d", clients[j]->tunnel.alive) ;
 				FD_SET(clients[j]->tcp_socket, &rdfs) ;
 				max = (clients[j]->tcp_socket > max)? clients[j]->tcp_socket : max ;
 			}
 		}
+
+		/* Reset timeout */
 		timeout.tv_sec = 1;
 		timeout.tv_nsec = 0;
 
 		if(pselect(max + 1, &rdfs, NULL, NULL, &timeout, &sigmask) == -1) {
-			perror("select()");
+			trace(LOG_ERR, "select failed : %s", strerror(errno));
 		}
 
+		/* Read on serv_socket : new client */
 		if (FD_ISSET(serv_socket, &rdfs)) {
 			ret = new_client(serv_socket, tun, clients, MAX_CLIENTS, params) ;
 			if (ret < 0) {
@@ -258,11 +298,11 @@ int main(int argc, char *argv[])
 			}
 		}
 
+		/* Test read on each client socket */
 		for (j=0; j<MAX_CLIENTS; j++) {
 			if (clients[j] == NULL) {
 				continue ;
 			}
-			// trace(LOG_DEBUG, "Client alive2 : %d", clients[j]->tunnel.alive) ;
 
 			if (clients[j]->tunnel.alive == 1 && 
 				(clients[j]->last_keepalive.tv_sec == -1 || 
