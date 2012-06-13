@@ -61,7 +61,7 @@ int main(int argc, char *argv[])
 	client_opts.up_script_path = calloc(1024, sizeof(char)) ;
 
 	/* Initialize logger */
-	openlog("rohc_ipip_client", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
+	openlog("iprohc_client", LOG_PID | LOG_PERROR, LOG_DAEMON)  ;
 
 	/* 
 	 * Parsing options 

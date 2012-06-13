@@ -1,6 +1,6 @@
-usr/lib/librohc_ipip_common.so
-usr/include/rohc_ipip_common/keepalive.h
-usr/include/rohc_ipip_common/rohc_tunnel.h
-usr/include/rohc_ipip_common/tlv.h
-usr/include/rohc_ipip_common/tun_helpers.h
+usr/lib/libiprohc_common.so
+usr/include/iprohc_common/keepalive.h
+usr/include/iprohc_common/rohc_tunnel.h
+usr/include/iprohc_common/tlv.h
+usr/include/iprohc_common/tun_helpers.h
 

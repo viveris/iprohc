@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 2.6)
-project (RoHCIPIPtunnel)
+project (IPROHC)
 
 add_definitions("-g")
 

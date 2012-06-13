@@ -7,4 +7,4 @@ add_executable (test_tlv_connect test_tlv_connect.c)
 
 add_definitions("-Wall")
 
-target_link_libraries(test_tlv_connect rohc_ipip_common) 
+target_link_libraries(test_tlv_connect iprohc_common) 
