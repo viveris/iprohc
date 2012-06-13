@@ -162,7 +162,8 @@ int main(int argc, char *argv[])
 	clients = calloc(MAX_CLIENTS, sizeof(struct clients*)) ;
 
 	/* Initialize logger */
-	openlog("rohc_ipip_server", LOG_PID | LOG_PERROR, LOG_DAEMON) ;
+	/* openlog("rohc_ipip_server", LOG_PID | LOG_PERROR, LOG_DAEMON) ; */
+	openlog("rohc_ipip_server", LOG_PID , LOG_DAEMON) ;
 
 	/* Signal for stats */
 	signal(SIGUSR1, dump_stats) ;

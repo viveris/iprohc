@@ -203,7 +203,7 @@ void* new_tunnel(void* arg) {
 	int act_comp   = 0 ; /* Counter for packing */
 	int total_size = 0 ; /* Size counter for packing */
 	/* Max size is MAX_ROHC_SIZE + 2 bytes max for packet len multiplied by the packing */
-	unsigned char* compressed_packet = calloc(packing*(MAX_ROHC_SIZE + 2), sizeof(char));
+	unsigned char* compressed_packet = malloc((packing*(MAX_ROHC_SIZE + 2)) * sizeof(char));
 
     do
     {
@@ -226,7 +226,6 @@ void* new_tunnel(void* arg) {
             if(FD_ISSET(read_tun, &readfds))
             {
                 trace(LOG_DEBUG, "...from tun\n") ;
-                trace(LOG_DEBUG, "Tunnel dest : %d\n", tunnel->dest_address.s_addr) ;
                 failure = tun2raw(comp, read_tun, tunnel->raw_socket, tunnel->dest_address, &act_comp, packing, compressed_packet, &total_size, &(tunnel->stats));
                 gettimeofday(&last, NULL);
                 if(failure) {
@@ -266,6 +265,7 @@ void* new_tunnel(void* arg) {
     /*
      * Cleaning:
      */
+	free(compressed_packet) ;
 
 destroy_decomp:
     rohc_free_decompressor(decomp);
@@ -353,7 +353,7 @@ int tun2raw(struct rohc_comp *comp,
 	static unsigned char buffer[TUNTAP_BUFSIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
 
-	unsigned char* rohc_packet_temp = calloc(MAX_ROHC_SIZE, sizeof(char));
+	unsigned char* rohc_packet_temp = malloc(MAX_ROHC_SIZE * sizeof(char));
 	unsigned char *rohc_packet_p ; 
 
 	unsigned char *packet;
@@ -449,9 +449,11 @@ int tun2raw(struct rohc_comp *comp,
 	}
 
 quit:
+	free(rohc_packet_temp) ;
 	return 0;
 error:
 	stats->comp_failed++ ;
+	free(rohc_packet_temp) ;
 	return 1;
 }
 
@@ -471,11 +473,11 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 {
 	/* Max size is MAX_ROHC_SIZE + 2 bytes max for packet len multiplied by the packing */
 	unsigned int packet_len = 20 + packing*(MAX_ROHC_SIZE+2) ;
-	unsigned char* packet = calloc(packet_len, sizeof(unsigned char));
+	unsigned char* packet = malloc(packet_len * sizeof(unsigned char));
 	unsigned char *packet_p = packet;
 
 	/* We add the 4 bytes of TUN headers */
-	unsigned char* decomp_packet = calloc(4 + MAX_ROHC_SIZE, sizeof(unsigned char));
+	unsigned char* decomp_packet = malloc((4 + MAX_ROHC_SIZE) * sizeof(unsigned char));
 
 	int len ;
 
@@ -552,16 +554,8 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 									  &decomp_packet[4], MAX_ROHC_SIZE);
 		if(decomp_size <= 0)
 		{
-			if(decomp_size == ROHC_FEEDBACK_ONLY)
-			{
-				/* no stats for feedback-only packets */
-				goto quit;
-			}
-			else
-			{
-				trace(LOG_ERR, "decompression of packet failed\n");
-				goto error;
-			}
+			trace(LOG_ERR, "decompression of packet failed\n");
+			goto error;
 		}
 
 		/* build the TUN header */
@@ -598,12 +592,17 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 	
 
 quit:
+	free(packet) ;
+	free(decomp_packet) ;
 	return 0;
-
 error:
+	free(packet) ;
+	free(decomp_packet) ;
 	stats->decomp_failed++ ;
 	return -1;
 error_unpack:
+	free(packet) ;
+	free(decomp_packet) ;
 	stats->unpack_failed++ ;
 	return -2;
 }

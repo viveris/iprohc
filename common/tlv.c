@@ -233,6 +233,7 @@ char* parse_connect(char* buffer, struct tunnel_params* params)
 					break ;
 				default :
 					trace(LOG_ERR, "Unexpected field in connect : %x\n", results[i]->type) ;
+					free(results) ;
 					return NULL ;
 			}
 			free(results[i]) ;
@@ -242,9 +243,11 @@ char* parse_connect(char* buffer, struct tunnel_params* params)
 	for (i=0; i<N_TUNNEL_PARAMS; i++) {
 		if (required[i] != -1) {
 			trace(LOG_ERR, "Missing field in connect : %d\n", required[i]) ;
+			free(results) ;
 			return NULL ;
 		}
 	}
+	free(results) ;
 
 	return newbuf ;
 }
@@ -252,6 +255,7 @@ char* parse_connect(char* buffer, struct tunnel_params* params)
 size_t gen_connect(char* dest, struct tunnel_params params)
 {
 	int i=0 ;
+	int ret ;
 	struct tlv_result* results = calloc(N_TUNNEL_PARAMS, sizeof(struct tlv_result)) ;
 
 	results[i].type  = IP_ADDR ;
@@ -279,6 +283,7 @@ size_t gen_connect(char* dest, struct tunnel_params params)
 	results[i].value = (unsigned char*) &(params.rohc_compat_version) ;
 	i++ ;
 
-	return gen_tlv(dest, results, N_TUNNEL_PARAMS) ;
-
+	ret = gen_tlv(dest, results, N_TUNNEL_PARAMS) ;
+	free(results) ;
+	return ret ;
 }
