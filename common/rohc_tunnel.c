@@ -25,9 +25,7 @@ On a client connection :
 #include "ip_chksum.h"
 
 /* Initialize logger */
-#include <syslog.h>
-#define MAX_LOG LOG_INFO
-#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
+#include "log.h"
 
 /*
  * Macros & definitions:
@@ -670,7 +668,7 @@ static void print_rohc_traces(rohc_trace_level_t level,
 			syslog_level = LOG_DEBUG ;
 			break ;
 		case ROHC_TRACE_INFO:
-			syslog_level = LOG_INFO ;
+			syslog_level = LOG_DEBUG ; /* intended, ROHC lib is too verbose */
 			break;
 		case ROHC_TRACE_WARNING:
 			syslog_level = LOG_WARNING ;

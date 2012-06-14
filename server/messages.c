@@ -6,10 +6,7 @@
 
 #include "client.h"
 
-#include <syslog.h>
-#define MAX_LOG LOG_DEBUG
-#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
-
+#include "log.h"
 
 int handle_connect(struct client* client, struct tunnel_params params)
 {

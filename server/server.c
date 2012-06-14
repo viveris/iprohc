@@ -22,9 +22,8 @@
 /// The maximal size of data that can be received on the virtual interface
 #define TUNTAP_BUFSIZE 1518
 
-#include <syslog.h>
-#define MAX_LOG LOG_DEBUG
-#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
+#include "log.h"
+int log_max_priority = LOG_DEBUG;
 
 /* List of clients */
 struct client** clients ; 
@@ -101,6 +100,7 @@ void* route(void* arg)
 
 	return NULL ;
 }
+
 /*
  * Fonction called on SIGUSR1 to dump statistics to log
  */
@@ -124,6 +124,20 @@ void dump_stats(int sig)
 			trace(LOG_NOTICE, " . Total header size before comp : %d bytes", clients[j]->tunnel.stats.head_uncomp_size) ;
 			trace(LOG_NOTICE, " . Total packet size before comp : %d bytes", clients[j]->tunnel.stats.total_uncomp_size) ;
 		}
+	}
+}
+
+/*
+ * Fonction called on SIGUSR2 to switch between LOG_INFO and LOG_DEBUG for log_max_priority
+ */
+void switch_log_max(int sig)
+{
+	if (log_max_priority == LOG_DEBUG) {
+		log_max_priority = LOG_INFO ;
+        trace(LOG_INFO, "Debugging disabled") ;
+	} else {
+		log_max_priority = LOG_DEBUG ;
+        trace(LOG_DEBUG, "Debugging enabled") ;
 	}
 }
 
@@ -162,23 +176,29 @@ int main(int argc, char *argv[])
 	clients = calloc(MAX_CLIENTS, sizeof(struct clients*)) ;
 
 	/* Initialize logger */
-	openlog("iprohc_server", LOG_PID , LOG_DAEMON) ;
+	openlog("iprohc_server", LOG_PID | LOG_PERROR , LOG_DAEMON) ;
 
-	/* Signal for stats */
+	/* Signal for stats and log */
 	signal(SIGUSR1, dump_stats) ;
+	signal(SIGUSR2, switch_log_max) ;
 
 	/*
 	 * Parsing options
 	 */
     struct option options[] = {
         { "port",   required_argument, NULL, 'p' },
+        { "debug",   no_argument,      NULL, 'd' },
         { "help",   no_argument,       NULL, 'h' },
         {NULL, 0, 0, 0}
                               } ;
     int option_index = 0;
     do {
-        c = getopt_long(argc, argv, "p:h", options, &option_index) ;
+        c = getopt_long(argc, argv, "p:hd", options, &option_index) ;
         switch (c) {
+            case 'd' :
+				log_max_priority = LOG_DEBUG ;
+                trace(LOG_DEBUG, "Debugging enabled") ;
+                break ;
             case 'p' :
                 port = atoi(optarg) ;
                 trace(LOG_DEBUG, "Remote port : %d", port) ;
@@ -265,6 +285,7 @@ int main(int argc, char *argv[])
     sigaddset(&sigmask, SIGTERM);
     sigaddset(&sigmask, SIGINT);
     sigaddset(&sigmask, SIGUSR1);
+    sigaddset(&sigmask, SIGUSR2);
 
 	/* Start listening and looping on TCP socket */
 	while (1) {

@@ -11,9 +11,9 @@ communications between server and client
 /* Initialize logger */
 #include <stdio.h>
 #include <string.h>
-#include <syslog.h>
-#define MAX_LOG LOG_INFO
-#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
+
+#include "log.h"
+
 #define DEBUG_STR_SIZE 1024
 
 /* Generic function to parse tlv string */

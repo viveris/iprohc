@@ -7,9 +7,7 @@
 #include <math.h>
 #include <string.h>
 
-#include <syslog.h>
-#define MAX_LOG LOG_DEBUG
-#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
+#include "log.h"
 
 #include "tun_helpers.h"
 #include "rohc_tunnel.h"

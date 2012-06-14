@@ -13,9 +13,7 @@
 
 #define TUNTAP_BUFSIZE 1518
 
-#include <syslog.h>
-#define MAX_LOG LOG_INFO
-#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
+#include "log.h"
 
 /* Generic functions for handling messages */
 int handle_message(struct tunnel* tunnel, int socket, char* buf, int length, struct client_opts opts)

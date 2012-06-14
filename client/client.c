@@ -28,8 +28,8 @@ Returns :
 #include <errno.h>
 #include <getopt.h>
 
-#define MAX_LOG LOG_INFO
-#define trace(a, ...) if ((a) & MAX_LOG) syslog(LOG_MAKEPRI(LOG_DAEMON, a), __VA_ARGS__)
+#include "log.h"
+int log_max_priority = LOG_INFO;
 
 #include "messages.h"
 
@@ -40,6 +40,7 @@ void usage(char* arg0) {
 	printf(" --remote : Address of the remote server \n") ;
 	printf(" --port : Port of the remote server \n") ;
 	printf(" --dev : Name of the TUN interface that will be created \n") ;
+	printf(" --debug : Enable debuging \n") ;
 	printf(" --up : Path to a shell script that will be executed when network is up\n") ;
 	exit(2) ;
 }
@@ -71,13 +72,24 @@ int main(int argc, char *argv[])
 		{ "dev",    required_argument, NULL, 'i' },
 		{ "remote", required_argument, NULL, 'r' },
 		{ "port",   required_argument, NULL, 'p' },
-		{ "up",     required_argument, NULL, 'U' },
+		{ "up",     required_argument, NULL, 'u' },
+		{ "debug",  no_argument, NULL, 'd' },
 		{ "help",   no_argument, NULL, 'h' },
-		{NULL, 0, 0, 0}
-							  } ;
-	int option_index = 0;
+		{NULL, 0, 0, 0}} ;
+
 	do {
-		c = getopt_long(argc, argv, "i:r:p:u:h", options, &option_index) ;
+		c = getopt_long(argc, argv, "d", options, NULL) ;
+		switch (c) {
+			case 'd' :
+				log_max_priority = LOG_DEBUG ;
+				trace(LOG_DEBUG, "Debbuging enabled", optarg) ;
+				break;
+		}			
+	} while (c != -1) ;
+
+	optind = 1 ;
+	do {
+		c = getopt_long(argc, argv, "i:r:p:u:h", options, NULL) ;
 		switch (c) {
 			case 'i' :
 				trace(LOG_DEBUG, "TUN interface name : %s", optarg) ;
