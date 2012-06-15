@@ -27,6 +27,7 @@ Returns :
 #include <unistd.h>
 #include <errno.h>
 #include <getopt.h>
+#include <signal.h>
 
 #include "log.h"
 int log_max_priority = LOG_INFO;
@@ -43,6 +44,11 @@ void usage(char* arg0) {
 	printf(" --debug : Enable debuging \n") ;
 	printf(" --up : Path to a shell script that will be executed when network is up\n") ;
 	exit(2) ;
+}
+
+void sigterm(int signal)
+{
+	exit(0) ;
 }
 
 int main(int argc, char *argv[])
@@ -63,6 +69,9 @@ int main(int argc, char *argv[])
 
 	/* Initialize logger */
 	openlog("iprohc_client", LOG_PID | LOG_PERROR, LOG_DAEMON)  ;
+
+	/* Handle SIGTERM */
+	signal(SIGTERM, sigterm) ;
 
 	/* 
 	 * Parsing options 
