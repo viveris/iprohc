@@ -145,8 +145,14 @@ void usage(char* arg0) {
     printf("Usage : %s [opts]\n", arg0) ;
     printf("\n") ;
     printf("Options : \n") ;
-    printf(" --port : Port to listen on (default: 1989)\n") ;
+    printf(" --port    : Port to listen on (default: 1989)\n") ;
+    printf(" --pidfile : Path to the pid file\n") ;
     exit(2) ;
+}
+
+int alive ;
+void quit(int sig) {
+	alive = 0;
 }
 
 int main(int argc, char *argv[])
@@ -170,6 +176,10 @@ int main(int argc, char *argv[])
 
 	int address = INADDR_ANY ;
 	int port    = 1989       ;
+
+	char pidfile_path[1024] ;
+	pidfile_path[0] = '\0' ;
+	FILE* pid = NULL ;
 	
 	int c;
 
@@ -179,6 +189,8 @@ int main(int argc, char *argv[])
 	openlog("iprohc_server", LOG_PID | LOG_PERROR , LOG_DAEMON) ;
 
 	/* Signal for stats and log */
+	signal(SIGINT,  quit) ;
+	signal(SIGTERM, quit) ;
 	signal(SIGUSR1, dump_stats) ;
 	signal(SIGUSR2, switch_log_max) ;
 
@@ -187,18 +199,23 @@ int main(int argc, char *argv[])
 	 */
     struct option options[] = {
         { "port",   required_argument, NULL, 'p' },
+        { "pidfile",   required_argument, NULL, 'f' },
         { "debug",   no_argument,      NULL, 'd' },
         { "help",   no_argument,       NULL, 'h' },
         {NULL, 0, 0, 0}
                               } ;
     int option_index = 0;
     do {
-        c = getopt_long(argc, argv, "p:hd", options, &option_index) ;
+        c = getopt_long(argc, argv, "p:hdf:", options, &option_index) ;
         switch (c) {
             case 'd' :
 				log_max_priority = LOG_DEBUG ;
                 trace(LOG_DEBUG, "Debugging enabled") ;
-                break ;
+               break ;
+            case 'f' :
+                strncpy(pidfile_path, optarg, 1024) ;
+                trace(LOG_DEBUG, "Pid file : %s", pidfile_path) ;
+               break ;
             case 'p' :
                 port = atoi(optarg) ;
                 trace(LOG_DEBUG, "Remote port : %d", port) ;
@@ -208,6 +225,17 @@ int main(int argc, char *argv[])
                 break;
         }
     } while (c != -1) ;	
+
+    if (strcmp(pidfile_path, "") == 0) {
+    	trace(LOG_WARNING, "No pidfile specified") ;
+    } else {
+    	pid = fopen(pidfile_path, "w") ;
+    	if (pid < 0) {
+    		trace(LOG_ERR, "Unable to write open file : %s", strerror(errno)) ;
+    	}
+    	fprintf(pid, "%d\n", getpid()) ;
+    	fclose(pid) ;
+    }
 
 	/* 
 	 * Create TCP socket 
@@ -223,12 +251,12 @@ int main(int argc, char *argv[])
 
 	if (bind(serv_socket, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
 		trace(LOG_ERR, "Bind failed : %s", strerror(errno)) ;
-		exit(1) ;
+		goto error ;
 	}
 	
 	if (listen(serv_socket, 10) < 0) {
 		trace(LOG_ERR, "Listen failed : %s", strerror(errno)) ;
-		exit(1) ;
+		goto error;
 	}
 
 	max = serv_socket ;
@@ -248,12 +276,12 @@ int main(int argc, char *argv[])
 	tun = create_tun("tun_ipip", &tun_itf_id) ;
 	if (tun < 0) {
 		trace(LOG_ERR, "Unable to create TUN device") ;
-		exit(1) ;
+		goto error ;
 	}
 
 	if (set_ip4(tun_itf_id, params.local_address, 24) < 0) {
 		trace(LOG_ERR, "Unable to set IPv4 on tun device") ;
-		exit(1) ;
+		goto error ;
 	}
 
 	/* TUN routing thread */
@@ -266,7 +294,7 @@ int main(int argc, char *argv[])
 	raw = create_raw() ;
 	if (raw < -1) {
 		trace(LOG_ERR, "Unable to create RAW socket") ;
-		return 1 ;
+		goto error ;
 	}
 
 	/* RAW routing thread */
@@ -281,14 +309,12 @@ int main(int argc, char *argv[])
 
     /* mask signals during interface polling */
     sigemptyset(&sigmask);
-    sigaddset(&sigmask, SIGKILL);
-    sigaddset(&sigmask, SIGTERM);
-    sigaddset(&sigmask, SIGINT);
     sigaddset(&sigmask, SIGUSR1);
     sigaddset(&sigmask, SIGUSR2);
 
 	/* Start listening and looping on TCP socket */
-	while (1) {
+	int alive = 1 ;
+	while (alive) {
 		gettimeofday(&now, NULL) ;
 		FD_ZERO(&rdfs); 
 		FD_SET(serv_socket, &rdfs);		
@@ -308,6 +334,7 @@ int main(int argc, char *argv[])
 
 		if(pselect(max + 1, &rdfs, NULL, NULL, &timeout, &sigmask) == -1) {
 			trace(LOG_ERR, "select failed : %s", strerror(errno));
+			break ;
 		}
 
 		/* Read on serv_socket : new client */
@@ -350,5 +377,14 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if (strcmp(pidfile_path, "") != 0) {
+		unlink(pidfile_path) ;
+	}
 	return 0 ;
+
+error :
+	if (strcmp(pidfile_path, "") != 0) {
+		unlink(pidfile_path) ;
+	}
+	exit(1) ;
 }
