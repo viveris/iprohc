@@ -10,11 +10,13 @@
 #include <math.h>
 #include <signal.h>
 #include <getopt.h>
+#include <gnutls/gnutls.h>
 
 #include "tun_helpers.h"
 
 #include "client.h"
 #include "messages.h"
+#include "tls.h"
 
 // XXX : Config ?
 #define MAX_CLIENTS 50
@@ -23,7 +25,7 @@
 #define TUNTAP_BUFSIZE 1518
 
 #include "log.h"
-int log_max_priority = LOG_DEBUG;
+int log_max_priority = LOG_INFO;
 
 /* List of clients */
 struct client** clients ; 
@@ -146,6 +148,7 @@ void usage(char* arg0) {
     printf("\n") ;
     printf("Options : \n") ;
     printf(" --port : Port to listen on (default: 1989)\n") ;
+    printf(" --p12 : Path to the pkcs12 file containing CA, server key and server crt\n") ;
     exit(2) ;
 }
 
@@ -169,7 +172,13 @@ int main(int argc, char *argv[])
 	sigset_t sigmask;
 
 	int address = INADDR_ANY ;
-	int port    = 1989       ;
+	int port    = 3126       ;
+
+	char pkcs12_f[1024] ;
+	pkcs12_f[0] = '\0' ;
+	gnutls_dh_params_t dh_params;
+
+	struct server_opts server_opts ;
 	
 	int c;
 
@@ -187,6 +196,7 @@ int main(int argc, char *argv[])
 	 */
     struct option options[] = {
         { "port",   required_argument, NULL, 'p' },
+        { "p12",    required_argument, NULL, 'P' },
         { "debug",   no_argument,      NULL, 'd' },
         { "help",   no_argument,       NULL, 'h' },
         {NULL, 0, 0, 0}
@@ -202,12 +212,32 @@ int main(int argc, char *argv[])
             case 'p' :
                 port = atoi(optarg) ;
                 trace(LOG_DEBUG, "Remote port : %d", port) ;
+            case 'P' :
+				strncpy(pkcs12_f, optarg, 1024) ;
+				trace(LOG_DEBUG, "PKCS12 file : %s",  pkcs12_f) ;
                 break ;
             case 'h' :
                 usage(argv[0]) ;
                 break;
         }
     } while (c != -1) ;	
+
+    if (strcmp(pkcs12_f, "") == 0) {
+    	trace(LOG_ERR, "PKCS12 file required") ;
+    	exit(2) ;
+    }
+
+    /*
+     * GNUTLS stuff
+     */
+
+    gnutls_global_init ();
+	gnutls_certificate_allocate_credentials (&(server_opts.xcred));
+	gnutls_certificate_set_x509_simple_pkcs12_file(server_opts.xcred, pkcs12_f, GNUTLS_X509_FMT_PEM, "") ;
+	
+	generate_dh_params (&dh_params);
+	gnutls_priority_init (&(server_opts.priority_cache), "PERFORMANCE:%SERVER_PRECEDENCE", NULL);
+	gnutls_certificate_set_dh_params (server_opts.xcred, dh_params);
 
 	/* 
 	 * Create TCP socket 
@@ -234,15 +264,15 @@ int main(int argc, char *argv[])
 	max = serv_socket ;
 
 	/* params */
-	struct tunnel_params params ;
-    params.local_address       = inet_addr("192.168.99.1") ; /* Sets the IP address of the server */
-    params.packing             = 4 ;
-    params.max_cid             = 14 ;
-    params.is_unidirectional   = 1 ;
-    params.wlsb_window_width   = 23 ;
-    params.refresh             = 9 ;
-    params.keepalive_timeout   = 60 ;
-    params.rohc_compat_version = 1 ;
+    server_opts.local_address       = inet_addr("192.168.99.1") ; /* Sets the IP address of the server */
+
+    server_opts.params.packing             = 4 ;
+    server_opts.params.max_cid             = 14 ;
+    server_opts.params.is_unidirectional   = 1 ;
+    server_opts.params.wlsb_window_width   = 23 ;
+    server_opts.params.refresh             = 9 ;
+    server_opts.params.keepalive_timeout   = 60 ;
+    server_opts.params.rohc_compat_version = 1 ;
 
 	/* TUN create */
 	tun = create_tun("tun_ipip", &tun_itf_id) ;
@@ -251,7 +281,7 @@ int main(int argc, char *argv[])
 		exit(1) ;
 	}
 
-	if (set_ip4(tun_itf_id, params.local_address, 24) < 0) {
+	if (set_ip4(tun_itf_id, server_opts.local_address, 24) < 0) {
 		trace(LOG_ERR, "Unable to set IPv4 on tun device") ;
 		exit(1) ;
 	}
@@ -312,7 +342,7 @@ int main(int argc, char *argv[])
 
 		/* Read on serv_socket : new client */
 		if (FD_ISSET(serv_socket, &rdfs)) {
-			ret = new_client(serv_socket, tun, clients, MAX_CLIENTS, params) ;
+			ret = new_client(serv_socket, tun, clients, MAX_CLIENTS, server_opts) ;
 			if (ret < 0) {
 				trace(LOG_ERR, "new_client returned %d\n", ret) ;
 				/* TODO : HANDLE THAT */
@@ -339,7 +369,7 @@ int main(int argc, char *argv[])
 				clients[j] = NULL ;
 			} else if (FD_ISSET(clients[j]->tcp_socket, &rdfs)) {
 				/* handle request */
-				ret = handle_client_request(clients[j], params) ;
+				ret = handle_client_request(clients[j]) ;
 				if (ret < 0) {
 					if (clients[j]->tunnel.alive > 0) {
 						trace(LOG_WARNING, "[%s] Client disconnected", inet_ntoa(clients[j]->tunnel.dest_address)) ;

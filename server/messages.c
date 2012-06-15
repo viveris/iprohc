@@ -8,7 +8,7 @@
 
 #include "log.h"
 
-int handle_connect(struct client* client, struct tunnel_params params)
+int handle_connect(struct client* client)
 {
 	char tlv[1024] ;
 	tlv[0] = C_CONNECT_OK ;
@@ -20,7 +20,7 @@ int handle_connect(struct client* client, struct tunnel_params params)
 	return 0 ;
 }
 
-int handle_client_request(struct client* client, struct tunnel_params params) {
+int handle_client_request(struct client* client) {
 	char buf[1024] ;
 	int length;
 	char* cur ;
@@ -39,7 +39,7 @@ int handle_client_request(struct client* client, struct tunnel_params params) {
 		switch (*cur) {
 			case C_CONNECT:
 				trace(LOG_INFO, "[%s] Connection asked, negotating parameters", inet_ntoa(client->tunnel.dest_address)) ;
-				handle_connect(client, params) ;
+				handle_connect(client) ;
 				break ;
 			case C_CONNECT_DONE :
 				trace(LOG_INFO, "[%s] Connection started", inet_ntoa(client->tunnel.dest_address)) ;

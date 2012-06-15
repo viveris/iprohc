@@ -21,7 +21,7 @@ void close_tunnel(void* v_tunnel)
 	tunnel->alive = -1 ; /* Mark to be deleted */
 }
 
-int new_client(int socket, int tun, struct client** clients, int max_clients, struct tunnel_params params) {
+int new_client(int socket, int tun, struct client** clients, int max_clients, struct server_opts server_opts) {
 	int conn; 
 	struct	sockaddr_in src_addr;
 	socklen_t src_addr_len = sizeof(src_addr);
@@ -51,7 +51,7 @@ int new_client(int socket, int tun, struct client** clients, int max_clients, st
 	/* dest_addr */
 	clients[i]->tunnel.dest_address  = src_addr.sin_addr ;
 	/* local_addr */
-	local.s_addr = htonl(ntohl(params.local_address) + i + 10) ;
+	local.s_addr = htonl(ntohl(server_opts.local_address) + i + 10) ;
 	clients[i]->local_address = local ;
 
 	/* set tun */
@@ -74,7 +74,7 @@ int new_client(int socket, int tun, struct client** clients, int max_clients, st
 		return -1 ;
 	}
 
-	memcpy(&(clients[i]->tunnel.params),  &params, sizeof(struct tunnel_params)) ;
+	memcpy(&(clients[i]->tunnel.params),  &(server_opts.params), sizeof(struct tunnel_params)) ;
 	clients[i]->tunnel.params.local_address = local.s_addr ;
 	clients[i]->tunnel.alive =   0 ;
 	clients[i]->tunnel.close_callback = close_tunnel ;
