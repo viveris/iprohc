@@ -103,30 +103,34 @@ void* route(void* arg)
 	return NULL ;
 }
 
+void dump_stats_client(struct client* client) {
+    trace(LOG_NOTICE, "------------------------------------------------------") ;
+    trace(LOG_NOTICE, "Client %s", inet_ntoa(client->tunnel.dest_address)) ;
+    trace(LOG_NOTICE, "Stats : ") ;
+    trace(LOG_NOTICE, " . Failed decompression : %d", client->tunnel.stats.decomp_failed) ;
+    trace(LOG_NOTICE, " . Total  decompression : %d", client->tunnel.stats.decomp_total) ;
+    trace(LOG_NOTICE, " . Failed compression   : %d", client->tunnel.stats.comp_failed) ;
+    trace(LOG_NOTICE, " . Total  compression   : %d", client->tunnel.stats.comp_total) ;
+    trace(LOG_NOTICE, " . Failed depacketization        : %d", client->tunnel.stats.unpack_failed) ;
+    trace(LOG_NOTICE, " . Total received packets on raw : %d", client->tunnel.stats.total_received) ;
+    trace(LOG_NOTICE, " . Total compressed header size  : %d bytes", client->tunnel.stats.head_comp_size) ;
+    trace(LOG_NOTICE, " . Total compressed packet size  : %d bytes", client->tunnel.stats.total_comp_size) ;
+    trace(LOG_NOTICE, " . Total header size before comp : %d bytes", client->tunnel.stats.head_uncomp_size) ;
+    trace(LOG_NOTICE, " . Total packet size before comp : %d bytes", client->tunnel.stats.total_uncomp_size) ;
+}
+
 /*
  * Fonction called on SIGUSR1 to dump statistics to log
  */
 void dump_stats(int sig)
 {
-	int j ;
+    int j ;
 
-	for (j=0; j<MAX_CLIENTS; j++) {
-		if (clients[j] != NULL && clients[j]->tunnel.alive >= 0) {
-			trace(LOG_NOTICE, "------------------------------------------------------") ;
-			trace(LOG_NOTICE, "Client %s", inet_ntoa(clients[j]->tunnel.dest_address)) ;
-			trace(LOG_NOTICE, "Stats : ") ;
-			trace(LOG_NOTICE, " . Failed decompression : %d", clients[j]->tunnel.stats.decomp_failed) ;
-			trace(LOG_NOTICE, " . Total  decompression : %d", clients[j]->tunnel.stats.decomp_total) ;
-			trace(LOG_NOTICE, " . Failed compression   : %d", clients[j]->tunnel.stats.comp_failed) ;
-			trace(LOG_NOTICE, " . Total  compression   : %d", clients[j]->tunnel.stats.comp_total) ;
-			trace(LOG_NOTICE, " . Failed depacketization        : %d", clients[j]->tunnel.stats.unpack_failed) ;
-			trace(LOG_NOTICE, " . Total received packets on raw : %d", clients[j]->tunnel.stats.total_received) ;
-			trace(LOG_NOTICE, " . Total compressed header size  : %d bytes", clients[j]->tunnel.stats.head_comp_size) ;
-			trace(LOG_NOTICE, " . Total compressed packet size  : %d bytes", clients[j]->tunnel.stats.total_comp_size) ;
-			trace(LOG_NOTICE, " . Total header size before comp : %d bytes", clients[j]->tunnel.stats.head_uncomp_size) ;
-			trace(LOG_NOTICE, " . Total packet size before comp : %d bytes", clients[j]->tunnel.stats.total_uncomp_size) ;
-		}
-	}
+    for (j=0; j<MAX_CLIENTS; j++) {
+        if (clients[j] != NULL && clients[j]->tunnel.alive >= 0) {
+            dump_stats_client(clients[j]) ;
+        }
+    }
 }
 
 /*
@@ -366,6 +370,7 @@ int main(int argc, char *argv[])
 			} else if (clients[j]->tunnel.alive == -1) {
 				/* free dead client */
 				trace(LOG_DEBUG, "Freeing %p", clients[j]) ;
+				dump_stats_client(clients[j]) ;
 				gnutls_bye(clients[j]->tls_session, GNUTLS_SHUT_WR);
 				close(clients[j]->tcp_socket) ;
 				gnutls_deinit(clients[j]->tls_session);
