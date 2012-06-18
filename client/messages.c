@@ -5,7 +5,6 @@
 #include <sys/ioctl.h>
 
 #include "tlv.h"
-#include "keepalive.h"
 #include "rohc_tunnel.h"
 #include "tun_helpers.h"
 
@@ -31,7 +30,7 @@ int handle_message(struct tunnel* tunnel, int socket, char* buf, int length, str
                 trace(LOG_DEBUG, "Received keepalive") ; 
 				gettimeofday(&(tunnel->last_keepalive), NULL);				
 				buf++ ;
-				keepalive(socket) ;
+				//keepalive(socket) ;
 				break ;
 			default :
 				trace(LOG_ERR, "Unexpected %d in command\n", *buf) ;

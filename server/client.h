@@ -1,13 +1,13 @@
 #include <time.h>
 
 #include "rohc_tunnel.h"
-#include "keepalive.h"
 #include "tlv.h"
 
 #include "server.h"
 
 struct client {    
     int      tcp_socket   ;
+    gnutls_session_t tls_session;
     struct in_addr local_address;
 
     pthread_t thread_tunnel;

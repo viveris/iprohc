@@ -28,13 +28,37 @@ int new_client(int socket, int tun, struct client** clients, int max_clients, st
 	struct in_addr local;
 	int i = 0 ;
 	int raw ;
+	int ret ;
 
 	/* New client */
+
+	/* Initialize TLs */
+	gnutls_session_t session;
+	gnutls_init (&session, GNUTLS_SERVER);
+	gnutls_priority_set(session, server_opts.priority_cache);
+	gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, server_opts.xcred) ;
+	gnutls_certificate_server_set_request(session, GNUTLS_CERT_REQUEST);
+
+	/* accept connection */
 	conn = accept(socket, (struct sockaddr*)&src_addr, &src_addr_len) ;
 	if (conn < 0) {
 		perror("Fail accept\n") ;
 	}
 	trace(LOG_INFO, "Connection from %s (%d)\n", inet_ntoa(src_addr.sin_addr), src_addr.sin_addr.s_addr) ;
+
+	/* */
+	gnutls_transport_set_ptr(session, (gnutls_transport_ptr_t) &conn);
+	do {
+	  ret = gnutls_handshake (session);
+	} while (ret < 0 && gnutls_error_is_fatal (ret) == 0);
+
+	if (ret < 0) {
+		close(conn);
+		gnutls_deinit(session);
+		trace(LOG_ERR, "TLS handshake failed : %s", gnutls_strerror (ret)) ;
+		return -3 ;
+	}
+	trace(LOG_INFO, "TLS handshake succeeded") ;
 
 	/* client creation parameters */
 	trace(LOG_DEBUG, "Creation of client") ;

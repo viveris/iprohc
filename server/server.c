@@ -359,12 +359,16 @@ int main(int argc, char *argv[])
 				(clients[j]->last_keepalive.tv_sec == -1 || 
 				 clients[j]->last_keepalive.tv_sec + ceil(clients[j]->tunnel.params.keepalive_timeout/3) < now.tv_sec)) {
 				/* send keepalive */
-				keepalive(clients[j]->tcp_socket) ;
+				char command[1] = { C_KEEPALIVE } ;
+				trace(LOG_DEBUG, "Keepalive !") ;
+				gnutls_record_send(clients[j]->tls_session, command, 1) ;
 				gettimeofday(&(clients[j]->last_keepalive), NULL) ;
 			} else if (clients[j]->tunnel.alive == -1) {
 				/* free dead client */
 				trace(LOG_DEBUG, "Freeing %p", clients[j]) ;
+				gnutls_bye(clients[j]->tls_session, GNUTLS_SHUT_WR);
 				close(clients[j]->tcp_socket) ;
+				gnutls_deinit(clients[j]->tls_session);
 				free(clients[j]) ;
 				clients[j] = NULL ;
 			} else if (FD_ISSET(clients[j]->tcp_socket, &rdfs)) {
@@ -379,6 +383,11 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
+
+	gnutls_certificate_free_credentials(server_opts.xcred);
+	gnutls_priority_deinit (server_opts.priority_cache);
+
+	gnutls_global_deinit ();
 
 	return 0 ;
 }

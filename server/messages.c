@@ -15,7 +15,7 @@ int handle_connect(struct client* client)
 	size_t len = 1 ;
 
 	len += gen_connect(tlv+1, client->tunnel.params) ;
-	send(client->tcp_socket, tlv, len, 0) ;
+	gnutls_record_send(client->tls_session, tlv, len) ;
 
 	return 0 ;
 }
@@ -27,7 +27,7 @@ int handle_client_request(struct client* client) {
 	char* bufmax;
 
 
-	length = recv(client->tcp_socket, buf, 1024, 0) ;
+	length = gnutls_record_recv(client->tls_session, buf, 1024) ;
 	if (length == 0) {
 		return -1 ;
 	}
