@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <getopt.h>
 #include <gnutls/gnutls.h>
+#include <gnutls/pkcs12.h>
 
 #include "tun_helpers.h"
 
@@ -207,7 +208,7 @@ int main(int argc, char *argv[])
                               } ;
     int option_index = 0;
     do {
-        c = getopt_long(argc, argv, "p:hd", options, &option_index) ;
+        c = getopt_long(argc, argv, "p:P:hd", options, &option_index) ;
         switch (c) {
             case 'd' :
 				log_max_priority = LOG_DEBUG ;
@@ -232,16 +233,24 @@ int main(int argc, char *argv[])
     }
 
     /*
-     * GNUTLS stuff
+     * GnuTLS stuff
      */
 
-    gnutls_global_init ();
-	gnutls_certificate_allocate_credentials (&(server_opts.xcred));
-	gnutls_certificate_set_x509_simple_pkcs12_file(server_opts.xcred, pkcs12_f, GNUTLS_X509_FMT_PEM, "") ;
+    gnutls_global_init();
+	gnutls_certificate_allocate_credentials(&(server_opts.xcred));
+	gnutls_priority_init(&(server_opts.priority_cache), "NORMAL", NULL);
+	ret = load_p12(server_opts.xcred, pkcs12_f, NULL) ;
+	if (ret < 0) {
+		/* Try with empyty password */
+		ret = load_p12(server_opts.xcred, pkcs12_f, "") ;
+	}
+	if (ret < 0) {
+		trace(LOG_ERR, "Unable to load certificate : %s", gnutls_strerror(ret)) ;
+		exit(1) ;
+	}
 	
-	generate_dh_params (&dh_params);
-	gnutls_priority_init (&(server_opts.priority_cache), "PERFORMANCE:%SERVER_PRECEDENCE", NULL);
-	gnutls_certificate_set_dh_params (server_opts.xcred, dh_params);
+	generate_dh_params(&dh_params);
+	gnutls_certificate_set_dh_params(server_opts.xcred, dh_params);
 
 	/* 
 	 * Create TCP socket 

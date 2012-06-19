@@ -29,12 +29,13 @@ int new_client(int socket, int tun, struct client** clients, int max_clients, st
 	int i = 0 ;
 	int raw ;
 	int ret ;
+	unsigned int verify_status ;
 
 	/* New client */
 
-	/* Initialize TLs */
+	/* Initialize TLS */
 	gnutls_session_t session;
-	gnutls_init (&session, GNUTLS_SERVER);
+	gnutls_init(&session, GNUTLS_SERVER);
 	gnutls_priority_set(session, server_opts.priority_cache);
 	gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, server_opts.xcred) ;
 	gnutls_certificate_server_set_request(session, GNUTLS_CERT_REQUEST);
@@ -46,8 +47,15 @@ int new_client(int socket, int tun, struct client** clients, int max_clients, st
 	}
 	trace(LOG_INFO, "Connection from %s (%d)\n", inet_ntoa(src_addr.sin_addr), src_addr.sin_addr.s_addr) ;
 
-	/* */
-	gnutls_transport_set_ptr(session, (gnutls_transport_ptr_t) &conn);
+	/* TLS */
+	/* Get rid of warning, it's a "bug" of GnuTLS (cf http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
+	#if defined __GNUC__
+	#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
+	#endif
+	gnutls_transport_set_ptr(session, (gnutls_transport_ptr_t) conn);
+	#if defined __GNUC__
+	#pragma GCC diagnostic error "-Wint-to-pointer-cast"
+	#endif
 	do {
 	  ret = gnutls_handshake (session);
 	} while (ret < 0 && gnutls_error_is_fatal (ret) == 0);
@@ -55,10 +63,33 @@ int new_client(int socket, int tun, struct client** clients, int max_clients, st
 	if (ret < 0) {
 		close(conn);
 		gnutls_deinit(session);
-		trace(LOG_ERR, "TLS handshake failed : %s", gnutls_strerror (ret)) ;
+		trace(LOG_ERR, "TLS handshake failed : %s", gnutls_strerror(ret)) ;
 		return -3 ;
 	}
 	trace(LOG_INFO, "TLS handshake succeeded") ;
+	
+	ret = gnutls_certificate_verify_peers2(session, &verify_status) ;
+	if (ret < 0) {
+		trace(LOG_ERR, "TLS verify failed : %s", gnutls_strerror(ret)) ;
+		return -3 ;
+	}
+
+	if  (verify_status & GNUTLS_CERT_INVALID
+     && (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM|GNUTLS_CERT_INVALID))
+		) {
+		trace(LOG_ERR, "Certificate can't be verified : ") ;
+		if (verify_status & GNUTLS_CERT_REVOKED)
+			trace(LOG_ERR, " - Revoked certificate") ;
+		if (verify_status & GNUTLS_CERT_SIGNER_NOT_FOUND)
+			trace(LOG_ERR, " - Unable to trust certificate issuer") ;
+		if (verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
+			trace(LOG_ERR, " - Certificate issue is not a CA") ;
+		if (verify_status & GNUTLS_CERT_NOT_ACTIVATED)
+			trace(LOG_ERR, " - The certificate is not activated") ;
+		if (verify_status & GNUTLS_CERT_EXPIRED)
+			trace(LOG_ERR, " - The certificate has expired") ;
+		return -3 ;
+	}
 
 	/* client creation parameters */
 	trace(LOG_DEBUG, "Creation of client") ;
@@ -71,6 +102,7 @@ int new_client(int socket, int tun, struct client** clients, int max_clients, st
 	clients[i] = malloc(sizeof(struct client)) ;
 	trace(LOG_DEBUG, "Allocating %p", clients[i]) ;
 	clients[i]->tcp_socket = conn ;
+	clients[i]->tls_session = session ;
 
 	/* dest_addr */
 	clients[i]->tunnel.dest_address  = src_addr.sin_addr ;

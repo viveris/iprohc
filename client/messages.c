@@ -15,13 +15,13 @@
 #include "log.h"
 
 /* Generic functions for handling messages */
-int handle_message(struct tunnel* tunnel, int socket, char* buf, int length, struct client_opts opts)
+int handle_message(struct tunnel* tunnel, char* buf, int length, struct client_opts opts)
 {
 	char* bufmax = buf + length ;
 	while (buf < bufmax) {
 		switch (*buf) {
 			case C_CONNECT_OK:
-				buf = handle_okconnect(tunnel, socket, ++buf, opts) ;
+				buf = handle_okconnect(tunnel, ++buf, opts) ;
 				if (buf == NULL) {
 					trace(LOG_ERR, "Unable to decode TCP message") ;
 				}
@@ -40,17 +40,8 @@ int handle_message(struct tunnel* tunnel, int socket, char* buf, int length, str
 	return 0 ;
 }
 
-/* Send connection request */
-int client_connect(struct tunnel tunnel, int socket)
-{
-	char command[1] = { C_CONNECT } ;
-	trace(LOG_DEBUG, "Emit connect message") ;
-	/* Emit a simple connect message */
-	return send(socket, command, 1 ,0) ;
-}
-
 /* Handler of okconnect message from server */
-char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct client_opts opts)
+char* handle_okconnect(struct tunnel* tunnel, char* tlv, struct client_opts opts)
 {
 	int tun, raw ;
 	int tun_itf_id ;
@@ -120,7 +111,7 @@ char* handle_okconnect(struct tunnel* tunnel, int socket, char* tlv, struct clie
     /* Go thread, go ! */
 	pthread_create(&tunnel_thread, NULL, new_tunnel, (void*)tunnel) ;
 
-	send(socket, message, 1, 0) ;
+	gnutls_record_send(opts.tls_session, message, 1) ;
 
 	return newbuf ;
 }
