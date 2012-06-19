@@ -50,8 +50,9 @@ void* route(void* arg)
 
 	int i ;
 	int ret;
-    static unsigned char buffer[TUNTAP_BUFSIZE];
-    unsigned int buffer_len = TUNTAP_BUFSIZE;
+
+	unsigned char buffer[TUNTAP_BUFSIZE];
+	unsigned int buffer_len = TUNTAP_BUFSIZE;
 
 	struct in_addr addr;
 
@@ -91,8 +92,8 @@ void* route(void* arg)
 				} else {
 					if (addr.s_addr == clients[i]->tunnel.dest_address.s_addr) {
 						write(clients[i]->tunnel.fake_raw[1], buffer, ret) ;
+						break ;
 					}
-					break ;
 				}
 			}
 		}
@@ -268,7 +269,7 @@ int main(int argc, char *argv[])
 	/* params */
 	struct tunnel_params params ;
     params.local_address       = inet_addr("192.168.99.1") ; /* Sets the IP address of the server */
-    params.packing             = 4 ;
+    params.packing             = 5 ;
     params.max_cid             = 14 ;
     params.is_unidirectional   = 1 ;
     params.wlsb_window_width   = 23 ;
