@@ -504,7 +504,7 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 		goto error_unpack;
 	}
 
-	dump_packet("Decompressing : ", packet + 20, packet_len - 20) ;
+	dump_packet("Decompressing : ", packet, packet_len) ;
 	/* XXX : We assume here all packets are IPv4 */
 	/* Check checksum */
 	uint16_t* p_chksum =  (uint16_t*) &packet[10] ;
@@ -518,7 +518,7 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 	}
 
 	/* decompress the ROHC packets */
-	packet_p += 20 ;
+	packet_p = packet + 20 ;
 
 	while(packet_p < packet + packet_len) {
 		
