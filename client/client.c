@@ -49,9 +49,10 @@ void usage(char* arg0) {
 	exit(2) ;
 }
 
+int alive ;
 void sigterm(int signal)
 {
-	exit(0) ;
+	alive = 0 ;
 }
 
 int main(int argc, char *argv[])
@@ -78,11 +79,14 @@ int main(int argc, char *argv[])
 	client_opts.tun_name = calloc(32, sizeof(char)) ;
 	client_opts.up_script_path = calloc(1024, sizeof(char)) ;
 
+	fd_set rdfs;
+
 	/* Initialize logger */
 	openlog("iprohc_client", LOG_PID | LOG_PERROR, LOG_DAEMON)  ;
 
 	/* Handle SIGTERM */
 	signal(SIGTERM, sigterm) ;
+	signal(SIGINT, sigterm) ;
 
 	/* 
 	 * Parsing options 
@@ -265,12 +269,21 @@ int main(int argc, char *argv[])
 
 	/* Wait for answer and other messages, close when
 	   socket is close */
-	while ((len = gnutls_record_recv(session, buf, 1024))) {
-		trace(LOG_DEBUG, "Received %ld bytes of data", len) ;
-		if (handle_message(&tunnel, buf, len, client_opts) < 0) {
-			return 1 ;
-		}
+	alive = 1 ;
+	while (alive) {
+		FD_ZERO(&rdfs);
+		FD_SET(sock, &rdfs);
+		if (pselect(sock+1, &rdfs, NULL, NULL, NULL, NULL) < 0) {
+            break ;
+        }
+		if (FD_ISSET(sock, &rdfs)) {
+			len = gnutls_record_recv(session, buf, 1024) ;
+			if (handle_message(&tunnel, buf, len, client_opts) < 0) {
+				return 1 ;
+			}
+		} 
 	}
+	trace(LOG_INFO, "Interupted, exiting") ;
 
 	gnutls_bye(session, GNUTLS_SHUT_RDWR);
 	gnutls_deinit(session);
