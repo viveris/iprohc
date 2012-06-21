@@ -11,8 +11,8 @@
 int
 generate_dh_params (gnutls_dh_params_t* dh_params)
 {
-  int bits = gnutls_sec_param_to_pk_bits (GNUTLS_PK_DH, GNUTLS_SEC_PARAM_LOW);
-
+  /* int bits = gnutls_sec_param_to_pk_bits (GNUTLS_PK_DH, GNUTLS_SEC_PARAM_LOW); */
+  int bits = 1248 ; /* Equivalent, gnutls_sec_param_to_pk_bits is available since 2.12 */
   /* Generate Diffie-Hellman parameters - for use with DHE
    * kx algorithms. When short bit length is used, it might
    * be wise to regenerate parameters often.
@@ -22,7 +22,6 @@ generate_dh_params (gnutls_dh_params_t* dh_params)
 
   return 0;
 }
-
 
 #define MAX_CERTS 2
 
@@ -123,7 +122,7 @@ int load_p12(gnutls_certificate_credentials_t xcred, char* p12_file, char* passw
                case GNUTLS_BAG_CERTIFICATE:
                     trace(LOG_DEBUG,"Cert found !\n") ;
                     if (cert_idx >= MAX_CERTS) {
-                        ret = GNUTLS_E_USER_ERROR ;
+                        ret = GNUTLS_E_INTERRUPTED ;
                         trace(LOG_ERR, "Too much certificate, abort\n") ;
                         goto error ;
                     }
@@ -147,13 +146,13 @@ int load_p12(gnutls_certificate_credentials_t xcred, char* p12_file, char* passw
     }
 
     if (! key) {
-        ret = GNUTLS_E_USER_ERROR ;
+        ret = GNUTLS_E_INTERRUPTED ;
         trace(LOG_ERR, "Unable to find the private key\n") ;
         goto error ;
     }
 
     if (cert_idx != MAX_CERTS) {
-        ret = GNUTLS_E_USER_ERROR ;
+        ret = GNUTLS_E_INTERRUPTED ;
         trace(LOG_ERR, "Unable to find all certificates\n") ;
         goto error ;
     }
@@ -165,7 +164,7 @@ int load_p12(gnutls_certificate_credentials_t xcred, char* p12_file, char* passw
         if (memcmp(cert_id, key_id, cert_id_size) == 0) {
             /* it's the key certificate ! */
             if (id_cert != -1) {
-                ret = GNUTLS_E_USER_ERROR ;
+                ret = GNUTLS_E_INTERRUPTED ;
                 trace(LOG_ERR, "Duplicate key certificate !\n") ;
                 goto error ;
             }
@@ -174,7 +173,7 @@ int load_p12(gnutls_certificate_credentials_t xcred, char* p12_file, char* passw
     }
  
     if (id_cert == -1) {
-        ret = GNUTLS_E_USER_ERROR ;
+        ret = GNUTLS_E_INTERRUPTED ;
         trace(LOG_ERR, "Unable to find key certificate !\n") ;
         goto error ;
     }
@@ -206,4 +205,17 @@ error:
         gnutls_pkcs12_deinit(p12) ;
     return ret ;
 }
+
+
+#if defined __GNUC__
+#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
+#endif
+void gnutls_transport_set_ptr_nowarn(gnutls_session_t session, int ptr)
+{
+	return gnutls_transport_set_ptr(session, (gnutls_transport_ptr_t) ptr);
+}
+#if defined __GNUC__
+#pragma GCC diagnostic error "-Wint-to-pointer-cast"
+#endif
+
 

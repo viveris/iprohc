@@ -212,13 +212,7 @@ int main(int argc, char *argv[])
 	 */
 	
 	/* Get rid of warning, it's a "bug" of GnuTLS (cf http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
-    #if defined __GNUC__
-    #pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
-    #endif
-	gnutls_transport_set_ptr(session, (gnutls_transport_ptr_t) sock);
-    #if defined __GNUC__
-    #pragma GCC diagnostic error "-Wint-to-pointer-cast"
-    #endif
+	gnutls_transport_set_ptr_nowarn(session, sock);
 
 	do {
 		ret = gnutls_handshake(session);

@@ -1,7 +1,7 @@
 Source: iprohc
 Priority: optional
 Maintainer: Viveris Technologies
-Build-Depends: debhelper (>= 7.0.15), libtool, iproute-dev, librohc-dev, cmake
+Build-Depends: debhelper (>= 7.0.15), libtool, iproute-dev, librohc-dev, cmake, libgnutls-dev
 Standards-Version: 3.8.4
 Section: libs
 

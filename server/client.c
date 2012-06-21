@@ -12,6 +12,7 @@
 #include "tun_helpers.h"
 #include "rohc_tunnel.h"
 #include "client.h"
+#include "tls.h"
 
 void close_tunnel(void* v_tunnel)
 {
@@ -49,13 +50,7 @@ int new_client(int socket, int tun, struct client** clients, int max_clients, st
 
 	/* TLS */
 	/* Get rid of warning, it's a "bug" of GnuTLS (cf http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
-	#if defined __GNUC__
-	#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
-	#endif
-	gnutls_transport_set_ptr(session, (gnutls_transport_ptr_t) conn);
-	#if defined __GNUC__
-	#pragma GCC diagnostic error "-Wint-to-pointer-cast"
-	#endif
+	gnutls_transport_set_ptr_nowarn(session, conn);
 	do {
 	  ret = gnutls_handshake (session);
 	} while (ret < 0 && gnutls_error_is_fatal (ret) == 0);
