@@ -1,5 +1,4 @@
 usr/lib/libiprohc_common.so
-usr/include/iprohc_common/keepalive.h
 usr/include/iprohc_common/rohc_tunnel.h
 usr/include/iprohc_common/tlv.h
 usr/include/iprohc_common/tun_helpers.h

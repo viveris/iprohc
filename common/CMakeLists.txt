@@ -29,7 +29,7 @@ add_definitions("-Wall")
 target_link_libraries(iprohc_common ${LIBS} netlink) 
 
 install (TARGETS iprohc_common DESTINATION lib)
-install (FILES  keepalive.h  rohc_tunnel.h  tlv.h  tun_helpers.h 
+install (FILES  rohc_tunnel.h  tlv.h  tun_helpers.h 
         DESTINATION include/iprohc_common/) 
 
 option (BUILD_TEST "Also build test programs" OFF)
