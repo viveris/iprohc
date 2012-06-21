@@ -70,7 +70,6 @@ int main(int argc, char *argv[])
 	char pkcs12_f[1024] ;
 	gnutls_session_t session;
 	gnutls_certificate_credentials_t xcred;
-	const char* err ;
 	unsigned int verify_status ;
 
 	int ret ;
@@ -183,7 +182,10 @@ int main(int argc, char *argv[])
 
 
 	gnutls_init(&session, GNUTLS_CLIENT);
-	gnutls_priority_set_direct(session, "NORMAL", &err);
+	/* const char* err ;
+	   gnutls_priority_set_direct(session, "NORMAL", &err); // NEW API */
+	int allowed_protocols[] = {GNUTLS_TLS1_0, GNUTLS_TLS1_1 } ;
+	gnutls_protocol_set_priority(session, allowed_protocols) ;
 	gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, xcred);
 
 	/* 
@@ -241,10 +243,14 @@ int main(int argc, char *argv[])
             trace(LOG_ERR, " - Unable to trust certificate issuer") ;
         if (verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
             trace(LOG_ERR, " - Certificate issue is not a CA") ;
+#ifdef GNUTLS_CERT_NOT_ACTIVATED
         if (verify_status & GNUTLS_CERT_NOT_ACTIVATED)
             trace(LOG_ERR, " - The certificate is not activated") ;
+#endif
+#ifdef GNUTLS_CERT_EXPIRED
         if (verify_status & GNUTLS_CERT_EXPIRED)
             trace(LOG_ERR, " - The certificate has expired") ;
+#endif
         return -3 ;
     }
 	
