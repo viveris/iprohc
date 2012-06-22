@@ -184,8 +184,17 @@ int main(int argc, char *argv[])
 	gnutls_init(&session, GNUTLS_CLIENT);
 	/* const char* err ;
 	   gnutls_priority_set_direct(session, "NORMAL", &err); // NEW API */
-	int allowed_protocols[] = {GNUTLS_TLS1_0, GNUTLS_TLS1_1 } ;
-	gnutls_protocol_set_priority(session, allowed_protocols) ;
+    const int protocol_priority[] = { GNUTLS_TLS1, GNUTLS_SSL3, 0 };
+    const int kx_priority[] = { GNUTLS_KX_RSA, 0 };
+    const int cipher_priority[] = { GNUTLS_CIPHER_3DES_CBC, GNUTLS_CIPHER_ARCFOUR, 0};
+    const int comp_priority[] = { GNUTLS_COMP_ZLIB, GNUTLS_COMP_NULL, 0 };
+    const int mac_priority[] = { GNUTLS_MAC_SHA, GNUTLS_MAC_MD5, 0 };
+	gnutls_protocol_set_priority(session, protocol_priority) ;
+    gnutls_cipher_set_priority(session, cipher_priority);
+    gnutls_compression_set_priority(session, comp_priority);
+    gnutls_kx_set_priority(session, kx_priority);
+    gnutls_mac_set_priority(session, mac_priority);
+
 	gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, xcred);
 
 	/* 

@@ -8,7 +8,7 @@ include_directories("../common")
 
 add_executable (iprohc_client client.c messages.c tls.c)
 
-add_definitions("-Wall")
+add_definitions("-Wall -Wno-deprecated -Wno-deprecated-declarations")
 
 target_link_libraries(iprohc_client iprohc_common ${LIBS}) 
 
