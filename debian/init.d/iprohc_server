@@ -31,6 +31,13 @@ if [ -n "$IPROHC_PORT" ]; then
 	DAEMON_ARGS="$DAEMON_ARGS --port $IPROHC_PORT"
 fi
 
+if [ -n "$IPROHC_P12FILE" -a -f $IPROHC_P12FILE ]; then
+	DAEMON_ARGS="$DAEMON_ARGS --p12 ${IPROHC_P12FILE}"
+else
+    echo "Please specify a valid P12 path in /etc/default/$NAME"
+    exit 1
+fi
+
 # Load the VERBOSE setting and other rcS variables
 . /lib/init/vars.sh
 

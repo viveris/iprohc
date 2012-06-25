@@ -1,2 +1,3 @@
 usr/bin/iprohc_server
-debian/iprohc_server /etc/init.d/
+debian/init.d/iprohc_server /etc/init.d/
+debian/default/iprohc_server /etc/default/

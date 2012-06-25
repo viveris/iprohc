@@ -1,0 +1,5 @@
+# Define port number
+IPROHC_PORT=3126
+
+# PKCS12 path
+IPROHC_P12FILE="/etc/ssl/iprohc.p12"
