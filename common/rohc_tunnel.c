@@ -37,6 +37,9 @@ On a client connection :
 /// The maximal size of data that can be received on the virtual interface
 #define TUNTAP_BUFSIZE 1518
 
+/// The maximal size of data that can be sent on the raw socket
+#define RAW_BUFSIZE 1450
+
 /// The maximal size of a ROHC packet
 #define MAX_ROHC_SIZE   (5 * 1024)
 
@@ -201,7 +204,7 @@ void* new_tunnel(void* arg) {
 	int act_comp   = 0 ; /* Counter for packing */
 	int total_size = 0 ; /* Size counter for packing */
 	/* Max size is MAX_ROHC_SIZE + 2 bytes max for packet len multiplied by the packing */
-	unsigned char* compressed_packet = malloc((packing*(MAX_ROHC_SIZE + 2)) * sizeof(char));
+	unsigned char* compressed_packet = malloc(RAW_BUFSIZE * sizeof(char));
 
     do
     {
@@ -301,6 +304,11 @@ int send_puree(int to, struct in_addr raddr, unsigned char* compressed_packet, i
     addr.sin_addr.s_addr = raddr.s_addr;
 
 	dump_packet("Packet ROHC : ", compressed_packet, *total_size) ;
+	
+	if (*total_size > RAW_BUFSIZE) {
+		trace(LOG_ERR, "Packet too big to be sent, abort") ;
+		goto error ;
+	}
 
 	/* write the ROHC packet in the RAW tunnel */
     trace(LOG_DEBUG, "Sending on raw socket to %s\n",  inet_ntoa(raddr)) ;
@@ -399,7 +407,7 @@ int tun2raw(struct rohc_comp *comp,
 	/* send current "floating" packet if the total size including the new packet will be
 	   over the MTU, thus making room for the new compressed packet */
 	/* XXX : MTU should also be a parameter */
-	if (*total_size + rohc_size + 4 > TUNTAP_BUFSIZE) {
+	if (*total_size + rohc_size + 4 >= RAW_BUFSIZE - 20) {
 		send_puree(to, raddr, compressed_packet, total_size, act_comp) ;
 	}
 
@@ -469,8 +477,7 @@ error:
  */
 int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct statitics* stats)
 {
-	/* Max size is MAX_ROHC_SIZE + 2 bytes max for packet len multiplied by the packing */
-	unsigned int packet_len = 20 + packing*(MAX_ROHC_SIZE+2) ;
+	unsigned int packet_len = RAW_BUFSIZE ;
 	unsigned char* packet = malloc(packet_len * sizeof(unsigned char));
 	unsigned char *packet_p = packet;
 
