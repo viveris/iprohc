@@ -327,6 +327,9 @@ int send_puree(int to, struct in_addr raddr, unsigned char* compressed_packet, i
     return 0;
 
 error:
+	/* reset packing variables */
+	*total_size = 0 ;
+	*act_comp   = 0 ;
 	trace(LOG_ERR, "write to raw failed\n");
     return -1;
 }
