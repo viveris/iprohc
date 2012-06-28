@@ -18,6 +18,7 @@
 #include "client.h"
 #include "messages.h"
 #include "tls.h"
+#include "config.h"
 
 // XXX : Config ?
 #define MAX_CLIENTS 50
@@ -105,6 +106,22 @@ void* route(void* arg)
 	return NULL ;
 }
 
+void dump_opts(struct server_opts opts)
+{
+	struct in_addr addr ;
+	addr.s_addr = opts.local_address ;
+
+	trace(LOG_DEBUG, "Port     : %d", opts.port) ;	
+	trace(LOG_DEBUG, "P12 file : %s", opts.pkcs12_f) ;	
+	trace(LOG_DEBUG, "Pidfile  : %s", opts.pidfile_path) ;	
+	trace(LOG_DEBUG, "Tunnel params :") ;	
+	trace(LOG_DEBUG, " . Local IP  : %s", inet_ntoa(addr)) ;	
+	trace(LOG_DEBUG, " . Packing   : %d", opts.params.packing) ;	
+	trace(LOG_DEBUG, " . Max cid   : %d", opts.params.max_cid) ;	
+	trace(LOG_DEBUG, " . Unid      : %d", opts.params.is_unidirectional) ;	
+	trace(LOG_DEBUG, " . Keepalive : %d", opts.params.keepalive_timeout) ;	
+}
+
 void dump_stats_client(struct client* client) {
     trace(LOG_NOTICE, "------------------------------------------------------") ;
     trace(LOG_NOTICE, "Client %s", inet_ntoa(client->tunnel.dest_address)) ;
@@ -153,9 +170,13 @@ void usage(char* arg0) {
     printf("Usage : %s [opts]\n", arg0) ;
     printf("\n") ;
     printf("Options : \n") ;
-    printf(" --port : Port to listen on (default: 1989)\n") ;
-    printf(" --p12 : Path to the pkcs12 file containing CA, server key and server crt\n") ;
+    printf(" --config: Path to configuration file (default: /etc/iprohc_server.conf)\n") ;
     exit(2) ;
+}
+
+int alive ;
+void quit(int sig) {
+	alive = 0;
 }
 
 int main(int argc, char *argv[])
@@ -177,14 +198,10 @@ int main(int argc, char *argv[])
 	int ret ;
 	sigset_t sigmask;
 
-	int address = INADDR_ANY ;
-	int port    = 3126       ;
-
-	char pkcs12_f[1024] ;
-	pkcs12_f[0] = '\0' ;
 	gnutls_dh_params_t dh_params;
 
 	struct server_opts server_opts ;
+	FILE* pid ;
 	
 	int c;
 
@@ -194,33 +211,42 @@ int main(int argc, char *argv[])
 	openlog("iprohc_server", LOG_PID | LOG_PERROR , LOG_DAEMON) ;
 
 	/* Signal for stats and log */
+	signal(SIGINT,  quit) ;
+	signal(SIGTERM, quit) ;
 	signal(SIGUSR1, dump_stats) ;
 	signal(SIGUSR2, switch_log_max) ;
 
 	/*
 	 * Parsing options
 	 */
+
+	/* Default values */
+	server_opts.port = 3126; 
+	server_opts.pkcs12_f[0] = '\0' ;
+	server_opts.pidfile_path[0]  = '\0' ;
+    server_opts.local_address       = inet_addr("192.168.99.1") ;
+
+    server_opts.params.packing             = 5 ;
+    server_opts.params.max_cid             = 14 ;
+    server_opts.params.is_unidirectional   = 1 ;
+    server_opts.params.wlsb_window_width   = 23 ;
+    server_opts.params.refresh             = 9 ;
+    server_opts.params.keepalive_timeout   = 60 ;
+    server_opts.params.rohc_compat_version = 1 ;
+
     struct option options[] = {
-        { "port",   required_argument, NULL, 'p' },
-        { "p12",    required_argument, NULL, 'P' },
+        { "conf",    required_argument, NULL, 'c' },
         { "debug",   no_argument,      NULL, 'd' },
         { "help",   no_argument,       NULL, 'h' },
         {NULL, 0, 0, 0}
                               } ;
     int option_index = 0;
     do {
-        c = getopt_long(argc, argv, "p:P:hd", options, &option_index) ;
+        c = getopt_long(argc, argv, "hd", options, &option_index) ;
         switch (c) {
             case 'd' :
 				log_max_priority = LOG_DEBUG ;
                 trace(LOG_DEBUG, "Debugging enabled") ;
-                break ;
-            case 'p' :
-                port = atoi(optarg) ;
-                trace(LOG_DEBUG, "Remote port : %d", port) ;
-            case 'P' :
-				strncpy(pkcs12_f, optarg, 1024) ;
-				trace(LOG_DEBUG, "PKCS12 file : %s",  pkcs12_f) ;
                 break ;
             case 'h' :
                 usage(argv[0]) ;
@@ -228,10 +254,25 @@ int main(int argc, char *argv[])
         }
     } while (c != -1) ;	
 
-    if (strcmp(pkcs12_f, "") == 0) {
+	parse_config("iprohc_server.conf", &server_opts) ;
+	dump_opts(server_opts) ;
+
+    if (strcmp(server_opts.pkcs12_f, "") == 0) {
     	trace(LOG_ERR, "PKCS12 file required") ;
     	exit(2) ;
     }
+
+     if (strcmp(server_opts.pidfile_path, "") == 0) {
+       trace(LOG_WARNING, "No pidfile specified") ;
+     } else {
+       pid = fopen(server_opts.pidfile_path, "w") ;
+       if (pid < 0) {
+               trace(LOG_ERR, "Unable to write open file : %s", strerror(errno)) ;
+       }
+       fprintf(pid, "%d\n", getpid()) ;
+       fclose(pid) ;
+	}
+
 
     /*
      * GnuTLS stuff
@@ -240,14 +281,14 @@ int main(int argc, char *argv[])
     gnutls_global_init();
 	gnutls_certificate_allocate_credentials(&(server_opts.xcred));
 	gnutls_priority_init(&(server_opts.priority_cache), "NORMAL", NULL);
-	ret = load_p12(server_opts.xcred, pkcs12_f, NULL) ;
+	ret = load_p12(server_opts.xcred, server_opts.pkcs12_f, NULL) ;
 	if (ret < 0) {
 		/* Try with empyty password */
-		ret = load_p12(server_opts.xcred, pkcs12_f, "") ;
+		ret = load_p12(server_opts.xcred, server_opts.pkcs12_f, "") ;
 	}
 	if (ret < 0) {
 		trace(LOG_ERR, "Unable to load certificate : %s", gnutls_strerror(ret)) ;
-		exit(1) ;
+		goto error ;
 	}
 	
 	generate_dh_params(&dh_params);
@@ -262,42 +303,31 @@ int main(int argc, char *argv[])
 
 	struct	sockaddr_in servaddr ;
 	servaddr.sin_family	  = AF_INET;
-	servaddr.sin_addr.s_addr = htonl(address);
-	servaddr.sin_port		= htons(port);
+	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	servaddr.sin_port		= htons(server_opts.port);
 
 	if (bind(serv_socket, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
 		trace(LOG_ERR, "Bind failed : %s", strerror(errno)) ;
-		exit(1) ;
+		 goto error ;
 	}
 	
 	if (listen(serv_socket, 10) < 0) {
 		trace(LOG_ERR, "Listen failed : %s", strerror(errno)) ;
-		exit(1) ;
+		goto error ;
 	}
 
 	max = serv_socket ;
-
-	/* params */
-    server_opts.local_address       = inet_addr("192.168.99.1") ; /* Sets the IP address of the server */
-
-    server_opts.params.packing             = 5 ;
-    server_opts.params.max_cid             = 14 ;
-    server_opts.params.is_unidirectional   = 1 ;
-    server_opts.params.wlsb_window_width   = 23 ;
-    server_opts.params.refresh             = 9 ;
-    server_opts.params.keepalive_timeout   = 60 ;
-    server_opts.params.rohc_compat_version = 1 ;
 
 	/* TUN create */
 	tun = create_tun("tun_ipip", &tun_itf_id) ;
 	if (tun < 0) {
 		trace(LOG_ERR, "Unable to create TUN device") ;
-		exit(1) ;
+		goto error ;
 	}
 
 	if (set_ip4(tun_itf_id, server_opts.local_address, 24) < 0) {
 		trace(LOG_ERR, "Unable to set IPv4 on tun device") ;
-		exit(1) ;
+		goto error ;
 	}
 
 	/* TUN routing thread */
@@ -325,14 +355,12 @@ int main(int argc, char *argv[])
 
     /* mask signals during interface polling */
     sigemptyset(&sigmask);
-    sigaddset(&sigmask, SIGKILL);
-    sigaddset(&sigmask, SIGTERM);
-    sigaddset(&sigmask, SIGINT);
     sigaddset(&sigmask, SIGUSR1);
     sigaddset(&sigmask, SIGUSR2);
 
 	/* Start listening and looping on TCP socket */
-	while (1) {
+	alive = 1 ;
+	while (alive) {
 		gettimeofday(&now, NULL) ;
 		FD_ZERO(&rdfs); 
 		FD_SET(serv_socket, &rdfs);		
@@ -404,5 +432,14 @@ int main(int argc, char *argv[])
 
 	gnutls_global_deinit ();
 
+	if (strcmp(server_opts.pidfile_path, "") != 0) {
+		unlink(server_opts.pidfile_path) ;
+	}
 	return 0 ;
+
+error:
+	if (strcmp(server_opts.pidfile_path, "") != 0) {
+		unlink(server_opts.pidfile_path) ;
+	}
+	return 1 ;
 }
