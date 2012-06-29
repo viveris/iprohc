@@ -204,6 +204,8 @@ int main(int argc, char *argv[])
 	FILE* pid ;
 	
 	int c;
+	char conf_file[1024] ;
+	strcpy(conf_file, "/etc/iprohc_server.conf") ;
 
 	clients = calloc(MAX_CLIENTS, sizeof(struct clients*)) ;
 
@@ -242,8 +244,12 @@ int main(int argc, char *argv[])
                               } ;
     int option_index = 0;
     do {
-        c = getopt_long(argc, argv, "hd", options, &option_index) ;
+        c = getopt_long(argc, argv, "c:hd", options, &option_index) ;
         switch (c) {
+        	case 'c' :
+				trace(LOG_DEBUG, "Using file : %s", conf_file) ;
+				strncpy(conf_file, optarg, 1024) ;
+				conf_file[1023] = '\0' ;
             case 'd' :
 				log_max_priority = LOG_DEBUG ;
                 trace(LOG_DEBUG, "Debugging enabled") ;
@@ -254,7 +260,10 @@ int main(int argc, char *argv[])
         }
     } while (c != -1) ;	
 
-	parse_config("iprohc_server.conf", &server_opts) ;
+	if (parse_config(conf_file, &server_opts) < 0) {
+		trace(LOG_ERR, "Unable to parse configuration file, exiting...") ;
+		exit(2) ;
+	}
 	dump_opts(server_opts) ;
 
     if (strcmp(server_opts.pkcs12_f, "") == 0) {
@@ -355,6 +364,9 @@ int main(int argc, char *argv[])
 
     /* mask signals during interface polling */
     sigemptyset(&sigmask);
+    sigaddset(&sigmask, SIGINT);
+    sigaddset(&sigmask, SIGTERM);
+    sigaddset(&sigmask, SIGKILL);
     sigaddset(&sigmask, SIGUSR1);
     sigaddset(&sigmask, SIGUSR2);
 

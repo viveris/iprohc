@@ -133,6 +133,7 @@ int main(int argc, char *argv[])
 				break ;
             case 'P' :
 				strncpy(pkcs12_f, optarg, 1024) ;
+				pkcs12_f[1023] = '\0' ;
 				trace(LOG_DEBUG, "PKCS12 file : %s",  pkcs12_f) ;
                 break ;
 			case 'u' :

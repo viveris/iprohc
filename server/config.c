@@ -82,11 +82,6 @@ int parse_config(const char* path, struct server_opts* server_opts)
 	yaml_parser_t parser;
 	yaml_event_t event;
 
-	yaml_parser_initialize(&parser);
-
-	FILE* input = fopen(path, "rb");
-	yaml_parser_set_input_file(&parser, input);
-	
 	int level = 0;
 	enum parse_state states[MAX_LEVEL] ;
 
@@ -95,6 +90,17 @@ int parse_config(const char* path, struct server_opts* server_opts)
 	char value[1024] ;
 
 	int done = 0 ;
+
+
+	FILE* input = fopen(path, "rb");
+	if (input == NULL) {
+		trace(LOG_ERR, "Unable to find config file %s", path) ;
+		goto error_file ;
+	}
+
+	yaml_parser_initialize(&parser);
+	yaml_parser_set_input_file(&parser, input);
+	
 	while (!done) {
 	    if (!yaml_parser_parse(&parser, &event))
 	        goto error;
@@ -157,6 +163,7 @@ int parse_config(const char* path, struct server_opts* server_opts)
 
 error:
 	yaml_parser_delete(&parser);
+error_file :
 	return -1 ;
 }
 
