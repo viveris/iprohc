@@ -250,6 +250,7 @@ int main(int argc, char *argv[])
 				trace(LOG_DEBUG, "Using file : %s", conf_file) ;
 				strncpy(conf_file, optarg, 1024) ;
 				conf_file[1023] = '\0' ;
+				break ;
             case 'd' :
 				log_max_priority = LOG_DEBUG ;
                 trace(LOG_DEBUG, "Debugging enabled") ;

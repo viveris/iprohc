@@ -18,7 +18,6 @@ DESC="iprohc server"
 NAME=iprohc_server
 DAEMON=/usr/bin/$NAME
 PIDFILE=/var/run/$NAME.pid
-DAEMON_ARGS="--pidfile $PIDFILE"
 SCRIPTNAME=/etc/init.d/$NAME
 
 # Exit if the package is not installed
@@ -27,15 +26,8 @@ SCRIPTNAME=/etc/init.d/$NAME
 # Read configuration variable file if it is present
 [ -r /etc/default/$NAME ] && . /etc/default/$NAME
 
-if [ -n "$IPROHC_PORT" ]; then
-	DAEMON_ARGS="$DAEMON_ARGS --port $IPROHC_PORT"
-fi
-
-if [ -n "$IPROHC_P12FILE" -a -f $IPROHC_P12FILE ]; then
-	DAEMON_ARGS="$DAEMON_ARGS --p12 ${IPROHC_P12FILE}"
-else
-    echo "Please specify a valid P12 path in /etc/default/$NAME"
-    exit 1
+if [ -n "$IPROHC_CONF" ]; then
+	DAEMON_ARGS="--conf $IPROHC_CONF"
 fi
 
 # Load the VERBOSE setting and other rcS variables

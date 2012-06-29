@@ -19,4 +19,3 @@ add_definitions("-Wall")
 target_link_libraries(iprohc_server ${LIBS} iprohc_common) 
 
 install(TARGETS iprohc_server DESTINATION bin)
-install(TARGETS iprohc_server.conf DESTINATION etc)

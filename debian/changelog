@@ -1,3 +1,9 @@
+iprohc (0.2-1) stable; urgency=low
+
+  * Many fixes, TLS support, conf file support
+
+ -- Alexandre CHATAIGNON <achataignon@toulouse.viveris.com> Tue, 12 Jun 2012 17:26:16 +0200
+
 iprohc (0.1-1) stable; urgency=low
 
   * Initial release
