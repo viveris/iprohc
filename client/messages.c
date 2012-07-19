@@ -30,7 +30,10 @@ int handle_message(struct tunnel* tunnel, char* buf, int length, struct client_o
                 trace(LOG_DEBUG, "Received keepalive") ; 
 				gettimeofday(&(tunnel->last_keepalive), NULL);				
 				buf++ ;
-				//keepalive(socket) ;
+				/* send keepalive */
+				char command[1] = { C_KEEPALIVE } ;
+				trace(LOG_DEBUG, "Keepalive !") ;
+				gnutls_record_send(opts.tls_session, command, 1) ;
 				break ;
 			default :
 				trace(LOG_ERR, "Unexpected %d in command\n", *buf) ;
