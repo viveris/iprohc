@@ -14,12 +14,12 @@ Description: A tunnel application using ROHC to
 
 Package: iprohc-server
 Architecture: any
-Depends: ${misc:Depends}, iprohc-common
+Depends: ${misc:Depends}, iprohc-common, libyaml-0-2, libgnutls26
 Description: A tunnel application using ROHC to
   compress packets headers. Server part.
 
 Package: iprohc-client
 Architecture: any
-Depends: librohc, iprohc-common, ${misc:Depends}
+Depends: librohc, iprohc-common, ${misc:Depends}, libgnutls26
 Description: A tunnel application using ROHC to
   compress packets headers. Client part.
