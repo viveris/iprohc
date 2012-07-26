@@ -5,6 +5,7 @@ add_definitions("-g")
 
 option(BUILD_CLIENT "Build the ROHC IPIP client" ON)
 option(BUILD_SERVER "Build the ROHC IPIP server" ON)
+option(STATS_COLLECTD "Collect stats with collectd" OFF)
 
 add_subdirectory (common) 
 if (BUILD_CLIENT)

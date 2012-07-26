@@ -1,8 +1,4 @@
 /* rohc_tunnel.c -- Functions handling a tunnel, client or server-side
-
-On a client connection :
- *
-
 */
 
 #include <stdlib.h>
@@ -26,6 +22,8 @@ On a client connection :
 
 /* Initialize logger */
 #include "log.h"
+
+#include "config.h"
 
 /*
  * Macros & definitions:
@@ -65,6 +63,66 @@ int tun2raw(struct rohc_comp *comp,
 			struct in_addr raddr,
 			int* act_comp, int packing, unsigned char* compressed_packet,
 			int* total_size, struct statitics* stats) ;
+#ifdef STATS_COLLECTD
+#include <collectd/client.h>
+#define COLLECTD_PATH "unix:/var/run/collectd-unixsock"
+
+int collect_submit(lcc_connection_t * conn, lcc_identifier_t _id, struct timeval now, char* type_instance, int value) {
+	lcc_identifier_t id = _id ;
+	lcc_value_list_t vals ;
+
+	value_t values[1] ;
+	values[0].gauge = value ;
+	vals.values = values ;
+
+	int types[] = { LCC_TYPE_GAUGE } ;
+	vals.values_types = types ;
+	
+	vals.values_len = 1 ;
+
+	vals.time     = now.tv_sec ;
+	vals.interval = 1 ;
+
+	strncpy(id.type_instance, type_instance, strlen(type_instance)) ;
+	vals.identifier = id ;
+
+	return lcc_putval(conn, &vals) ;
+}
+
+int collect_stats(struct statitics stats, struct timeval now, struct in_addr addr) {
+	lcc_connection_t * conn ;
+	lcc_identifier_t id = { "localhost", "iprohc", "", "bytes", "" } ;
+
+	trace(LOG_DEBUG, "Sending stats") ;
+
+	strncpy(id.plugin_instance, inet_ntoa(addr), LCC_NAME_LEN) ;
+
+
+	if (lcc_connect(COLLECTD_PATH, &conn) < 0) {
+		return -1 ;
+	}
+	
+	if (collect_submit(conn, id, now, "decomp-failed",     stats.decomp_failed)     < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "decomp-total",      stats.decomp_total)      < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "comp_failed",       stats.comp_failed)       < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "comp_total",        stats.comp_total)        < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "head_comp_size",    stats.head_comp_size)    < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "head_uncomp_size",  stats.head_uncomp_size)  < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "total_comp_size",   stats.total_comp_size)   < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "total_uncomp_size", stats.total_uncomp_size) < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "unpack_failed",     stats.unpack_failed)     < 0) { goto error ; }
+	if (collect_submit(conn, id, now, "total_received",    stats.total_received)    < 0) { goto error ; }
+
+	LCC_DESTROY(conn) ;
+	
+	return 0 ;
+
+error:
+	LCC_DESTROY(conn) ;
+	return -1 ;
+}
+
+#endif
 
 
 /*
@@ -97,6 +155,10 @@ void* new_tunnel(void* arg) {
 
     struct timeval last;
     struct timeval now;
+#ifdef STATS_COLLECTD
+	struct timeval last_stat;
+#endif
+
     int kp_timeout   = tunnel->params.keepalive_timeout ;
     int packing      = tunnel->params.packing ;
 
@@ -105,6 +167,7 @@ void* new_tunnel(void* arg) {
 
     struct rohc_comp *comp;
     struct rohc_decomp *decomp;
+
 
 
     /* TODO : Check assumed present attributes
@@ -198,6 +261,7 @@ void* new_tunnel(void* arg) {
 	tunnel->stats.total_uncomp_size = 0 ;
 	tunnel->stats.unpack_failed     = 0 ;
 	tunnel->stats.total_received    = 0 ;
+	gettimeofday(&last_stat, NULL);
 
 	/* Initalize packing */
 
@@ -260,6 +324,15 @@ void* new_tunnel(void* arg) {
             trace(LOG_ERR, "Keepalive timeout detected (%ld > %ld + %d), exiting", now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout) ;
             tunnel->alive = 0 ;
         }
+
+#ifdef STATS_COLLECTD
+		if (now.tv_sec > last_stat.tv_sec + 1) {
+			if (collect_stats(tunnel->stats, now, tunnel->dest_address) < 0) {
+				trace(LOG_ERR, "Unable to submit stats") ;
+			}
+			gettimeofday(&last_stat, NULL);
+		}
+#endif        
     }
     while(tunnel->alive > 0);
 

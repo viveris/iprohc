@@ -1,1 +1,2 @@
 #cmakedefine NEW_RTNL
+#cmakedefine STATS_COLLECTD

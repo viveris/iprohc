@@ -21,6 +21,13 @@ else (NEW_RTNL)
     message("Using old rtnl_talk prototype")
 endif (NEW_RTNL)
 
+if (STATS_COLLECTD)
+    message("Stats with collectd enabled")
+    set(LIBS ${LIBS} collectdclient)
+else (STATS_COLLECTD)
+    message("Stats with collectd disabled")
+endif (STATS_COLLECTD)
+
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
