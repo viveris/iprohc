@@ -18,8 +18,10 @@
 #include "client.h"
 #include "messages.h"
 #include "tls.h"
+
 #include "config.h"
 
+#include "config_server.h"
 // XXX : Config ?
 #define MAX_CLIENTS 50
 
@@ -179,6 +181,40 @@ void quit(int sig) {
 	alive = 0;
 }
 
+#ifdef STATS_COLLECTD
+#include "stats.h"
+
+int collect_server_stats(struct timeval now) {
+	lcc_connection_t * conn ;
+	lcc_identifier_t id = { "localhost", "iprohc", "server", "", "" } ;
+	int nb_clients = 0 ;	
+	int j ;
+
+    if (lcc_connect(COLLECTD_PATH, &conn) < 0) {
+        trace(LOG_ERR, "Unable to connect to collectd") ;
+        return -1 ;
+    }
+	
+
+    for (j=0; j<MAX_CLIENTS; j++) {
+        if (clients[j] != NULL && clients[j]->tunnel.alive >= 0) {
+			nb_clients++ ;
+        }
+    }
+
+	if (collect_submit(conn, id, now, "gauge", "nb_clients", nb_clients)     < 0) { goto error ; }
+
+	LCC_DESTROY(conn) ;
+	return 0 ;
+
+error:
+    trace(LOG_ERR, "Unable to submit to collectd") ;
+    LCC_DESTROY(conn) ;
+    return -1 ;
+}
+
+#endif
+
 int main(int argc, char *argv[])
 {
 
@@ -202,6 +238,12 @@ int main(int argc, char *argv[])
 
 	struct server_opts server_opts ;
 	FILE* pid ;
+
+#ifdef STATS_COLLECTD
+	struct timeval last_stats ;
+	struct timeval stats_timeout ;
+	stats_timeout.tv_sec = 10 ;
+#endif
 	
 	int c;
 	char conf_file[1024] ;
@@ -371,6 +413,8 @@ int main(int argc, char *argv[])
     sigaddset(&sigmask, SIGUSR1);
     sigaddset(&sigmask, SIGUSR2);
 
+	gettimeofday(&last_stats, NULL) ;
+
 	/* Start listening and looping on TCP socket */
 	alive = 1 ;
 	while (alive) {
@@ -438,6 +482,16 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
+
+#ifdef STATS_COLLECTD
+		if (now.tv_sec > last_stats.tv_sec + stats_timeout.tv_sec) {
+			if (collect_server_stats(now) < 0) {
+				trace(LOG_ERR, "Unable to commit server stats") ;
+			}
+			gettimeofday(&last_stats, NULL) ;
+		}
+#endif
+
 	}
 
 	gnutls_certificate_free_credentials(server_opts.xcred);

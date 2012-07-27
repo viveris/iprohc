@@ -10,6 +10,17 @@ set(LIBS ${LIBS} ${GNUTLS_LIBRARIES})
 find_package(Yaml REQUIRED)
 set (LIBS ${LIBS} ${YAML_LIBRARIES})
 
+CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config_server.h.in ${CMAKE_CURRENT_BINARY_DIR}/config_server.h)
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
+if (STATS_COLLECTD)
+    message("Stats with collectd enabled")
+    set(LIBS ${LIBS} collectdclient)
+else (STATS_COLLECTD)
+    message("Stats with collectd disabled")
+endif (STATS_COLLECTD)
+
+
 include_directories("../common")
 
 add_executable (iprohc_server server.c client.c messages.c tls.c config.c)

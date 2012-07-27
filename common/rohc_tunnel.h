@@ -31,6 +31,8 @@ struct statitics {
 
     int unpack_failed;
     int total_received;
+
+    int* stats_packing ;
 } ;
 
 
