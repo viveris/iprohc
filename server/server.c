@@ -413,8 +413,9 @@ int main(int argc, char *argv[])
     sigaddset(&sigmask, SIGUSR1);
     sigaddset(&sigmask, SIGUSR2);
 
+#ifdef STATS_COLLECTD
 	gettimeofday(&last_stats, NULL) ;
-
+#endif
 	/* Start listening and looping on TCP socket */
 	alive = 1 ;
 	while (alive) {
