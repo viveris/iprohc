@@ -91,6 +91,11 @@ char* handle_okconnect(struct tunnel* tunnel, char* tlv, struct client_opts opts
 	/* set params */
 	tunnel->params = tp ;
 
+	/* set forced packing */
+	if (opts.packing != 0) {
+		tunnel->params.packing = opts.packing ;
+	}
+
 	/* up script */
 	if (strcmp(opts.up_script_path, "") != 0) {
 		if ((pid = fork()) == 0) {

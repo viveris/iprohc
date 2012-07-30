@@ -12,6 +12,8 @@ struct client_opts {
 
 	char *tun_name ;
 	char *up_script_path ;
+
+	int packing ;
 } ;
 
 /* Generic functions for handling messages */

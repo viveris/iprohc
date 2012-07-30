@@ -46,6 +46,7 @@ void usage(char* arg0) {
 	printf(" --debug : Enable debuging \n") ;
 	printf(" --up : Path to a shell script that will be executed when network is up\n") ;
 	printf(" --p12 : Path to the pkcs12 file containing server CA, client key and client crt\n") ;
+	printf(" --packing : Override packing\n") ;
 	exit(2) ;
 }
 
@@ -59,7 +60,7 @@ int main(int argc, char *argv[])
 {
 	struct tunnel tunnel ;
     uint32_t serv_addr = 0 ;
-    int      port  = 1989;
+    int      port  = 3126;
     char buf[1024] ;
 	int sock ;
 	int c;
@@ -77,6 +78,7 @@ int main(int argc, char *argv[])
 	struct client_opts client_opts ;
 	client_opts.tun_name = calloc(32, sizeof(char)) ;
 	client_opts.up_script_path = calloc(1024, sizeof(char)) ;
+	client_opts.packing = 0 ;
 
 	fd_set rdfs;
 
@@ -96,6 +98,7 @@ int main(int argc, char *argv[])
 		{ "remote", required_argument, NULL, 'r' },
 		{ "port",   required_argument, NULL, 'p' },
 		{ "p12",    required_argument, NULL, 'P' },
+		{ "packing", required_argument, NULL, 'k' },
 		{ "up",     required_argument, NULL, 'u' },
 		{ "debug",  no_argument, NULL, 'd' },
 		{ "help",   no_argument, NULL, 'h' },
@@ -113,7 +116,7 @@ int main(int argc, char *argv[])
 
 	optind = 1 ;
 	do {
-		c = getopt_long(argc, argv, "i:r:p:u:P:h", options, NULL) ;
+		c = getopt_long(argc, argv, "i:r:p:u:P:hk:", options, NULL) ;
 		switch (c) {
 			case 'i' :
 				trace(LOG_DEBUG, "TUN interface name : %s", optarg) ;
@@ -143,6 +146,10 @@ int main(int argc, char *argv[])
 					exit(1) ;
 				}
 				strncpy(client_opts.up_script_path, optarg, 1024) ;
+				break;
+			case 'k' :
+				client_opts.packing = atoi(optarg) ;
+				trace(LOG_DEBUG, "Using forced packing : %d\n", client_opts.packing) ;
 				break;
 			case 'h' :
 				usage(argv[0]) ;
