@@ -3,4 +3,5 @@ debian/init.d/iprohc_server /etc/init.d/
 debian/default/iprohc_server /etc/default/
 server/iprohc_server.conf /etc/
 debian/doc/sip.conf /usr/share/doc/iprohc-server/
+debian/doc/rtp.conf /usr/share/doc/iprohc-server/
 debian/doc/dahdi-channels.conf /usr/share/doc/iprohc-server/
