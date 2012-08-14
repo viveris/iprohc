@@ -68,7 +68,6 @@ int main(int argc, char *argv[])
 	int sock ;
 	int c;
 
-	struct in_addr serv;
 	size_t len ;
 
 	char pkcs12_f[1024] ;
@@ -298,14 +297,17 @@ int main(int argc, char *argv[])
 	client_opts.tls_session = session ;
 
 	/* Set destination tunnel parameter */
-	serv.s_addr = serv_addr ;
-	tunnel.dest_address = serv ;
+	tunnel.dest_address = ((struct sockaddr_in*) rp->ai_addr)->sin_addr ;
 
 	/* Ask for connection */
-    char command[1] = { C_CONNECT } ;
+    char command[1024] ;
+    command[0] = C_CONNECT ;
+    len = 1 ;
+	
 	trace(LOG_DEBUG, "Emit connect message") ;
+	len += gen_connrequest(command+1, client_opts.packing) ;
 	/* Emit a simple connect message */
-	gnutls_record_send(session, command, 1) ;
+	gnutls_record_send(session, command, len) ;
 
 	/* Handle SIGTERM */
 	signal(SIGTERM, sigterm) ;

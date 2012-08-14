@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <stdint.h>
 
 #ifndef ROHC_IPIP_TLV_H
@@ -24,6 +25,8 @@ enum types {
     REFRESH,
     KEEPALIVE,
     ROHC_COMPAT,
+    /* connrequest types */
+    CPACKING
 } ;
 
 enum parse_step {
@@ -50,7 +53,30 @@ char* gen_tlv_uint32(char* dest, struct tlv_result tlv, size_t* len) ;
 char* gen_tlv_char(char* dest, struct tlv_result tlv, size_t* len) ;
 
 /* Association between callbacks and type */
-gen_tlv_callback_t get_gen_cb_for_type(enum types type) ;
+static inline gen_tlv_callback_t get_gen_cb_for_type(enum types type) {
+    switch (type) {
+        case IP_ADDR:
+            return gen_tlv_uint32 ;
+        case PACKING :
+            return gen_tlv_char   ;
+        case MAXCID :
+            return gen_tlv_uint32 ;
+        case UNID :
+            return gen_tlv_char   ;
+        case WINDOWSIZE :
+            return gen_tlv_uint32 ;
+        case REFRESH :
+            return gen_tlv_uint32 ;
+        case KEEPALIVE :
+            return gen_tlv_uint32 ;
+        case ROHC_COMPAT :
+            return gen_tlv_char   ;
+        case CPACKING :
+            return gen_tlv_char ;
+        default:
+            return NULL ;
+    }
+}
 
 /*
 Specific parsing
@@ -74,4 +100,6 @@ struct tunnel_params {
 char*  parse_connect(char* buffer, struct tunnel_params* params) ;
 size_t gen_connect(char* dest, struct tunnel_params params) ;
 
+char* parse_connrequest(char* buffer, int* packing) ;
+size_t gen_connrequest(char* dest, int packing) ;
 #endif

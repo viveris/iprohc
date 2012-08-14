@@ -8,8 +8,24 @@
 
 #include "log.h"
 
-int handle_connect(struct client* client)
+char* handle_connect(struct client* client, char* buf)
 {
+
+	trace(LOG_INFO, "[%s] Connection asked, negotating parameters", inet_ntoa(client->tunnel.dest_address)) ;
+	/* Receiving parameters */
+	char* newbuf ;
+	int packing ;
+
+	newbuf = parse_connrequest(buf, &packing) ;
+	if (newbuf == NULL) {
+		trace(LOG_ERR, "Unable to parse connection request") ;
+		return NULL ;
+	}
+
+	trace(LOG_INFO, "[%s] Connection asked, negotating parameters (asked packing : %d)", inet_ntoa(client->tunnel.dest_address), packing) ;
+
+	/* Sending ok order for connection */
+	/* XXX : Refuse if ... */
 	char tlv[1024] ;
 	tlv[0] = C_CONNECT_OK ;
 	size_t len = 1 ;
@@ -17,7 +33,7 @@ int handle_connect(struct client* client)
 	len += gen_connect(tlv+1, client->tunnel.params) ;
 	gnutls_record_send(client->tls_session, tlv, len) ;
 
-	return 0 ;
+	return newbuf ;
 }
 
 int handle_client_request(struct client* client) {
@@ -25,7 +41,6 @@ int handle_client_request(struct client* client) {
 	int length;
 	char* cur ;
 	char* bufmax;
-
 
 	length = gnutls_record_recv(client->tls_session, buf, 1024) ;
 	if (length == 0) {
@@ -38,24 +53,30 @@ int handle_client_request(struct client* client) {
 	while (cur < bufmax) {
 		switch (*cur) {
 			case C_CONNECT:
-				trace(LOG_INFO, "[%s] Connection asked, negotating parameters", inet_ntoa(client->tunnel.dest_address)) ;
-				handle_connect(client) ;
+				cur = handle_connect(client, cur+1) ;
+				if (cur == NULL) {
+					return -1 ;
+				}
 				break ;
 			case C_CONNECT_DONE :
 				trace(LOG_INFO, "[%s] Connection started", inet_ntoa(client->tunnel.dest_address)) ;
 				start_client_tunnel(client) ;
+				cur++ ;
 				break;
 			case C_KEEPALIVE :
 				trace(LOG_DEBUG, "[%s] Received keepalive", inet_ntoa(client->tunnel.dest_address)) ;
 				gettimeofday(&(client->tunnel.last_keepalive), NULL);
+				cur++ ;
 				break ;
 			case C_DISCONNECT :
 				trace(LOG_INFO, "[%s] Disconnection asked", inet_ntoa(client->tunnel.dest_address)) ;
 				close_tunnel((void*)(&(client->tunnel))) ;
+				cur++ ;
+				break ;
 			default :
 				trace(LOG_WARNING, "[%s] Unexpected command : %d", inet_ntoa(client->tunnel.dest_address), *cur) ;
+				cur++ ;
 		}
-		cur++ ;
 	}
 	return 0 ;
 }

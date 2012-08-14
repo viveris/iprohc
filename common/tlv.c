@@ -81,6 +81,7 @@ size_t gen_tlv(char* f_dest, struct tlv_result* tlvs, int max_numbers)
 	gen_tlv_callback_t cb ;
 	size_t len = 0 ;
 	char* dest = f_dest ;
+	trace(LOG_DEBUG, "Generating TLV") ;
 
 	for (i=0; i < max_numbers; i++) {
 		/* type */
@@ -145,33 +146,12 @@ char* gen_tlv_char(char* f_dest, struct tlv_result tlv, size_t* len)
 	return dest ;
 }
 
-/* Defining types <-> callback */
+/* 
+ * Specific parsing 
+ */
 
-gen_tlv_callback_t get_gen_cb_for_type(enum types type) 
-{
-	switch (type) {
-		case IP_ADDR:
-			return gen_tlv_uint32 ;
-		case PACKING :
-			return gen_tlv_char   ;
-		case MAXCID :
-			return gen_tlv_uint32 ;
-		case UNID :
-			return gen_tlv_char   ;
-		case WINDOWSIZE :
-			return gen_tlv_uint32 ;
-		case REFRESH :
-			return gen_tlv_uint32 ;
-		case KEEPALIVE :
-			return gen_tlv_uint32 ;
-		case ROHC_COMPAT :
-			return gen_tlv_char   ;
-		default:
-			return NULL ;
-	}
-}
+/* Answer server -> client with ROHC parameters */
 
-/* Specific parsing */
 void mark_received(enum types* list, int n_list, enum types type)
 {
 	int i;
@@ -286,4 +266,43 @@ size_t gen_connect(char* dest, struct tunnel_params params)
 	ret = gen_tlv(dest, results, N_TUNNEL_PARAMS) ;
 	free(results) ;
 	return ret ;
+}
+
+/* Connection request (client -> server) */
+
+char* parse_connrequest(char* buffer, int* packing)
+{
+	char* newbuf ;
+	struct tlv_result** results = calloc(1, sizeof(struct tlv_result*)) ;
+	
+	newbuf = parse_tlv(buffer, results, 1) ;
+	if (newbuf == NULL) {
+		trace(LOG_ERR, "Parsing ERR") ;
+		return NULL ;
+	}
+	trace(LOG_DEBUG, "Parsing ok") ;
+
+	if (results[0] != NULL && results[0]->type == CPACKING) {
+			*packing = *((char*) results[0]->value) ;
+	} else {
+		trace(LOG_ERR, "Missing field in connect request : packing\n") ;
+		newbuf = NULL ;
+	}
+	free(results) ;
+
+	return newbuf ;
+}
+
+size_t gen_connrequest(char* dest, int packing)
+{
+	trace(LOG_DEBUG, "Generating TLV connrequest") ;
+	struct tlv_result* results = calloc(1, sizeof(struct tlv_result)) ;
+	int ret ;
+
+	results[0].type  = CPACKING ;
+	results[0].value = (unsigned char*) &packing ;
+
+    ret = gen_tlv(dest, results, 1) ;
+    free(results) ;
+    return ret ;
 }
