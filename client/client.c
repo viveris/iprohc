@@ -29,6 +29,9 @@ Returns :
 #include <getopt.h>
 #include <signal.h>
 #include <gnutls/gnutls.h>
+#include <sys/socket.h>
+#include <netdb.h>
+
 
 #include "log.h"
 int log_max_priority = LOG_INFO;
@@ -59,8 +62,8 @@ void sigterm(int signal)
 int main(int argc, char *argv[])
 {
 	struct tunnel tunnel ;
-    uint32_t serv_addr = 0 ;
-    int      port  = 3126;
+    char serv_addr[1024] ;
+    char port[6]  = {'3','1','2','6', '\0', '\0'};
     char buf[1024] ;
 	int sock ;
 	int c;
@@ -79,15 +82,13 @@ int main(int argc, char *argv[])
 	client_opts.tun_name = calloc(32, sizeof(char)) ;
 	client_opts.up_script_path = calloc(1024, sizeof(char)) ;
 	client_opts.packing = 0 ;
+	serv_addr[0] = '\0' ;
+	pkcs12_f[0] = '\0' ;
 
 	fd_set rdfs;
 
 	/* Initialize logger */
 	openlog("iprohc_client", LOG_PID | LOG_PERROR, LOG_DAEMON)  ;
-
-	/* Handle SIGTERM */
-	signal(SIGTERM, sigterm) ;
-	signal(SIGINT, sigterm) ;
 
 	/* 
 	 * Parsing options 
@@ -128,11 +129,13 @@ int main(int argc, char *argv[])
 				break;
 			case 'r' :
 				trace(LOG_DEBUG, "Remote address : %s", optarg) ;
-				serv_addr = htonl(inet_network(optarg)) ;
+				strncpy(serv_addr, optarg, 1024) ;
+				serv_addr[1023] = '\0' ;
 				break;
 			case 'p' :
-				port = atoi(optarg) ;
-				trace(LOG_DEBUG, "Remote port : %d", port) ;
+				strncpy(port, optarg, 6) ;
+				port[5] = '\0' ;
+				trace(LOG_DEBUG, "Remote port : %s", port) ;
 				break ;
             case 'P' :
 				strncpy(pkcs12_f, optarg, 1024) ;
@@ -157,7 +160,7 @@ int main(int argc, char *argv[])
 		}			
 	} while (c != -1) ;
 
-	if (serv_addr == 0) {
+	if (strcmp(serv_addr, "") == 0) {
 		trace(LOG_ERR, "Remote address is mandatory") ;
 		exit(1) ;
 	}
@@ -205,25 +208,45 @@ int main(int argc, char *argv[])
 
 	gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, xcred);
 
+
+	/*
+	 * DNS query
+	 */
+	
+	struct addrinfo *result, *rp ;
+	struct addrinfo hints;
+	int s ;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_INET;    /* Allow IPv4 */
+    hints.ai_socktype = SOCK_STREAM ;
+    hints.ai_flags = 0;
+    hints.ai_protocol = 0;          /* Any protocol */
+
+	s = getaddrinfo(serv_addr, port, &hints, &result) ;
+	if (s != 0) {
+		trace(LOG_ERR, "Unable to connect to %s : %s", serv_addr, gai_strerror(s)) ;
+		exit(1) ;
+	}
+
 	/* 
 	 *	Creation of TCP socket to neogotiate parameters and maintain it
 	 */
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol) ;
+		if (sock < 0) {
+			continue ;
+		}
 
-	sock = socket(AF_INET, SOCK_STREAM, 0) ;
-	if (sock < 0) {
-		perror("Can't open socket") ;
-		exit(1) ;
+		if (connect(sock, rp->ai_addr, rp->ai_addrlen) != -1)
+			break;                  /* Success */
+
+		close(sock);
 	}	
-
-	struct	sockaddr_in servaddr ;
-	servaddr.sin_family	  = AF_INET;
-	servaddr.sin_addr.s_addr = serv_addr;
-	servaddr.sin_port		= htons(port);
-	trace(LOG_INFO, "Connecting to %s\n", inet_ntoa(servaddr.sin_addr)) ;
-
-	if (connect(sock,  (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
+	
+	if (rp == NULL) {               /* No address succeeded */
 		trace(LOG_ERR, "Connection failed : %s", strerror(errno)) ;
-		return 2 ;
+		exit(1) ;
 	}
 
 	/*
@@ -283,6 +306,11 @@ int main(int argc, char *argv[])
 	trace(LOG_DEBUG, "Emit connect message") ;
 	/* Emit a simple connect message */
 	gnutls_record_send(session, command, 1) ;
+
+	/* Handle SIGTERM */
+	signal(SIGTERM, sigterm) ;
+	signal(SIGINT, sigterm) ;
+
 
 	/* Wait for answer and other messages, close when
 	   socket is close */
