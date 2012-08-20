@@ -127,6 +127,7 @@ void dump_opts(struct server_opts opts)
 void dump_stats_client(struct client* client) {
     trace(LOG_NOTICE, "------------------------------------------------------") ;
     trace(LOG_NOTICE, "Client %s", inet_ntoa(client->tunnel.dest_address)) ;
+    trace(LOG_NOTICE, "Packing : %d", client->packing) ;
     trace(LOG_NOTICE, "Stats : ") ;
     trace(LOG_NOTICE, " . Failed decompression : %d", client->tunnel.stats.decomp_failed) ;
     trace(LOG_NOTICE, " . Total  decompression : %d", client->tunnel.stats.decomp_total) ;
@@ -138,6 +139,12 @@ void dump_stats_client(struct client* client) {
     trace(LOG_NOTICE, " . Total compressed packet size  : %d bytes", client->tunnel.stats.total_comp_size) ;
     trace(LOG_NOTICE, " . Total header size before comp : %d bytes", client->tunnel.stats.head_uncomp_size) ;
     trace(LOG_NOTICE, " . Total packet size before comp : %d bytes", client->tunnel.stats.total_uncomp_size) ;
+    trace(LOG_NOTICE, "Stats packing : ") ;
+	int i ;
+    for (i=0; i< client->tunnel.stats.n_stats_packing; i++) {
+		trace(LOG_NOTICE, " . %d : %d", i, client->tunnel.stats.stats_packing[i]) ;
+    }
+
 }
 
 /*

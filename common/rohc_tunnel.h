@@ -33,6 +33,7 @@ struct statitics {
     int total_received;
 
     int* stats_packing ;
+    int  n_stats_packing ;
 } ;
 
 

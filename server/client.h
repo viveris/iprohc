@@ -14,6 +14,8 @@ struct client {
     struct tunnel tunnel ;
 
     struct timeval last_keepalive ;
+
+    int packing ;
 } ;
 
 int  new_client(int socket, int tun, struct client** clients, int max_clients, struct server_opts server_opts) ;

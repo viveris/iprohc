@@ -23,6 +23,7 @@ char* handle_connect(struct client* client, char* buf)
 	}
 
 	trace(LOG_INFO, "[%s] Connection asked, negotating parameters (asked packing : %d)", inet_ntoa(client->tunnel.dest_address), packing) ;
+	client->packing = packing ;
 
 	/* Sending ok order for connection */
 	/* XXX : Refuse if ... */
