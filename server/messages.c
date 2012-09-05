@@ -54,7 +54,7 @@ int handle_client_request(struct client* client) {
 	while (cur < bufmax) {
 		switch (*cur) {
 			case C_CONNECT:
-				if (++cur < bufmax) {
+				if (++cur >= bufmax) {
 					return -1;
 				}
 
