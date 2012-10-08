@@ -50,6 +50,10 @@ int handle_client_request(struct client* client) {
 	bufmax = buf + length ;
 	trace(LOG_DEBUG, "[%s] Received %d bytes on TCP socket", inet_ntoa(client->tunnel.dest_address),
 					 length) ;
+	if (length < 0) {
+		return -1;
+	}
+
 	cur = buf ;
 	while (cur < bufmax) {
 		switch (*cur) {

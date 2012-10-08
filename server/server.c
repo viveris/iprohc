@@ -486,7 +486,7 @@ int main(int argc, char *argv[])
 					if (clients[j]->tunnel.alive > 0) {
 						trace(LOG_WARNING, "[%s] Client disconnected", inet_ntoa(clients[j]->tunnel.dest_address)) ;
 						clients[j]->tunnel.alive = 0 ;
-					}
+					} /* TODO : Clean up if not alive (prevent DDos) */
 				}
 			}
 		}
