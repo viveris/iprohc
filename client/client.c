@@ -32,7 +32,7 @@ Returns :
 #include <sys/socket.h>
 #include <netdb.h>
 
-
+#include "config_client.h"
 #include "log.h"
 int log_max_priority = LOG_INFO;
 
@@ -40,7 +40,7 @@ int log_max_priority = LOG_INFO;
 #include "tls.h"
 
 void usage(char* arg0) {
-	printf("Usage : %s --remote addr --dev itf_name  [opts]\n", arg0) ;
+	printf("Usage : %s %d.%d --remote addr --dev itf_name  [opts]\n", arg0, IPROHC_CLIENT_VERSION_MAJOR, IPROHC_CLIENT_VERSION_MINOR) ;
 	printf("\n") ;
 	printf("Options : \n") ;
 	printf(" --remote : Address of the remote server \n") ;

@@ -176,7 +176,7 @@ void switch_log_max(int sig)
 }
 
 void usage(char* arg0) {
-    printf("Usage : %s [opts]\n", arg0) ;
+    printf("Usage : %s %d.%d [opts]\n", arg0, IPROHC_SERVER_VERSION_MAJOR, IPROHC_SERVER_VERSION_MINOR) ;
     printf("\n") ;
     printf("Options : \n") ;
     printf(" --config: Path to configuration file (default: /etc/iprohc_server.conf)\n") ;
