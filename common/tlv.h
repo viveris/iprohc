@@ -4,6 +4,10 @@
 #ifndef ROHC_IPIP_TLV_H
 #define ROHC_IPIP_TLV_H
 
+/* Defines the current protocol version, must be modified each time 
+   a field is added or removed */
+#define CURRENT_PROTO_VERSION 1
+
 /* Global structures */
 enum commands {
     C_CONNECT,
@@ -26,8 +30,12 @@ enum types {
     KEEPALIVE,
     ROHC_COMPAT,
     /* connrequest types */
-    CPACKING
+    CPACKING,
+    CPROTO_VERSION
 } ;
+
+#define N_CONNECT_FIELD 8
+#define N_CONNREQ_FIELD 2
 
 enum parse_step {
     TYPE,
@@ -73,6 +81,8 @@ static inline gen_tlv_callback_t get_gen_cb_for_type(enum types type) {
             return gen_tlv_char   ;
         case CPACKING :
             return gen_tlv_char ;
+        case CPROTO_VERSION :
+            return gen_tlv_char ;
         default:
             return NULL ;
     }
@@ -100,6 +110,6 @@ struct tunnel_params {
 char*  parse_connect(char* buffer, struct tunnel_params* params) ;
 size_t gen_connect(char* dest, struct tunnel_params params) ;
 
-char* parse_connrequest(char* buffer, int* packing) ;
+char* parse_connrequest(char* buffer, int* packing, int* proto_version) ;
 size_t gen_connrequest(char* dest, int packing) ;
 #endif

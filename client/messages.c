@@ -35,6 +35,9 @@ int handle_message(struct tunnel* tunnel, char* buf, int length, struct client_o
 				trace(LOG_DEBUG, "Keepalive !") ;
 				gnutls_record_send(opts.tls_session, command, 1) ;
 				break ;
+			case C_CONNECT_KO:
+				trace(LOG_ERR, "Wrong protocol version, please update client or server\n", *buf) ;
+				return -1 ;
 			default :
 				trace(LOG_ERR, "Unexpected %d in command\n", *buf) ;
 				buf++ ;

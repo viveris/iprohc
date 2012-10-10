@@ -270,23 +270,28 @@ size_t gen_connect(char* dest, struct tunnel_params params)
 
 /* Connection request (client -> server) */
 
-char* parse_connrequest(char* buffer, int* packing)
+char* parse_connrequest(char* buffer, int* packing, int* proto_version)
 {
 	char* newbuf ;
-	struct tlv_result** results = calloc(1, sizeof(struct tlv_result*)) ;
+	int i;
+	struct tlv_result** results = calloc(N_CONNREQ_FIELD, sizeof(struct tlv_result*)) ;
 	
-	newbuf = parse_tlv(buffer, results, 1) ;
+	newbuf = parse_tlv(buffer, results, N_CONNREQ_FIELD) ;
 	if (newbuf == NULL) {
 		trace(LOG_ERR, "Parsing ERR") ;
 		return NULL ;
 	}
-	trace(LOG_DEBUG, "Parsing ok") ;
-
-	if (results[0] != NULL && results[0]->type == CPACKING) {
-			*packing = *((char*) results[0]->value) ;
-	} else {
-		trace(LOG_ERR, "Missing field in connect request : packing\n") ;
-		newbuf = NULL ;
+	
+	for (i=0; i < N_CONNREQ_FIELD; i++) {
+		if (results[i] != NULL && results[i]->type == CPACKING) {
+				*packing = *((char*) results[i]->value) ;
+		} else if (results[i] != NULL && results[i]->type == CPROTO_VERSION) {
+				*proto_version = *((char*) results[i]->value) ;
+		} else {
+			trace(LOG_ERR, "Unknown connection request field\n") ;
+			newbuf = NULL ;
+		}
+		free(results[i]) ;
 	}
 	free(results) ;
 
@@ -296,13 +301,18 @@ char* parse_connrequest(char* buffer, int* packing)
 size_t gen_connrequest(char* dest, int packing)
 {
 	trace(LOG_DEBUG, "Generating TLV connrequest") ;
-	struct tlv_result* results = calloc(1, sizeof(struct tlv_result)) ;
+	struct tlv_result* results = calloc(N_CONNREQ_FIELD, sizeof(struct tlv_result)) ;
 	int ret ;
+
+	int version = CURRENT_PROTO_VERSION ;
 
 	results[0].type  = CPACKING ;
 	results[0].value = (unsigned char*) &packing ;
 
-    ret = gen_tlv(dest, results, 1) ;
+	results[1].type  = CPROTO_VERSION ;
+	results[1].value = (unsigned char*) &version ;
+
+    ret = gen_tlv(dest, results, N_CONNREQ_FIELD) ;
     free(results) ;
     return ret ;
 }

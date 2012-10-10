@@ -15,21 +15,29 @@ char* handle_connect(struct client* client, char* buf)
 	/* Receiving parameters */
 	char* newbuf ;
 	int packing ;
+	int client_proto_version ;
 
-	newbuf = parse_connrequest(buf, &packing) ;
+	/* Prepare order for connection */
+	char tlv[1024] ;
+	size_t len = 1 ;
+
+	newbuf = parse_connrequest(buf, &packing, &client_proto_version) ;
 	if (newbuf == NULL) {
 		trace(LOG_ERR, "Unable to parse connection request") ;
-		return NULL ;
+			tlv[0] = C_CONNECT_KO ;
+			// TODO : Clear client
+	} else {
+		if (client_proto_version != CURRENT_PROTO_VERSION) {
+			/* Current behaviour as for proto version = 1 : refuse any other version */
+			trace(LOG_WARNING, "[%s] Connection refused because of wrong protocol version", inet_ntoa(client->tunnel.dest_address)) ;
+			tlv[0] = C_CONNECT_KO ;
+			// TODO : Clear client
+		} else {
+			trace(LOG_INFO, "[%s] Connection asked, negotating parameters (proto version %d, asked packing : %d)", inet_ntoa(client->tunnel.dest_address), client_proto_version, packing) ;
+			client->packing = packing ;
+			tlv[0] = C_CONNECT_OK ;
+		}
 	}
-
-	trace(LOG_INFO, "[%s] Connection asked, negotating parameters (asked packing : %d)", inet_ntoa(client->tunnel.dest_address), packing) ;
-	client->packing = packing ;
-
-	/* Sending ok order for connection */
-	/* XXX : Refuse if ... */
-	char tlv[1024] ;
-	tlv[0] = C_CONNECT_OK ;
-	size_t len = 1 ;
 
 	len += gen_connect(tlv+1, client->tunnel.params) ;
 	gnutls_record_send(client->tls_session, tlv, len) ;
