@@ -248,9 +248,9 @@ void* new_tunnel(void* arg) {
 		goto destroy_decomp ;	
 	}
 
-    /* poll network interfaces each second */
-    timeout.tv_sec = 1;
-    timeout.tv_nsec = 0;
+    /* poll network interfaces each 200 ms */
+    timeout.tv_sec = 0;
+    timeout.tv_nsec = 200 * 1000 * 1000;
 
     /* mask signals during interface polling */
     sigemptyset(&sigmask);
