@@ -27,6 +27,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <signal.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <netinet/udp.h>
 
 #include "rohc_tunnel.h"
 
@@ -34,6 +35,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <rohc.h>
 #include <rohc_comp.h>
 #include <rohc_decomp.h>
+#include <rohc_traces.h>
 
 #include "ip_chksum.h"
 
@@ -71,11 +73,11 @@ static void print_rohc_traces(rohc_trace_level_t level,
                               int profile,
                               const char *format, ...)
                               __attribute__ ((format (printf, 4, 5)));
-int callback_rtp_detect(const unsigned char *ip,
-                        const struct udphdr *udp,
-                        const unsigned char *payload,
-                        const unsigned int payload_size,
-                        void *rtp_private);
+bool callback_rtp_detect(const unsigned char *const ip,
+                         const unsigned char *const udp,
+                         const unsigned char *const payload,
+                         const unsigned int payload_size,
+                         void *const rtp_private);
 int send_puree(int to, struct in_addr raddr, unsigned char* compressed_packet, int* total_size, int* act_comp, struct statitics* stats) ;
 int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct statitics* stats) ;
 int tun2raw(struct rohc_comp *comp,
@@ -219,14 +221,14 @@ void* new_tunnel(void* arg) {
     rohc_activate_profile(comp, ROHC_PROFILE_RTP);
 
     /* handle compressor trace */
-    ret = rohc_comp_trace(comp, print_rohc_traces);
+    ret = rohc_comp_set_traces_cb(comp, print_rohc_traces);
     if(ret != ROHC_OK) {
 		trace(LOG_ERR, "cannot set trace callback for compressor") ;
 		goto destroy_comp ;	
 	} 
 
 	/* set RTP callback for detecting RTP packets */
-	ret = rohc_comp_set_rtp_detection_callback(comp, callback_rtp_detect, NULL) ;
+	ret = rohc_comp_set_rtp_detection_cb(comp, callback_rtp_detect, NULL) ;
 	if(ret != ROHC_OK)
 	{
 		trace(LOG_ERR, "failed to set RTP detection callback");
@@ -242,7 +244,7 @@ void* new_tunnel(void* arg) {
     }
 
     /* handle compressor trace */
-    ret = rohc_decomp_trace(decomp, print_rohc_traces);
+    ret = rohc_decomp_set_traces_cb(decomp, print_rohc_traces);
     if(ret != ROHC_OK) {
 		trace(LOG_ERR, "cannot set trace callback for decompressor") ;
 		goto destroy_decomp ;	
@@ -473,11 +475,13 @@ int tun2raw(struct rohc_comp *comp,
 	unsigned char *packet;
 	unsigned int packet_len;
 
-	rohc_comp_last_packet_info_t last_packet_info;
+	rohc_comp_last_packet_info2_t last_packet_info;
 
-	int rohc_size;
+	size_t rohc_size;
+	int comp_result;
 
 	int ret;
+	bool ok;
 
 	/* read the IP packet from the virtual interface */
     ret = read(from, buffer, buffer_len);
@@ -504,9 +508,10 @@ int tun2raw(struct rohc_comp *comp,
 	stats->comp_total++ ;
 
 	/* compress the IP packet */
-	rohc_size = rohc_compress(comp, packet, packet_len,
-							  rohc_packet_temp, MAX_ROHC_SIZE);
-	if(rohc_size <= 0)
+	comp_result = rohc_compress2(comp, packet, packet_len,
+	                             rohc_packet_temp, MAX_ROHC_SIZE, &rohc_size);
+
+	if(comp_result != ROHC_OK)
 	{
 		trace(LOG_ERR, "compression of packet failed\n");
 		goto error;
@@ -528,8 +533,11 @@ int tun2raw(struct rohc_comp *comp,
 	dump_packet("Compressed packet", rohc_packet_temp, rohc_size) ;
 
     /* get packet statistics */
-    ret = rohc_comp_get_last_packet_info(comp, &last_packet_info);
-    if(ret != ROHC_OK) {
+    /* Fill ROHC version */
+    last_packet_info.version_major = 0;
+    last_packet_info.version_minor = 0;
+    ok = rohc_comp_get_last_packet_info2(comp, &last_packet_info);
+    if(!ok) {
         trace(LOG_ERR, "Cannot get stats about the last compressed packet\n");
     } else {
 		stats->head_comp_size    += last_packet_info.header_last_comp_size ;
@@ -759,8 +767,8 @@ void dump_packet(char *descr, unsigned char *packet, unsigned int length)
  *
  * @param level    The priority level of the trace
  * @param entity   The entity that emitted the trace among:
- *                  \li ROHC_TRACE_COMPRESSOR
- *                  \li ROHC_TRACE_DECOMPRESSOR
+ *                  \li ROHC_TRACE_COMP
+ *                  \li ROHC_TRACE_DECOMP
  * @param profile  The ID of the ROHC compression/decompression profile
  *                 the trace is related to
  * @param format   The format string of the trace
@@ -799,10 +807,10 @@ static void print_rohc_traces(rohc_trace_level_t level,
 	}
 	
 	switch (entity) {
-		case ROHC_TRACE_COMPRESSOR:
+		case ROHC_TRACE_COMP:
 			entity_s = "ROHC compressor" ;	
 			break ;
-		case ROHC_TRACE_DECOMPRESSOR:
+		case ROHC_TRACE_DECOMP:
 			entity_s = "ROHC decompressor" ;
 			break ;
 		default :
@@ -825,6 +833,8 @@ static void print_rohc_traces(rohc_trace_level_t level,
 	}
 	trace(syslog_level, message) ;
 }
+
+
 /**
  * @brief The RTP detection callback which do detect RTP stream
  *
@@ -832,22 +842,26 @@ static void print_rohc_traces(rohc_trace_level_t level,
  * @param udp          The udp header of the packet
  * @param payload      The payload of the packet
  * @param payload_size The size of the payload (in bytes)
- * @return             1 if the packet is an RTP packet, 0 otherwise
+ * @return             true if the packet is an RTP packet, false otherwise
  */
-int callback_rtp_detect(const unsigned char *ip,
-                        const struct udphdr *udp,
-                        const unsigned char *payload,
-                        const unsigned int payload_size,
-                        void *rtp_private)
+bool callback_rtp_detect(const unsigned char *const ip,
+                         const unsigned char *const udp,
+                         const unsigned char *const payload,
+                         const unsigned int payload_size,
+                         void *const rtp_private)
 {
     uint8_t rtp_version;
-    int is_rtp = 0;
+    bool is_rtp = false;
+
+    const struct udphdr *udp_packet = (struct udphdr *) udp;
 
     /* check UDP destination port => range 10000 - 20000 fixed by asterisk */
     /* even is for RTP, odd for RTCP, so we check the parity               */
-    if (ntohs(udp->source)  < 10000 || ntohs(udp->source)  > 20000 || ntohs(udp->source) % 2 == 1)
+    if (ntohs(udp_packet->source) < 10000 ||
+        ntohs(udp_packet->source) > 20000 ||
+        ntohs(udp_packet->source) % 2 == 1)
     {
-        trace(LOG_DEBUG, "RTP packet not detected (wrong UDP port (%d))\n", udp->source);
+        trace(LOG_DEBUG, "RTP packet not detected (wrong UDP port (%d))\n", udp_packet->source);
         goto not_rtp;
     }
 
@@ -868,7 +882,7 @@ int callback_rtp_detect(const unsigned char *ip,
 
     /* we think that the UDP packet is a RTP packet */
     trace(LOG_DEBUG, "RTP packet detected\n");
-    is_rtp = 1;
+    is_rtp = true;
 
 not_rtp:
     return is_rtp;
