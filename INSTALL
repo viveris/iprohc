@@ -1,0 +1,30 @@
+Requirements
+------------
+
+The IP/ROHC program uses the following external dependencies:
+
+ +-----------+---------------+--------------------------------+
+ | Name      | License       | Website                        |
+ +-----------+---------------+--------------------------------+
+ | libyaml   | MIT license   | http://pyyaml.org/wiki/LibYAML |
+ | ROHC      | GPL2+         | http://rohc-lib.org/           |
+ +-----------+---------------+--------------------------------+
+
+Cmake (http://www.cmake.org/) is used for configuring and building the program.
+
+
+Build and install
+-----------------
+
+Configure the program:
+
+ $ cmake CMakeLists.txt
+
+Build the program:
+
+ $ make all
+
+Install the program:
+
+ $ make install
+

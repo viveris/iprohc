@@ -1,0 +1,50 @@
+Introduction
+------------
+
+This piece of software is a tunnel that compresses VoIP traffic, ie. SIP and
+RTP traffic.
+
+The program is named IP/ROHC or iprohc. It is named according to the compression
+and transport mechanisms it uses:
+ - the program uses the RObust Header Compression (ROHC) protocol for efficient
+   compression of the RTP datagrams,
+ - the program uses IP packets as transport to avoid the overhead introduced by
+   the UDP or TCP protocols.
+
+In addition to ROHC commpression and IP transport, the program uses datagram
+packing to improve the overall compression performances.
+
+The IP/ROHC program is divided into two parts: the server and the client. The
+server part handles sessions with several clients simultaneously.
+
+The client and the server establish two communication channels between them: the
+control channel that uses TCP for reliability, and the data channel that uses
+UDP for efficiency. The client establishes and closes a session on the control
+channel. The client transmits compressed data on the data channel.
+
+Both the client and the server uses TUN interfaces to fake network interfaces.
+
+
+Official website:      http://rohc-lib.org/
+Mailing list:          rohc@lists.launchpad.net
+Mailing list archives: http://lists.launchpad.net/rohc/
+Bugtracker:            http://bugs.launchpad.net/rohc
+
+
+License
+-------
+
+The project is licensed under GPL2+, see the COPYING and AUTHORS files for more
+details.
+
+
+References
+----------
+
+ROHC          RObust Header Compression (ROHC): Framework and four profiles:
+              RTP, UDP, ESP, and uncompressed.
+              http://www.ietf.org/rfc/rfc3095.txt
+
+ROHC library  The ROHC library used by the IP/ROHC program.
+              http://rohc-lib.org/
+
