@@ -20,7 +20,8 @@ server part handles sessions with several clients simultaneously.
 The client and the server establish two communication channels between them: the
 control channel that uses TCP for reliability, and the data channel that uses
 UDP for efficiency. The client establishes and closes a session on the control
-channel. The client transmits compressed data on the data channel.
+channel. The client transmits compressed data on the data channel. The control
+channel is authenticated and encrypted with TLS.
 
 Both the client and the server uses TUN interfaces to fake network interfaces.
 
