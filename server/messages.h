@@ -17,5 +17,5 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "rohc_tunnel.h"
 
-int handle_client_request(struct client* client) ;
+int handle_client_request(struct client*client);
 

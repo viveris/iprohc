@@ -22,20 +22,21 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 
-struct client {    
-    int      tcp_socket   ;
-    gnutls_session_t tls_session;
-    struct in_addr local_address;
+struct client {
+	int tcp_socket;
+	gnutls_session_t tls_session;
+	struct in_addr local_address;
 
-    pthread_t thread_tunnel;
-    struct tunnel tunnel ;
+	pthread_t thread_tunnel;
+	struct tunnel tunnel;
 
-    struct timeval last_keepalive ;
+	struct timeval last_keepalive;
 
-    int packing ;
-} ;
+	int packing;
+};
 
-int  new_client(int socket, int tun, struct client** clients, int max_clients, struct server_opts server_opts) ;
-void close_tunnel(void* tunnel) ;
-int  start_client_tunnel(struct client* client) ;
+int  new_client(int socket, int tun, struct client**clients, int max_clients,
+                struct server_opts server_opts);
+void close_tunnel(void*tunnel);
+int  start_client_tunnel(struct client*client);
 

@@ -15,7 +15,7 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-/* 
+/*
 tlv.c -- Implements function to parse and generate tlv sequence for
 communications between server and client
 */
@@ -34,302 +34,332 @@ communications between server and client
 #define DEBUG_STR_SIZE 1024
 
 /* Generic function to parse tlv string */
-char* parse_tlv(char* tlv, struct tlv_result** results, int max_results)
+char * parse_tlv(char*tlv, struct tlv_result**results, int max_results)
 {
-	enum parse_step step = TYPE ;
-	struct tlv_result* result ;
-	int i=0 ;
+	enum parse_step step = TYPE;
+	struct tlv_result*result;
+	int i = 0;
 	int j;
-	uint16_t len ;
-	char* c = tlv ;
-	int alive = 1 ;
-	char debug[DEBUG_STR_SIZE] ;
-	char temp_debug[DEBUG_STR_SIZE] ;
-	
-	while (alive && i < max_results) {
-		switch (step) {
+	uint16_t len;
+	char*c = tlv;
+	int alive = 1;
+	char debug[DEBUG_STR_SIZE];
+	char temp_debug[DEBUG_STR_SIZE];
+
+	while(alive && i < max_results)
+	{
+		switch(step)
+		{
 			case TYPE:
-				result = malloc(sizeof(struct tlv_result)) ;
-				result->type = *c ;
-				snprintf(debug, DEBUG_STR_SIZE, "Type : %x, ", *c) ;
-				c += sizeof(result->type) ;
-				break ;
-			case LENGTH:
-				len = ntohs(*((uint16_t*) c)) ;
-				c  += sizeof(len) ;
-				snprintf(temp_debug, DEBUG_STR_SIZE, "length : %d,", len) ;
-				strncat(debug, temp_debug, DEBUG_STR_SIZE) ;
+				result = malloc(sizeof(struct tlv_result));
+				result->type = *c;
+				snprintf(debug, DEBUG_STR_SIZE, "Type : %x, ", *c);
+				c += sizeof(result->type);
 				break;
-			case VALUE :
-				result->value = (unsigned char*) c ;	
-				snprintf(temp_debug, DEBUG_STR_SIZE, "value :  ") ;
-				strncat(debug, temp_debug, DEBUG_STR_SIZE) ;
-				for (j=0; j<len; j++) {
-					snprintf(temp_debug, DEBUG_STR_SIZE, "%x:", *(c+j)) ;
-					strncat(debug, temp_debug, DEBUG_STR_SIZE) ;
+			case LENGTH:
+				len = ntohs(*((uint16_t*) c));
+				c  += sizeof(len);
+				snprintf(temp_debug, DEBUG_STR_SIZE, "length : %d,", len);
+				strncat(debug, temp_debug, DEBUG_STR_SIZE);
+				break;
+			case VALUE:
+				result->value = (unsigned char*) c;
+				snprintf(temp_debug, DEBUG_STR_SIZE, "value :  ");
+				strncat(debug, temp_debug, DEBUG_STR_SIZE);
+				for(j = 0; j < len; j++)
+				{
+					snprintf(temp_debug, DEBUG_STR_SIZE, "%x:", *(c + j));
+					strncat(debug, temp_debug, DEBUG_STR_SIZE);
 				}
-				trace(LOG_DEBUG, debug) ;
-				c += len ;
-	
-				results[i] = result ;
-				i++ ;
-				break ;
+				trace(LOG_DEBUG, debug);
+				c += len;
+
+				results[i] = result;
+				i++;
+				break;
 		}
-		
+
 		/* Switch to next step */
-		step = (step + 1) % 3 ;
-		if (step == TYPE && *c == END) {
-			alive = 0 ;
-			c++ ;
+		step = (step + 1) % 3;
+		if(step == TYPE && *c == END)
+		{
+			alive = 0;
+			c++;
 		}
 	}
 
-	if (i == max_results && alive) {
-		return NULL ;
+	if(i == max_results && alive)
+	{
+		return NULL;
 	}
 
-	return c ;
+	return c;
 }
 
-/* Generic function to generate tlv string */
-size_t gen_tlv(char* f_dest, struct tlv_result* tlvs, int max_numbers)
-{
-	int i ;
-	gen_tlv_callback_t cb ;
-	size_t len = 0 ;
-	char* dest = f_dest ;
-	trace(LOG_DEBUG, "Generating TLV") ;
 
-	for (i=0; i < max_numbers; i++) {
+/* Generic function to generate tlv string */
+size_t gen_tlv(char*f_dest, struct tlv_result*tlvs, int max_numbers)
+{
+	int i;
+	gen_tlv_callback_t cb;
+	size_t len = 0;
+	char*dest = f_dest;
+	trace(LOG_DEBUG, "Generating TLV");
+
+	for(i = 0; i < max_numbers; i++)
+	{
 		/* type */
-		*dest = tlvs[i].type ;		
-		dest += sizeof(char) ;
-		len  += sizeof(char) ;
+		*dest = tlvs[i].type;
+		dest += sizeof(char);
+		len  += sizeof(char);
 		/* length, value */
-		cb = get_gen_cb_for_type(tlvs[i].type) ;	
-		if (cb == NULL) {
-			trace(LOG_ERR, "TLV parser was unable to gen type %d\n" , tlvs[i].type) ;
-			return -1 ;
+		cb = get_gen_cb_for_type(tlvs[i].type);
+		if(cb == NULL)
+		{
+			trace(LOG_ERR, "TLV parser was unable to gen type %d\n", tlvs[i].type);
+			return -1;
 		}
-		dest = cb(dest, tlvs[i], &len) ;
+		dest = cb(dest, tlvs[i], &len);
 	}
 
-	*dest = END ;
-	len+= sizeof(char) ;
+	*dest = END;
+	len += sizeof(char);
 
-	return len ;
+	return len;
 }
 
 
 /* Generation callbacks */
 
-char* gen_tlv_uint32(char* f_dest, struct tlv_result tlv, size_t* len)
+char * gen_tlv_uint32(char*f_dest, struct tlv_result tlv, size_t*len)
 {
-	uint16_t* length ;
-	uint32_t* res ;
-	char* dest = f_dest ;
-	
+	uint16_t*length;
+	uint32_t*res;
+	char*dest = f_dest;
+
 	/* length */
-	length  = (uint16_t*) dest ;
-	*length = htons(sizeof(uint32_t)) ;
-	dest  += sizeof(uint16_t) ;
+	length  = (uint16_t*) dest;
+	*length = htons(sizeof(uint32_t));
+	dest  += sizeof(uint16_t);
 	/* value */
-	res = (uint32_t*) dest ;
-	*res = htonl(*((uint32_t*) tlv.value)) ;	
-	dest += sizeof(uint32_t) ;
+	res = (uint32_t*) dest;
+	*res = htonl(*((uint32_t*) tlv.value));
+	dest += sizeof(uint32_t);
 
-	*len += sizeof(uint16_t) + sizeof(uint32_t) ;
+	*len += sizeof(uint16_t) + sizeof(uint32_t);
 
-	return dest ;
+	return dest;
 }
 
-char* gen_tlv_char(char* f_dest, struct tlv_result tlv, size_t* len)
+
+char * gen_tlv_char(char*f_dest, struct tlv_result tlv, size_t*len)
 {
-	uint16_t* length ;
-	char* res ;
-	char* dest = f_dest ;
-	
+	uint16_t*length;
+	char*res;
+	char*dest = f_dest;
+
 	/* length */
-	length  = (uint16_t*) dest ;
-	*length = htons(sizeof(char)) ;
-	dest  += sizeof(uint16_t) ;
+	length  = (uint16_t*) dest;
+	*length = htons(sizeof(char));
+	dest  += sizeof(uint16_t);
 	/* value */
-	res = (char*) dest ;
-	*res = *((char*) tlv.value) ;	
-	dest += sizeof(char) ;
+	res = (char*) dest;
+	*res = *((char*) tlv.value);
+	dest += sizeof(char);
 
-	*len += sizeof(uint16_t) + sizeof(char) ;
+	*len += sizeof(uint16_t) + sizeof(char);
 
-	return dest ;
+	return dest;
 }
 
-/* 
- * Specific parsing 
+
+/*
+ * Specific parsing
  */
 
 /* Answer server -> client with ROHC parameters */
 
-void mark_received(enum types* list, int n_list, enum types type)
+void mark_received(enum types*list, int n_list, enum types type)
 {
 	int i;
-	
-	for (i=0; i < n_list; i++) {
-		if (list[i] == type) {
-			list[i] = -1 ;
-			return ;
+
+	for(i = 0; i < n_list; i++)
+	{
+		if(list[i] == type)
+		{
+			list[i] = -1;
+			return;
 		}
 	}
-	trace(LOG_WARNING, "Unable to mark received field %d\n", type) ;
-	return ;
+	trace(LOG_WARNING, "Unable to mark received field %d\n", type);
+	return;
 }
 
 
-char* parse_connect(char* buffer, struct tunnel_params* params)
+char * parse_connect(char*buffer, struct tunnel_params*params)
 {
-	int i ;
-	char* newbuf ;
+	int i;
+	char*newbuf;
 	/* At most n parameters can be retrieved */
-	struct tlv_result** results = calloc(N_TUNNEL_PARAMS, sizeof(struct tlv_result*)) ;
+	struct tlv_result**results = calloc(N_TUNNEL_PARAMS, sizeof(struct tlv_result*));
 	enum types required[N_TUNNEL_PARAMS] = { IP_ADDR, PACKING, MAXCID, UNID, WINDOWSIZE, REFRESH,
-	                        KEEPALIVE, ROHC_COMPAT} ;
-	
-	newbuf = parse_tlv(buffer, results, N_TUNNEL_PARAMS) ;
-	if (newbuf == NULL) {
-		trace(LOG_ERR, "Parsing ERR") ;
-		return NULL ;
-	}
-	trace(LOG_DEBUG, "Parsing ok") ;
+		                                      KEEPALIVE, ROHC_COMPAT};
 
-	for (i=0; i<N_TUNNEL_PARAMS; i++) {
-		if (results[i] != NULL) {
-			mark_received(required, N_TUNNEL_PARAMS, results[i]->type) ;
-			switch(results[i]->type) {
+	newbuf = parse_tlv(buffer, results, N_TUNNEL_PARAMS);
+	if(newbuf == NULL)
+	{
+		trace(LOG_ERR, "Parsing ERR");
+		return NULL;
+	}
+	trace(LOG_DEBUG, "Parsing ok");
+
+	for(i = 0; i < N_TUNNEL_PARAMS; i++)
+	{
+		if(results[i] != NULL)
+		{
+			mark_received(required, N_TUNNEL_PARAMS, results[i]->type);
+			switch(results[i]->type)
+			{
 				case IP_ADDR:
-					params->local_address       = ntohl(*((uint32_t*) results[i]->value)) ;
-					break ;
-				case PACKING :
-					params->packing             = *((char*) results[i]->value) ;
-					break ;
-				case MAXCID :
-					params->max_cid             = ntohl(*((uint32_t*) results[i]->value)) ;
-					break ;
-				case UNID :
-					params->is_unidirectional   = *((char*) results[i]->value) ;
-					break ;
-				case WINDOWSIZE :
-					params->wlsb_window_width   = ntohl(*((uint32_t*) results[i]->value)) ;
-					break ;
-				case REFRESH :
-					params->refresh             = ntohl(*((uint32_t*) results[i]->value)) ;
-					break ;
-				case KEEPALIVE :
-					params->keepalive_timeout   = ntohl(*((uint32_t*) results[i]->value)) ;
-					break ;
-				case ROHC_COMPAT :
-					params->rohc_compat_version = (*((char*) results[i]->value)) ;
-					break ;
-				default :
-					trace(LOG_ERR, "Unexpected field in connect : %x\n", results[i]->type) ;
-					free(results) ;
-					return NULL ;
+					params->local_address       = ntohl(*((uint32_t*) results[i]->value));
+					break;
+				case PACKING:
+					params->packing             = *((char*) results[i]->value);
+					break;
+				case MAXCID:
+					params->max_cid             = ntohl(*((uint32_t*) results[i]->value));
+					break;
+				case UNID:
+					params->is_unidirectional   = *((char*) results[i]->value);
+					break;
+				case WINDOWSIZE:
+					params->wlsb_window_width   = ntohl(*((uint32_t*) results[i]->value));
+					break;
+				case REFRESH:
+					params->refresh             = ntohl(*((uint32_t*) results[i]->value));
+					break;
+				case KEEPALIVE:
+					params->keepalive_timeout   = ntohl(*((uint32_t*) results[i]->value));
+					break;
+				case ROHC_COMPAT:
+					params->rohc_compat_version = (*((char*) results[i]->value));
+					break;
+				default:
+					trace(LOG_ERR, "Unexpected field in connect : %x\n", results[i]->type);
+					free(results);
+					return NULL;
 			}
-			free(results[i]) ;
+			free(results[i]);
 		}
 	}
 
-	for (i=0; i<N_TUNNEL_PARAMS; i++) {
-		if (required[i] != -1) {
-			trace(LOG_ERR, "Missing field in connect : %d\n", required[i]) ;
-			free(results) ;
-			return NULL ;
+	for(i = 0; i < N_TUNNEL_PARAMS; i++)
+	{
+		if(required[i] != -1)
+		{
+			trace(LOG_ERR, "Missing field in connect : %d\n", required[i]);
+			free(results);
+			return NULL;
 		}
 	}
-	free(results) ;
+	free(results);
 
-	return newbuf ;
+	return newbuf;
 }
 
-size_t gen_connect(char* dest, struct tunnel_params params)
+
+size_t gen_connect(char*dest, struct tunnel_params params)
 {
-	int i=0 ;
-	int ret ;
-	struct tlv_result* results = calloc(N_TUNNEL_PARAMS, sizeof(struct tlv_result)) ;
+	int i = 0;
+	int ret;
+	struct tlv_result*results = calloc(N_TUNNEL_PARAMS, sizeof(struct tlv_result));
 
-	results[i].type  = IP_ADDR ;
-	results[i].value = (unsigned char*) &(params.local_address) ;
-	i++ ;
-	results[i].type  = PACKING ;
-	results[i].value = (unsigned char*) &(params.packing) ;
-	i++ ;
-	results[i].type  = MAXCID ;
-	results[i].value = (unsigned char*) &(params.max_cid) ;
-	i++ ;
-	results[i].type  = UNID ;
-	results[i].value = (unsigned char*) &(params.is_unidirectional) ;
-	i++ ;
-	results[i].type  = WINDOWSIZE ;
-	results[i].value = (unsigned char*) &(params.wlsb_window_width) ;
-	i++ ;
-	results[i].type  = REFRESH ;
-	results[i].value = (unsigned char*) &(params.refresh) ;
-	i++ ;
-	results[i].type  = KEEPALIVE ;
-	results[i].value = (unsigned char*) &(params.keepalive_timeout) ;
-	i++ ;
-	results[i].type  = ROHC_COMPAT ;
-	results[i].value = (unsigned char*) &(params.rohc_compat_version) ;
-	i++ ;
+	results[i].type  = IP_ADDR;
+	results[i].value = (unsigned char*) &(params.local_address);
+	i++;
+	results[i].type  = PACKING;
+	results[i].value = (unsigned char*) &(params.packing);
+	i++;
+	results[i].type  = MAXCID;
+	results[i].value = (unsigned char*) &(params.max_cid);
+	i++;
+	results[i].type  = UNID;
+	results[i].value = (unsigned char*) &(params.is_unidirectional);
+	i++;
+	results[i].type  = WINDOWSIZE;
+	results[i].value = (unsigned char*) &(params.wlsb_window_width);
+	i++;
+	results[i].type  = REFRESH;
+	results[i].value = (unsigned char*) &(params.refresh);
+	i++;
+	results[i].type  = KEEPALIVE;
+	results[i].value = (unsigned char*) &(params.keepalive_timeout);
+	i++;
+	results[i].type  = ROHC_COMPAT;
+	results[i].value = (unsigned char*) &(params.rohc_compat_version);
+	i++;
 
-	ret = gen_tlv(dest, results, N_TUNNEL_PARAMS) ;
-	free(results) ;
-	return ret ;
+	ret = gen_tlv(dest, results, N_TUNNEL_PARAMS);
+	free(results);
+	return ret;
 }
+
 
 /* Connection request (client -> server) */
 
-char* parse_connrequest(char* buffer, int* packing, int* proto_version)
+char * parse_connrequest(char*buffer, int*packing, int*proto_version)
 {
-	char* newbuf ;
+	char*newbuf;
 	int i;
-	struct tlv_result** results = calloc(N_CONNREQ_FIELD, sizeof(struct tlv_result*)) ;
-	
-	newbuf = parse_tlv(buffer, results, N_CONNREQ_FIELD) ;
-	if (newbuf == NULL) {
-		trace(LOG_ERR, "Parsing ERR") ;
-		return NULL ;
+	struct tlv_result**results = calloc(N_CONNREQ_FIELD, sizeof(struct tlv_result*));
+
+	newbuf = parse_tlv(buffer, results, N_CONNREQ_FIELD);
+	if(newbuf == NULL)
+	{
+		trace(LOG_ERR, "Parsing ERR");
+		return NULL;
 	}
-	
-	for (i=0; i < N_CONNREQ_FIELD; i++) {
-		if (results[i] != NULL && results[i]->type == CPACKING) {
-				*packing = *((char*) results[i]->value) ;
-		} else if (results[i] != NULL && results[i]->type == CPROTO_VERSION) {
-				*proto_version = *((char*) results[i]->value) ;
-		} else {
-			trace(LOG_ERR, "Unknown connection request field\n") ;
-			newbuf = NULL ;
+
+	for(i = 0; i < N_CONNREQ_FIELD; i++)
+	{
+		if(results[i] != NULL && results[i]->type == CPACKING)
+		{
+			*packing = *((char*) results[i]->value);
 		}
-		free(results[i]) ;
+		else if(results[i] != NULL && results[i]->type == CPROTO_VERSION)
+		{
+			*proto_version = *((char*) results[i]->value);
+		}
+		else
+		{
+			trace(LOG_ERR, "Unknown connection request field\n");
+			newbuf = NULL;
+		}
+		free(results[i]);
 	}
-	free(results) ;
+	free(results);
 
-	return newbuf ;
+	return newbuf;
 }
 
-size_t gen_connrequest(char* dest, int packing)
+
+size_t gen_connrequest(char*dest, int packing)
 {
-	trace(LOG_DEBUG, "Generating TLV connrequest") ;
-	struct tlv_result* results = calloc(N_CONNREQ_FIELD, sizeof(struct tlv_result)) ;
-	int ret ;
+	trace(LOG_DEBUG, "Generating TLV connrequest");
+	struct tlv_result*results = calloc(N_CONNREQ_FIELD, sizeof(struct tlv_result));
+	int ret;
 
-	int version = CURRENT_PROTO_VERSION ;
+	int version = CURRENT_PROTO_VERSION;
 
-	results[0].type  = CPACKING ;
-	results[0].value = (unsigned char*) &packing ;
+	results[0].type  = CPACKING;
+	results[0].value = (unsigned char*) &packing;
 
-	results[1].type  = CPROTO_VERSION ;
-	results[1].value = (unsigned char*) &version ;
+	results[1].type  = CPROTO_VERSION;
+	results[1].value = (unsigned char*) &version;
 
-    ret = gen_tlv(dest, results, N_CONNREQ_FIELD) ;
-    free(results) ;
-    return ret ;
+	ret = gen_tlv(dest, results, N_CONNREQ_FIELD);
+	free(results);
+	return ret;
 }
+
+

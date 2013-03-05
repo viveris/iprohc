@@ -30,6 +30,7 @@ static inline uint16_t swab16(uint16_t value)
 	return ((value & 0x00ff) << 8) | ((value & 0xff00) >> 8);
 }
 
+
 #ifdef __i386__
 
 /**
@@ -47,7 +48,8 @@ static inline unsigned short ip_fast_csum(unsigned char *iph, unsigned int ihl)
 {
 	unsigned int sum;
 
-	__asm__ __volatile__(" \n\
+	__asm__ __volatile__ (
+	   " \n\
        movl (%1), %0      \n\
        subl $4, %2		\n\
        jbe 2f		\n\
@@ -66,82 +68,96 @@ static inline unsigned short ip_fast_csum(unsigned char *iph, unsigned int ihl)
        notl %0		\n\
 2:     \n\
        "
-	/* Since the input registers which are loaded with iph and ipl
-	   are modified, we must also specify them as outputs, or gcc
-	   will assume they contain their original values. */
-        : "=r" (sum), "=r" (iph), "=r" (ihl)
-        : "1" (iph), "2" (ihl));
+	   /* Since the input registers which are loaded with iph and ipl
+	      are modified, we must also specify them as outputs, or gcc
+	      will assume they contain their original values. */
+		: "=r" (sum), "=r" (iph), "=r" (ihl)
+		: "1" (iph), "2" (ihl));
 
 	return(sum);
 }
+
 
 #else
 
 static inline unsigned short from32to16(unsigned long x)
 {
-    /* add up 16-bit and 16-bit for 16+c bit */
-    x = (x & 0xffff) + (x >> 16);
-    /* add up carry.. */
-    x = (x & 0xffff) + (x >> 16);
-    return x;
+	/* add up 16-bit and 16-bit for 16+c bit */
+	x = (x & 0xffff) + (x >> 16);
+	/* add up carry.. */
+	x = (x & 0xffff) + (x >> 16);
+	return x;
 }
 
-static unsigned int do_csum(const unsigned char *buff, int len)                                        
-{   
-    int odd, count;
-    unsigned long result = 0;                                                                          
 
-    if (len <= 0)                                                                                      
-        goto out;
-    odd = 1 & (unsigned long) buff;                                                                    
-    if (odd) {
+static unsigned int do_csum(const unsigned char *buff, int len)
+{
+	int odd, count;
+	unsigned long result = 0;
+
+	if(len <= 0)
+	{
+		goto out;
+	}
+	odd = 1 & (unsigned long) buff;
+	if(odd)
+	{
 #ifdef __LITTLE_ENDIAN
-        result = *buff;                                                                                
-#else   
-        result += (*buff << 8);                                                                        
-#endif  
-        len--;
-        buff++;                                                                                        
-    }
-    count = len >> 1;       /* nr of 16-bit words.. */                                                 
-    if (count) {
-        if (2 & (unsigned long) buff) {
-            result += *(unsigned short *) buff;                                                        
-            count--;
-            len -= 2;
-            buff += 2;                                                                                 
-        }
-        count >>= 1;        /* nr of 32-bit words.. */                                                 
-        if (count) { 
-            unsigned long carry = 0;                                                                   
-            do {
-                unsigned long w = *(unsigned int *) buff;                                              
-                count--;
-                buff += 4;
-                result += carry;                                                                       
-                result += w; 
-                carry = (w > result);                                                                  
-            } while (count);                                                                           
-            result += carry; 
-            result = (result & 0xffff) + (result >> 16);                                               
-        }
-        if (len & 2) {
-            result += *(unsigned short *) buff;                                                        
-            buff += 2;                                                                                 
-        }                                                                                              
-    }
-    if (len & 1)
-#ifdef __LITTLE_ENDIAN
-        result += *buff;                                                                               
-#else   
-        result += (*buff << 8);                                                                        
+		result = *buff;
+#else
+		result += (*buff << 8);
 #endif
-    result = from32to16(result);                                                                       
-    if (odd)
-        result = ((result >> 8) & 0xff) | ((result & 0xff) << 8);
+		len--;
+		buff++;
+	}
+	count = len >> 1;        /* nr of 16-bit words.. */
+	if(count)
+	{
+		if(2 & (unsigned long) buff)
+		{
+			result += *(unsigned short *) buff;
+			count--;
+			len -= 2;
+			buff += 2;
+		}
+		count >>= 1;          /* nr of 32-bit words.. */
+		if(count)
+		{
+			unsigned long carry = 0;
+			do
+			{
+				unsigned long w = *(unsigned int *) buff;
+				count--;
+				buff += 4;
+				result += carry;
+				result += w;
+				carry = (w > result);
+			}
+			while(count);
+			result += carry;
+			result = (result & 0xffff) + (result >> 16);
+		}
+		if(len & 2)
+		{
+			result += *(unsigned short *) buff;
+			buff += 2;
+		}
+	}
+	if(len & 1)
+#ifdef __LITTLE_ENDIAN
+	{ result += *buff; }
+#else
+	{ result += (*buff << 8); }
+#endif
+	result = from32to16(result);
+	if(odd)
+	{
+		result = ((result >> 8) & 0xff) | ((result & 0xff) << 8);
+	}
 out:
-    return result;
+	return result;
 }
+
 
 /**
  *  This is a version of ip_compute_csum() optimized for IP headers,
@@ -149,7 +165,9 @@ out:
  */
 static inline uint16_t ip_fast_csum(const void *iph, unsigned int ihl)
 {
-    return (uint16_t)~do_csum(iph, ihl*4);
+	return (uint16_t) ~do_csum(iph, ihl * 4);
 }
 
+
 #endif
+

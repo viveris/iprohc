@@ -31,51 +31,51 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "tlv.h"
 
-typedef void (*tunnel_close_callback_t) (void* tunnel) ;
+typedef void (*tunnel_close_callback_t)(void*tunnel);
 
 struct statitics {
-    int decomp_failed ;
-    int decomp_total ;
+	int decomp_failed;
+	int decomp_total;
 
-    int comp_failed ;
-    int comp_total ;
+	int comp_failed;
+	int comp_total;
 
-    int head_comp_size ;
-    int head_uncomp_size ;
+	int head_comp_size;
+	int head_uncomp_size;
 
-    int total_comp_size ;
-    int total_uncomp_size ;
+	int total_comp_size;
+	int total_uncomp_size;
 
-    int unpack_failed;
-    int total_received;
+	int unpack_failed;
+	int total_received;
 
-    int* stats_packing ;
-    int  n_stats_packing ;
-} ;
+	int*stats_packing;
+	int n_stats_packing;
+};
 
 
 /* Stucture defining a tunnel */
 struct tunnel {
-    struct in_addr dest_address ;
+	struct in_addr dest_address;
 
-    int      raw_socket /* Real RAW */  ;   
-    int fake_raw[2] ; /* Fake RAW device for server side */
+	int raw_socket /* Real RAW */;
+	int fake_raw[2];   /* Fake RAW device for server side */
 
-    int tun;  /* Real TUN device */
-    int fake_tun[2] ; /* Fake TUN device for server side */
+	int tun;   /* Real TUN device */
+	int fake_tun[2];   /* Fake TUN device for server side */
 
-    char alive ;
-    struct timeval last_keepalive ;
+	char alive;
+	struct timeval last_keepalive;
 
-    struct tunnel_params params ;
+	struct tunnel_params params;
 
-    struct statitics stats;
+	struct statitics stats;
 
-    tunnel_close_callback_t close_callback ;
-} ;
+	tunnel_close_callback_t close_callback;
+};
 
 /* Called in a thread on a new tunnel */
-void* new_tunnel(void* arg) ;
+void * new_tunnel(void*arg);
 
 #endif
 
