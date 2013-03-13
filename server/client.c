@@ -51,6 +51,7 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	int raw;
 	int ret;
 	unsigned int verify_status;
+	int status = -3;
 
 	/* New client */
 
@@ -66,12 +67,15 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	if(conn < 0)
 	{
 		perror("Fail accept\n");
+		status = -3;
+		goto error;
 	}
 	trace(LOG_INFO, "Connection from %s (%d)\n", inet_ntoa(
 	         src_addr.sin_addr), src_addr.sin_addr.s_addr);
 
 	/* TLS */
-	/* Get rid of warning, it's a "bug" of GnuTLS (cf http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
+	/* Get rid of warning, it's a "bug" of GnuTLS
+	 * (see http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
 	gnutls_transport_set_ptr_nowarn(session, conn);
 	do
 	{
@@ -81,25 +85,24 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 
 	if(ret < 0)
 	{
-		close(conn);
-		gnutls_deinit(session);
-		trace(LOG_ERR, "TLS handshake failed : %s", gnutls_strerror(ret));
-		return -3;
+		trace(LOG_ERR, "TLS handshake failed: %s (%d)", gnutls_strerror(ret), ret);
+		status = -3;
+		goto tls_deinit;
 	}
 	trace(LOG_INFO, "TLS handshake succeeded");
 
 	ret = gnutls_certificate_verify_peers2(session, &verify_status);
 	if(ret < 0)
 	{
-		trace(LOG_ERR, "TLS verify failed : %s", gnutls_strerror(ret));
-		return -3;
+		trace(LOG_ERR, "TLS verify failed: %s (%d)", gnutls_strerror(ret), ret);
+		status = -3;
+		goto tls_deinit;
 	}
 
-	if(verify_status & GNUTLS_CERT_INVALID
-	   && (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID))
-	   )
+	if((verify_status & GNUTLS_CERT_INVALID) &&
+	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
 	{
-		trace(LOG_ERR, "Certificate can't be verified : ");
+		trace(LOG_ERR, "Certificate cannot be verified: ");
 		if(verify_status & GNUTLS_CERT_REVOKED)
 		{
 			trace(LOG_ERR, " - Revoked certificate");
@@ -120,7 +123,8 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 		{
 			trace(LOG_ERR, " - The certificate has expired");
 		}
-		return -3;
+		status = -3;
+		goto tls_deinit;
 	}
 
 	/* client creation parameters */
@@ -132,7 +136,10 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	}
 	if(i == max_clients)
 	{
-		return -2;
+		trace(LOG_ERR, "no more clients accepted, maximum %d reached",
+				max_clients);
+		status = -2;
+		goto tls_deinit;
 	}
 
 	clients[i] = malloc(sizeof(struct client));
@@ -152,7 +159,8 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	{
 		perror("Can't open pipe for tun");
 		/* TODO  : Flush */
-		return 1;
+		status = -1;
+		goto reset_tun;
 	}
 
 	/* set raw */
@@ -160,25 +168,44 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	if(raw < 0)
 	{
 		trace(LOG_ERR, "Unable to create raw socket");
+		status = -1;
+		goto close_tun_pair;
 	}
 	clients[i]->tunnel.raw_socket = raw;
 	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[i]->tunnel.fake_raw) < 0)
 	{
 		perror("Can't open pipe for raw");
 		/* TODO  : Flush */
-		return -1;
+		status = -1;
+		goto close_raw;
 	}
 
-	memcpy(&(clients[i]->tunnel.params),  &(server_opts.params), sizeof(struct tunnel_params));
+	memcpy(&(clients[i]->tunnel.params),  &(server_opts.params),
+			 sizeof(struct tunnel_params));
 	clients[i]->tunnel.params.local_address = local.s_addr;
 	clients[i]->tunnel.alive =   0;
 	clients[i]->tunnel.close_callback = close_tunnel;
-
 	clients[i]->last_keepalive.tv_sec = -1;
 
 	trace(LOG_DEBUG, "Created");
 
 	return i;
+
+close_raw:
+	clients[i]->tunnel.raw_socket = -1;
+	close(raw);
+close_tun_pair:
+	close(clients[i]->tunnel.fake_tun[0]);
+	clients[i]->tunnel.fake_tun[0] = -1;
+	close(clients[i]->tunnel.fake_tun[1]);
+	clients[i]->tunnel.fake_tun[1] = -1;
+reset_tun:
+	clients[i]->tunnel.tun = -1;
+tls_deinit:
+	close(conn);
+	gnutls_deinit(session);
+error:
+	return status;
 }
 
 
