@@ -71,8 +71,8 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 		status = -3;
 		goto error;
 	}
-	trace(LOG_INFO, "Connection from %s (%d)\n", inet_ntoa(
-	         src_addr.sin_addr), src_addr.sin_addr.s_addr);
+	trace(LOG_INFO, "new connection from %s:%d\n", inet_ntoa(src_addr.sin_addr),
+			ntohs(src_addr.sin_port));
 
 	/* TLS */
 	/* Get rid of warning, it's a "bug" of GnuTLS
