@@ -48,7 +48,8 @@ int set_link_up(char*dev)
 	err = ioctl(fd, SIOCGIFFLAGS, &ifr);
 	if(err)
 	{
-		perror("SIOCGIFFLAGS");
+		trace(LOG_ERR, "failed to retrieve the flags of interface '%s': %s (%d)",
+				ifr.ifr_name, strerror(errno), errno);
 		close(fd);
 		return -1;
 	}
@@ -57,10 +58,10 @@ int set_link_up(char*dev)
 	err = ioctl(fd, SIOCSIFFLAGS, &ifr);
 	if(err)
 	{
-		perror("SIOCSIFFLAGS");
+		trace(LOG_ERR, "failed to update the flags of interface '%s': %s (%d)",
+				ifr.ifr_name, strerror(errno), errno);
 	}
 	close(fd);
-
 
 	return err;
 }
@@ -81,7 +82,8 @@ int get_device_id(char*dev, int*tun_itf_id)
 	err = ioctl(fd, SIOCGIFINDEX, &ifr);
 	if(err)
 	{
-		perror("SIOCGIFFLAGS");
+		trace(LOG_ERR, "failed to retrieve the flags of interface '%s': %s (%d)",
+				ifr.ifr_name, strerror(errno), errno);
 		close(fd);
 		return -1;
 	}
@@ -185,7 +187,8 @@ int create_raw()
 	sock = socket(AF_INET, SOCK_RAW, 142);
 	if(sock < 0)
 	{
-		perror("Can't open RAW socket\n");
+		trace(LOG_ERR, "failed to create a raw socket: %s (%d)",
+				strerror(errno), errno);
 		goto quit;
 	}
 

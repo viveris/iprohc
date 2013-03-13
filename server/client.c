@@ -66,7 +66,8 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	conn = accept(socket, (struct sockaddr*)&src_addr, &src_addr_len);
 	if(conn < 0)
 	{
-		perror("Fail accept\n");
+		trace(LOG_ERR, "failed to accept new connection: %s (%d)",
+				strerror(errno), errno);
 		status = -3;
 		goto error;
 	}
@@ -157,7 +158,8 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	clients[i]->tunnel.tun = tun;  /* real tun device */
 	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[i]->tunnel.fake_tun) < 0)
 	{
-		perror("Can't open pipe for tun");
+		trace(LOG_ERR, "failed to create a socket pair for TUN: %s (%d)",
+				strerror(errno), errno);
 		/* TODO  : Flush */
 		status = -1;
 		goto reset_tun;
@@ -174,7 +176,8 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	clients[i]->tunnel.raw_socket = raw;
 	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[i]->tunnel.fake_raw) < 0)
 	{
-		perror("Can't open pipe for raw");
+		trace(LOG_ERR, "failed to create a socket pair for the raw socket: "
+				"%s (%d)", strerror(errno), errno);
 		/* TODO  : Flush */
 		status = -1;
 		goto close_raw;
