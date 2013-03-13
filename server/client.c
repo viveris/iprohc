@@ -144,6 +144,12 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	}
 
 	clients[client_id] = malloc(sizeof(struct client));
+	if(clients[client_id] == NULL)
+	{
+		trace(LOG_ERR, "failed to allocate memory for new client");
+		status = -2;
+		goto tls_deinit;
+	}
 	trace(LOG_DEBUG, "Allocating %p", clients[client_id]);
 	clients[client_id]->tcp_socket = conn;
 	clients[client_id]->tls_session = session;
@@ -204,6 +210,7 @@ close_tun_pair:
 	clients[client_id]->tunnel.fake_tun[1] = -1;
 reset_tun:
 	clients[client_id]->tunnel.tun = -1;
+	free(clients[client_id]);
 tls_deinit:
 	close(conn);
 	gnutls_deinit(session);
