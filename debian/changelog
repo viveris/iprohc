@@ -1,3 +1,7 @@
+iprohc (0.4-1) stable; urgency=low
+
+  * Minor fixes, timeout modified for packing, udpated examples, added GPL headers
+
 iprohc (0.3-1) stable; urgency=low
 
   * Many fixes, including protocol version. Not compatible with 0.1 or 0.2
