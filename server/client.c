@@ -47,7 +47,7 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	struct   sockaddr_in src_addr;
 	socklen_t src_addr_len = sizeof(src_addr);
 	struct in_addr local;
-	int i = 0;
+	int client_id;
 	int raw;
 	int ret;
 	unsigned int verify_status;
@@ -131,11 +131,11 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	/* client creation parameters */
 	trace(LOG_DEBUG, "Creation of client");
 
-	while(clients[i] != NULL && i < max_clients)
+	for(client_id = 0; client_id < max_clients &&
+		                clients[client_id] != NULL; client_id++)
 	{
-		i++;
 	}
-	if(i == max_clients)
+	if(client_id == max_clients)
 	{
 		trace(LOG_ERR, "no more clients accepted, maximum %d reached",
 				max_clients);
@@ -143,20 +143,20 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 		goto tls_deinit;
 	}
 
-	clients[i] = malloc(sizeof(struct client));
-	trace(LOG_DEBUG, "Allocating %p", clients[i]);
-	clients[i]->tcp_socket = conn;
-	clients[i]->tls_session = session;
+	clients[client_id] = malloc(sizeof(struct client));
+	trace(LOG_DEBUG, "Allocating %p", clients[client_id]);
+	clients[client_id]->tcp_socket = conn;
+	clients[client_id]->tls_session = session;
 
 	/* dest_addr */
-	clients[i]->tunnel.dest_address  = src_addr.sin_addr;
+	clients[client_id]->tunnel.dest_address  = src_addr.sin_addr;
 	/* local_addr */
-	local.s_addr = htonl(ntohl(server_opts.local_address) + i + 10);
-	clients[i]->local_address = local;
+	local.s_addr = htonl(ntohl(server_opts.local_address) + client_id + 10);
+	clients[client_id]->local_address = local;
 
 	/* set tun */
-	clients[i]->tunnel.tun = tun;  /* real tun device */
-	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[i]->tunnel.fake_tun) < 0)
+	clients[client_id]->tunnel.tun = tun;  /* real tun device */
+	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[client_id]->tunnel.fake_tun) < 0)
 	{
 		trace(LOG_ERR, "failed to create a socket pair for TUN: %s (%d)",
 				strerror(errno), errno);
@@ -173,8 +173,8 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 		status = -1;
 		goto close_tun_pair;
 	}
-	clients[i]->tunnel.raw_socket = raw;
-	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[i]->tunnel.fake_raw) < 0)
+	clients[client_id]->tunnel.raw_socket = raw;
+	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[client_id]->tunnel.fake_raw) < 0)
 	{
 		trace(LOG_ERR, "failed to create a socket pair for the raw socket: "
 				"%s (%d)", strerror(errno), errno);
@@ -183,27 +183,27 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 		goto close_raw;
 	}
 
-	memcpy(&(clients[i]->tunnel.params),  &(server_opts.params),
+	memcpy(&(clients[client_id]->tunnel.params),  &(server_opts.params),
 			 sizeof(struct tunnel_params));
-	clients[i]->tunnel.params.local_address = local.s_addr;
-	clients[i]->tunnel.alive =   0;
-	clients[i]->tunnel.close_callback = close_tunnel;
-	clients[i]->last_keepalive.tv_sec = -1;
+	clients[client_id]->tunnel.params.local_address = local.s_addr;
+	clients[client_id]->tunnel.alive =   0;
+	clients[client_id]->tunnel.close_callback = close_tunnel;
+	clients[client_id]->last_keepalive.tv_sec = -1;
 
 	trace(LOG_DEBUG, "Created");
 
-	return i;
+	return client_id;
 
 close_raw:
-	clients[i]->tunnel.raw_socket = -1;
+	clients[client_id]->tunnel.raw_socket = -1;
 	close(raw);
 close_tun_pair:
-	close(clients[i]->tunnel.fake_tun[0]);
-	clients[i]->tunnel.fake_tun[0] = -1;
-	close(clients[i]->tunnel.fake_tun[1]);
-	clients[i]->tunnel.fake_tun[1] = -1;
+	close(clients[client_id]->tunnel.fake_tun[0]);
+	clients[client_id]->tunnel.fake_tun[0] = -1;
+	close(clients[client_id]->tunnel.fake_tun[1]);
+	clients[client_id]->tunnel.fake_tun[1] = -1;
 reset_tun:
-	clients[i]->tunnel.tun = -1;
+	clients[client_id]->tunnel.tun = -1;
 tls_deinit:
 	close(conn);
 	gnutls_deinit(session);
