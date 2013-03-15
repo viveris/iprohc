@@ -89,6 +89,8 @@ int get_device_id(char*dev, int*tun_itf_id)
 	}
 
 	*tun_itf_id = ifr.ifr_ifindex;
+
+	close(fd);
 	return 0;
 }
 
@@ -180,11 +182,13 @@ bool set_ip4(int iface_index, uint32_t address, uint8_t network)
 	if(ret < 0)
 	{
 		trace(LOG_ERR, "failed to set IPv4 address");
-		goto close_rtnl;
+		goto free_ip_data;
 	}
 
 	is_success = true;
 
+free_ip_data:
+	free(ip_data);
 close_rtnl:
 	rtnl_close(&rth);
 error:

@@ -233,6 +233,7 @@ void usage(char*arg0)
 int alive;
 void quit(int sig)
 {
+	trace(LOG_NOTICE, "SIGTERM or SIGINT received");
 	alive = 0;
 }
 
@@ -283,6 +284,7 @@ int main(int argc, char *argv[])
 {
 	int exit_status = 1;
 
+	size_t client_id;
 	int serv_socket;
 
 	int tun, raw;
@@ -290,7 +292,8 @@ int main(int argc, char *argv[])
 
 	struct route_args route_args_tun;
 	struct route_args route_args_raw;
-	pthread_t route_thread;
+	pthread_t tun_route_thread;
+	pthread_t raw_route_thread;
 
 	fd_set rdfs;
 	int max;
@@ -315,10 +318,16 @@ int main(int argc, char *argv[])
 	char conf_file[1024];
 	strcpy(conf_file, "/etc/iprohc_server.conf");
 
-	clients = calloc(MAX_CLIENTS, sizeof(struct clients*));
-
 	/* Initialize logger */
 	openlog("iprohc_server", LOG_PID | LOG_PERROR, LOG_DAEMON);
+
+	clients = calloc(MAX_CLIENTS, sizeof(struct clients*));
+	if(clients == NULL)
+	{
+		trace(LOG_ERR, "failed to allocate memory for the contexts of %d clients",
+				MAX_CLIENTS);
+		goto error;
+	}
 
 	/* Signal for stats and log */
 	signal(SIGINT,  quit);
@@ -376,7 +385,7 @@ int main(int argc, char *argv[])
 	{
 		trace(LOG_ERR, "Unable to parse configuration file, exiting...");
 		exit_status = 2;
-		goto error;
+		goto free_client_contexts;
 	}
 	dump_opts(server_opts);
 
@@ -384,7 +393,7 @@ int main(int argc, char *argv[])
 	{
 		trace(LOG_ERR, "PKCS12 file required");
 		exit_status = 2;
-		goto error;
+		goto free_client_contexts;
 	}
 
 	if(strcmp(server_opts.pidfile_path, "") == 0)
@@ -398,7 +407,7 @@ int main(int argc, char *argv[])
 		{
 			trace(LOG_ERR, "failed to open pidfile '%s': %s (%d)",
 			      server_opts.pidfile_path, strerror(errno), errno);
-			goto error;
+			goto free_client_contexts;
 		}
 		fprintf(pid, "%d\n", getpid());
 		fclose(pid);
@@ -422,7 +431,7 @@ int main(int argc, char *argv[])
 	{
 		trace(LOG_ERR, "failed load server certificate from file '%s': %s (%d)",
 		      server_opts.pkcs12_f, gnutls_strerror(ret), ret);
-		goto error;
+		goto remove_pidfile;
 	}
 
 	generate_dh_params(&dh_params);
@@ -436,7 +445,7 @@ int main(int argc, char *argv[])
 	{
 		trace(LOG_ERR, "failed to create TCP socket: %s (%d)",
 				strerror(errno), errno);
-		goto error;
+		goto remove_pidfile;
 	}
 	int on = 1;
 	ret = setsockopt(serv_socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
@@ -489,24 +498,30 @@ int main(int argc, char *argv[])
 	route_args_tun.fd = tun;
 	route_args_tun.clients = clients;
 	route_args_tun.type = TUN;
-	pthread_create(&route_thread, NULL, route, (void*)&route_args_tun);
+	ret = pthread_create(&tun_route_thread, NULL, route, (void*)&route_args_tun);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to create the TUN routing thread: %s (%d)",
+				strerror(ret), ret);
+		goto delete_tun;
+	}
 
 	/* RAW create */
 	raw = create_raw();
 	if(raw < 0)
 	{
 		trace(LOG_ERR, "failed to create RAW socket");
-		goto delete_tun;
+		goto stop_tun_thread;
 	}
 
 	/* RAW routing thread */
 	route_args_raw.fd = raw;
 	route_args_raw.clients = clients;
 	route_args_raw.type = RAW;
-	ret = pthread_create(&route_thread, NULL, route, (void*)&route_args_raw);
+	ret = pthread_create(&raw_route_thread, NULL, route, (void*)&route_args_raw);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "failed to create the routing thread: %s (%d)",
+		trace(LOG_ERR, "failed to create the RAW routing thread: %s (%d)",
 				strerror(ret), ret);
 		goto delete_raw;
 	}
@@ -624,26 +639,76 @@ int main(int argc, char *argv[])
 #endif
 
 	}
+	trace(LOG_INFO, "someone asked to stop server");
 
+	/* release all clients */
+	trace(LOG_INFO, "release resources of connected clients...");
+	for(client_id = 0; client_id < MAX_CLIENTS; client_id++)
+	{
+		if(clients[client_id] != NULL)
+		{
+			/* close RAW socketpair */
+			close(clients[client_id]->tunnel.fake_raw[0]);
+			clients[client_id]->tunnel.fake_raw[0] = -1;
+			close(clients[client_id]->tunnel.fake_raw[1]);
+			clients[client_id]->tunnel.fake_raw[1] = -1;
+			/* close RAW socket */
+			close(clients[client_id]->tunnel.raw_socket);
+			clients[client_id]->tunnel.raw_socket = -1;
+			/* close TUN socketpair */
+			close(clients[client_id]->tunnel.fake_tun[0]);
+			clients[client_id]->tunnel.fake_tun[0] = -1;
+			close(clients[client_id]->tunnel.fake_tun[1]);
+			clients[client_id]->tunnel.fake_tun[1] = -1;
+			/* close TUN interface */
+			close(clients[client_id]->tunnel.tun);
+			clients[client_id]->tunnel.tun = -1;
+			/* close TLS session */
+			gnutls_deinit(clients[client_id]->tls_session);
+			/* close TCP connection */
+			close(clients[client_id]->tcp_socket);
+			/* free client context */
+			free(clients[client_id]);
+			clients[client_id] = NULL;
+		}
+	}
+
+	trace(LOG_INFO, "release TLS resources...");
 	gnutls_certificate_free_credentials(server_opts.xcred);
 	gnutls_priority_deinit(server_opts.priority_cache);
-
 	gnutls_global_deinit();
 
 	/* everything went fine */
 	exit_status = 0;
 
+	trace(LOG_INFO, "cancel RAW routing thread...");
+	pthread_cancel(raw_route_thread);
+	pthread_join(raw_route_thread, NULL);
 delete_raw:
+	trace(LOG_INFO, "close RAW socket...");
 	close(raw);
+stop_tun_thread:
+	trace(LOG_INFO, "cancel TUN routing thread...");
+	pthread_cancel(tun_route_thread);
+	pthread_join(tun_route_thread, NULL);
 delete_tun:
+	trace(LOG_INFO, "close TUN interface...");
 	close(tun);
 close_tcp:
+	trace(LOG_INFO, "close TCP server socket...");
 	close(serv_socket);
-error:
+remove_pidfile:
 	if(strcmp(server_opts.pidfile_path, "") != 0)
 	{
+		trace(LOG_INFO, "remove pidfile '%s'", server_opts.pidfile_path);
 		unlink(server_opts.pidfile_path);
 	}
+free_client_contexts:
+	free(clients);
+error:
+	trace(LOG_INFO, "server stops with exit code %d", exit_status);
+	trace(LOG_INFO, "close syslog session");
+	closelog();
 	return exit_status;
 }
 

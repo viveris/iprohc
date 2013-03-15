@@ -227,8 +227,9 @@ void * new_tunnel(void*arg)
 	struct timespec timeout;
 	sigset_t sigmask;
 
-	struct timeval last;
 	struct timeval now;
+	struct timeval last;
+	bool is_last_init = false;
 #ifdef STATS_COLLECTD
 	struct timeval last_stat;
 #endif
@@ -382,6 +383,7 @@ void * new_tunnel(void*arg)
 				           compressed_packet, &total_size,
 				           &(tunnel->stats));
 				gettimeofday(&last, NULL);
+				is_last_init = true;
 				if(failure)
 				{
 					trace(LOG_ERR, "tun2raw failed\n");
@@ -404,6 +406,11 @@ void * new_tunnel(void*arg)
 		}
 
 		gettimeofday(&now, NULL);
+		if(!is_last_init)
+		{
+			last = now;
+			is_last_init = true;
+		}
 		if(now.tv_sec > last.tv_sec + timeout.tv_sec)
 		{
 			if(total_size > 0)
