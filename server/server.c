@@ -393,7 +393,7 @@ int main(int argc, char *argv[])
 		if(pid == NULL)
 		{
 			trace(LOG_ERR, "failed to open pidfile '%s': %s (%d)",
-					server_opts.pidfile_path, strerror(errno), errno);
+			      server_opts.pidfile_path, strerror(errno), errno);
 			goto error;
 		}
 		fprintf(pid, "%d\n", getpid());
@@ -416,7 +416,8 @@ int main(int argc, char *argv[])
 	}
 	if(ret < 0)
 	{
-		trace(LOG_ERR, "Unable to load certificate : %s", gnutls_strerror(ret));
+		trace(LOG_ERR, "failed load server certificate from file '%s': %s (%d)",
+		      server_opts.pkcs12_f, gnutls_strerror(ret), ret);
 		goto error;
 	}
 
