@@ -225,7 +225,7 @@ void usage(char*arg0)
 	       IPROHC_SERVER_VERSION_MINOR);
 	printf("\n");
 	printf("Options : \n");
-	printf(" --config: Path to configuration file (default: /etc/iprohc_server.conf)\n");
+	printf(" --conf: Path to configuration file (default: /etc/iprohc_server.conf)\n");
 	exit(2);
 }
 
