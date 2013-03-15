@@ -390,9 +390,11 @@ int main(int argc, char *argv[])
 	else
 	{
 		pid = fopen(server_opts.pidfile_path, "w");
-		if(pid < 0)
+		if(pid == NULL)
 		{
-			trace(LOG_ERR, "Unable to write open file : %s", strerror(errno));
+			trace(LOG_ERR, "failed to open pidfile '%s': %s (%d)",
+					server_opts.pidfile_path, strerror(errno), errno);
+			goto error;
 		}
 		fprintf(pid, "%d\n", getpid());
 		fclose(pid);
