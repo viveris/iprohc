@@ -34,9 +34,16 @@ struct client_opts {
 };
 
 /* Generic functions for handling messages */
-int handle_message(struct tunnel*tunnel, char*buf, int length, struct client_opts opts);
+bool handle_message(struct tunnel *const tunnel,
+						  unsigned char *const buf,
+						  const int length,
+						  const struct client_opts opts)
+	__attribute__((nonnull(1, 2), warn_unused_result));
 
 /* Handlers of differents messages types */
-char * handle_okconnect(struct tunnel*tunnel, char*tlv, struct client_opts opts);
-
+bool handle_okconnect(struct tunnel *const tunnel,
+							 unsigned char *const tlv,
+							 const struct client_opts opts,
+							 size_t *const parsed_len)
+	__attribute__((nonnull(1, 2, 4), warn_unused_result));
 
