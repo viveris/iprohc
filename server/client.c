@@ -211,6 +211,7 @@ close_tun_pair:
 reset_tun:
 	clients[client_id]->tunnel.tun = -1;
 	free(clients[client_id]);
+	clients[client_id] = NULL;
 tls_deinit:
 	close(conn);
 	gnutls_deinit(session);

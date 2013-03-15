@@ -43,9 +43,11 @@ int handle_message(struct tunnel*tunnel, char*buf, int length, struct client_opt
 				buf = handle_okconnect(tunnel, ++buf, opts);
 				if(buf == NULL)
 				{
-					trace(LOG_ERR, "Unable to decode TCP message");
+					trace(LOG_ERR, "failed to decode TCP message, abort");
+					goto error;
 				}
 				break;
+
 			case C_KEEPALIVE:
 				trace(LOG_DEBUG, "Received keepalive");
 				gettimeofday(&(tunnel->last_keepalive), NULL);
@@ -55,15 +57,21 @@ int handle_message(struct tunnel*tunnel, char*buf, int length, struct client_opt
 				trace(LOG_DEBUG, "Keepalive !");
 				gnutls_record_send(opts.tls_session, command, 1);
 				break;
+
 			case C_CONNECT_KO:
 				trace(LOG_ERR, "Wrong protocol version, please update client or server\n", *buf);
-				return -1;
+				goto error;
+
 			default:
 				trace(LOG_ERR, "Unexpected %d in command\n", *buf);
 				buf++;
+				break;
 		}
 	}
 	return 0;
+	
+error:
+	return -1;
 }
 
 
@@ -80,36 +88,45 @@ char * handle_okconnect(struct tunnel*tunnel, char*tlv, struct client_opts opts)
 
 	int pid;
 	int status;
+	bool is_ok;
 
 	/* Parse options received in tlv form from the server */
 	newbuf = parse_connect(tlv, &tp);
 	if(newbuf == NULL)
 	{
-		return NULL;
+		trace(LOG_ERR, "failed to parse connect message received from the server");
+		goto error;
 	}
 
 	/* Tunnel definition */
 	debug_addr.s_addr = tp.local_address;
 	trace(LOG_DEBUG, "Creation of tunnel, local address : %s\n", inet_ntoa(debug_addr));
 
-	/* set tun */
+	/* create the TUN interface */
 	tun = create_tun(opts.tun_name, &tun_itf_id);
-	if(tun < -1)
+	if(tun < 0)
 	{
 		trace(LOG_ERR, "Unable to create TUN device");
-		return NULL;
+		goto error;
 	}
-	set_ip4(tun_itf_id, tp.local_address, 24);
+
+	/* set the IPv4 address on the TUN interface */
+	is_ok = set_ip4(tun_itf_id, tp.local_address, 24);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "failed to set IP address on TUN interface");
+		goto delete_tun;
+	}
 	tunnel->tun = tun;  /* real tun device */
 	tunnel->fake_tun[0] = -1;
 	tunnel->fake_tun[1] = -1;
 
 	/* set RAW  */
 	raw = create_raw();
-	if(raw < -1)
+	if(raw < 0)
 	{
 		trace(LOG_ERR, "Unable to create RAW socket");
-		return NULL;
+		goto delete_tun;
 	}
 	tunnel->raw_socket  = raw;
 	tunnel->fake_raw[0] = -1;
@@ -158,6 +175,11 @@ char * handle_okconnect(struct tunnel*tunnel, char*tlv, struct client_opts opts)
 	gnutls_record_send(opts.tls_session, message, 1);
 
 	return newbuf;
+
+delete_tun:
+	close(tun);
+error:
+	return NULL;
 }
 
 

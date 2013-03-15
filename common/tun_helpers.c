@@ -130,24 +130,32 @@ int create_tun(char *name, int*tun_itf_id)
 }
 
 
-int set_ip4(int iface_index, uint32_t address, uint8_t network)
+bool set_ip4(int iface_index, uint32_t address, uint8_t network)
 {
+	bool is_success = false;
 	int ret;
 	struct {
 		struct nlmsghdr nh;
 		struct ifaddrmsg ip;
 		char buf[256];
 	} req;
-
 	struct rtnl_handle rth = { .fd = -1 };
-	if(rtnl_open(&rth, 0) < 0)
+	uint32_t *ip_data;
+
+	ret = rtnl_open(&rth, 0);
+	if(ret < 0)
 	{
-		exit(1);
+		trace(LOG_ERR, "failed to open RTNL socket");
+		goto error;
 	}
 
-	uint32_t*ip_data = calloc(8, sizeof(uint32_t));
+	ip_data = calloc(8, sizeof(uint32_t));
+	if(ip_data == NULL)
+	{
+		trace(LOG_ERR, "failed to allocate memory for setting IPv4 address");
+		goto close_rtnl;
+	}
 	ip_data[0] = address;
-
 
 	/* initialize netlink request */
 	memset(&req, 0, sizeof(req));
@@ -171,11 +179,16 @@ int set_ip4(int iface_index, uint32_t address, uint8_t network)
 #endif
 	if(ret < 0)
 	{
-		return 1;
+		trace(LOG_ERR, "failed to set IPv4 address");
+		goto close_rtnl;
 	}
 
+	is_success = true;
+
+close_rtnl:
 	rtnl_close(&rth);
-	return 0;
+error:
+	return is_success;
 }
 
 

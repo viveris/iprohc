@@ -281,6 +281,7 @@ error:
 
 int main(int argc, char *argv[])
 {
+	int exit_status = 1;
 
 	int serv_socket;
 
@@ -309,6 +310,7 @@ int main(int argc, char *argv[])
 	stats_timeout.tv_sec = 10;
 #endif
 
+	bool is_ok;
 	int c;
 	char conf_file[1024];
 	strcpy(conf_file, "/etc/iprohc_server.conf");
@@ -373,14 +375,16 @@ int main(int argc, char *argv[])
 	if(parse_config(conf_file, &server_opts) < 0)
 	{
 		trace(LOG_ERR, "Unable to parse configuration file, exiting...");
-		exit(2);
+		exit_status = 2;
+		goto error;
 	}
 	dump_opts(server_opts);
 
 	if(strcmp(server_opts.pkcs12_f, "") == 0)
 	{
 		trace(LOG_ERR, "PKCS12 file required");
-		exit(2);
+		exit_status = 2;
+		goto error;
 	}
 
 	if(strcmp(server_opts.pidfile_path, "") == 0)
@@ -428,24 +432,40 @@ int main(int argc, char *argv[])
 	 * Create TCP socket
 	 */
 	serv_socket = socket(AF_INET, SOCK_STREAM, 0);
+	if(serv_socket < 0)
+	{
+		trace(LOG_ERR, "failed to create TCP socket: %s (%d)",
+				strerror(errno), errno);
+		goto error;
+	}
 	int on = 1;
-	setsockopt(serv_socket,SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	ret = setsockopt(serv_socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to allow the TCP socket to re-use address: %s (%d)",
+				strerror(errno), errno);
+		goto close_tcp;
+	}
 
 	struct   sockaddr_in servaddr;
 	servaddr.sin_family    = AF_INET;
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 	servaddr.sin_port    = htons(server_opts.port);
 
-	if(bind(serv_socket, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+	ret = bind(serv_socket, (struct sockaddr*)&servaddr, sizeof(servaddr));
+	if(ret != 0)
 	{
-		trace(LOG_ERR, "Bind failed : %s", strerror(errno));
-		goto error;
+		trace(LOG_ERR, "failed to bind on TCP/%d: %s (%d)", server_opts.port,
+				strerror(errno), errno);
+		goto close_tcp;
 	}
 
-	if(listen(serv_socket, 10) < 0)
+	ret = listen(serv_socket, 10);
+	if(ret != 0)
 	{
-		trace(LOG_ERR, "Listen failed : %s", strerror(errno));
-		goto error;
+		trace(LOG_ERR, "failed to put TCP/%d socket in listen mode: %s (%d)",
+				server_opts.port, strerror(errno), errno);
+		goto close_tcp;
 	}
 
 	max = serv_socket;
@@ -454,14 +474,15 @@ int main(int argc, char *argv[])
 	tun = create_tun("tun_ipip", &tun_itf_id);
 	if(tun < 0)
 	{
-		trace(LOG_ERR, "Unable to create TUN device");
-		goto error;
+		trace(LOG_ERR, "failed to create TUN device");
+		goto close_tcp;
 	}
 
-	if(set_ip4(tun_itf_id, server_opts.local_address, 24) < 0)
+	is_ok = set_ip4(tun_itf_id, server_opts.local_address, 24);
+	if(!is_ok)
 	{
-		trace(LOG_ERR, "Unable to set IPv4 on tun device");
-		goto error;
+		trace(LOG_ERR, "failed to set IPv4 address on TUN interface");
+		goto delete_tun;
 	}
 
 	/* TUN routing thread */
@@ -472,17 +493,23 @@ int main(int argc, char *argv[])
 
 	/* RAW create */
 	raw = create_raw();
-	if(raw < -1)
+	if(raw < 0)
 	{
-		trace(LOG_ERR, "Unable to create RAW socket");
-		return 1;
+		trace(LOG_ERR, "failed to create RAW socket");
+		goto delete_tun;
 	}
 
 	/* RAW routing thread */
 	route_args_raw.fd = raw;
 	route_args_raw.clients = clients;
 	route_args_raw.type = RAW;
-	pthread_create(&route_thread, NULL, route, (void*)&route_args_raw);
+	ret = pthread_create(&route_thread, NULL, route, (void*)&route_args_raw);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to create the routing thread: %s (%d)",
+				strerror(ret), ret);
+		goto delete_raw;
+	}
 
 	struct timespec timeout;
 
@@ -524,7 +551,8 @@ int main(int argc, char *argv[])
 
 		if(pselect(max + 1, &rdfs, NULL, NULL, &timeout, &sigmask) == -1)
 		{
-			trace(LOG_ERR, "select failed : %s", strerror(errno));
+			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
+			continue;
 		}
 
 		/* Read on serv_socket : new client */
@@ -598,22 +626,24 @@ int main(int argc, char *argv[])
 	}
 
 	gnutls_certificate_free_credentials(server_opts.xcred);
-	gnutls_priority_deinit (server_opts.priority_cache);
+	gnutls_priority_deinit(server_opts.priority_cache);
 
-	gnutls_global_deinit ();
+	gnutls_global_deinit();
 
-	if(strcmp(server_opts.pidfile_path, "") != 0)
-	{
-		unlink(server_opts.pidfile_path);
-	}
-	return 0;
+	/* everything went fine */
+	exit_status = 0;
 
+delete_raw:
+	close(raw);
+delete_tun:
+	close(tun);
+close_tcp:
+	close(serv_socket);
 error:
 	if(strcmp(server_opts.pidfile_path, "") != 0)
 	{
 		unlink(server_opts.pidfile_path);
 	}
-	return 1;
+	return exit_status;
 }
-
 
