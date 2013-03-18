@@ -25,8 +25,7 @@ else (PC_ROHC_FOUND)
     find_library(ROHC_LIBRARY_COMMON NAMES rohc_common)
     find_library(ROHC_LIBRARY_COMP NAMES rohc_comp)
     find_library(ROHC_LIBRARY_DECOMP NAMES rohc_decomp)
-    find_library(LIBM NAMES m)
-    set(ROHC_LIBRARIES ${ROHC_LIBRARY_COMMON} ${ROHC_LIBRARY_COMP} ${ROHC_LIBRARY_DECOMP} ${LIBM} )
+    set(ROHC_LIBRARIES ${ROHC_LIBRARY_COMMON} ${ROHC_LIBRARY_COMP} ${ROHC_LIBRARY_DECOMP} )
     include(FindPackageHandleStandardArgs)
     ## handle the QUIETLY and REQUIRED arguments and set ROHC_FOUND to TRUE
     ## if all listed variables are TRUE
