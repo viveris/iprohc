@@ -156,6 +156,8 @@ void dump_opts(struct server_opts opts)
 
 void dump_stats_client(struct client*client)
 {
+	int i;
+
 	trace(LOG_NOTICE, "------------------------------------------------------");
 	trace(LOG_NOTICE, "Client %s", inet_ntoa(client->tunnel.dest_address));
 	trace(LOG_NOTICE, "Packing : %d", client->packing);
@@ -175,12 +177,11 @@ void dump_stats_client(struct client*client)
 	trace(LOG_NOTICE, " . Total packet size before comp : %d bytes",
 	      client->tunnel.stats.total_uncomp_size);
 	trace(LOG_NOTICE, "Stats packing : ");
-	int i;
 	for(i = 0; i < client->tunnel.stats.n_stats_packing; i++)
 	{
 		trace(LOG_NOTICE, " . %d : %d", i, client->tunnel.stats.stats_packing[i]);
 	}
-
+	trace(LOG_NOTICE, "------------------------------------------------------");
 }
 
 
@@ -332,6 +333,7 @@ int main(int argc, char *argv[])
 	/* Signal for stats and log */
 	signal(SIGINT,  quit);
 	signal(SIGTERM, quit);
+	signal(SIGHUP, SIG_IGN); /* used to stop client threads */
 	signal(SIGUSR1, dump_stats);
 	signal(SIGUSR2, switch_log_max);
 
@@ -418,34 +420,37 @@ int main(int argc, char *argv[])
 	 * GnuTLS stuff
 	 */
 
+	trace(LOG_INFO, "load server certificate from file '%s'",
+			server_opts.pkcs12_f);
 	gnutls_global_init();
 	gnutls_certificate_allocate_credentials(&(server_opts.xcred));
 	gnutls_priority_init(&(server_opts.priority_cache), "NORMAL", NULL);
-	ret = load_p12(server_opts.xcred, server_opts.pkcs12_f, NULL);
-	if(ret < 0)
+	if(!load_p12(server_opts.xcred, server_opts.pkcs12_f, ""))
 	{
-		/* Try with empyty password */
-		ret = load_p12(server_opts.xcred, server_opts.pkcs12_f, "");
-	}
-	if(ret < 0)
-	{
-		trace(LOG_ERR, "failed load server certificate from file '%s': %s (%d)",
-		      server_opts.pkcs12_f, gnutls_strerror(ret), ret);
+		trace(LOG_ERR, "failed load server certificate from file '%s'",
+				server_opts.pkcs12_f);
 		goto remove_pidfile;
 	}
 
-	generate_dh_params(&dh_params);
+	trace(LOG_INFO, "generate Diffie–Hellman parameters (it takes a few seconds)");
+	if(!generate_dh_params(&dh_params))
+	{
+		trace(LOG_ERR, "failed to generate Diffie-Hellman parameters");
+		goto remove_pidfile;
+	}
 	gnutls_certificate_set_dh_params(server_opts.xcred, dh_params);
+
 
 	/*
 	 * Create TCP socket
 	 */
+	trace(LOG_INFO, "listen on TCP 0.0.0.0:%d", server_opts.port);
 	serv_socket = socket(AF_INET, SOCK_STREAM, 0);
 	if(serv_socket < 0)
 	{
 		trace(LOG_ERR, "failed to create TCP socket: %s (%d)",
 				strerror(errno), errno);
-		goto remove_pidfile;
+		goto free_dh;
 	}
 	int on = 1;
 	ret = setsockopt(serv_socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
@@ -480,6 +485,7 @@ int main(int argc, char *argv[])
 	max = serv_socket;
 
 	/* TUN create */
+	trace(LOG_INFO, "create TUN interface");
 	tun = create_tun("tun_ipip", &tun_itf_id);
 	if(tun < 0)
 	{
@@ -495,6 +501,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* TUN routing thread */
+	trace(LOG_INFO, "start TUN routing thread");
 	route_args_tun.fd = tun;
 	route_args_tun.clients = clients;
 	route_args_tun.type = TUN;
@@ -507,6 +514,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* RAW create */
+	trace(LOG_INFO, "create RAW socket");
 	raw = create_raw();
 	if(raw < 0)
 	{
@@ -515,6 +523,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* RAW routing thread */
+	trace(LOG_INFO, "start RAW routing thread");
 	route_args_raw.fd = raw;
 	route_args_raw.clients = clients;
 	route_args_raw.type = RAW;
@@ -538,10 +547,11 @@ int main(int argc, char *argv[])
 	sigaddset(&sigmask, SIGUSR1);
 	sigaddset(&sigmask, SIGUSR2);
 
+	/* Start listening and looping on TCP socket */
+	trace(LOG_INFO, "server is now ready to accept requests from clients");
 #ifdef STATS_COLLECTD
 	gettimeofday(&last_stats, NULL);
 #endif
-	/* Start listening and looping on TCP socket */
 	alive = 1;
 	while(alive)
 	{
@@ -603,12 +613,11 @@ int main(int argc, char *argv[])
 			else if(clients[j]->tunnel.alive == -1)
 			{
 				/* free dead client */
-				trace(LOG_DEBUG, "Freeing %p", clients[j]);
+				trace(LOG_INFO, "remove context of client #%d", j);
 				dump_stats_client(clients[j]);
 				gnutls_bye(clients[j]->tls_session, GNUTLS_SHUT_WR);
-				close(clients[j]->tcp_socket);
-				gnutls_deinit(clients[j]->tls_session);
-				free(clients[j]);
+				/* delete client */
+				del_client(clients[j]);
 				clients[j] = NULL;
 			}
 			else if(FD_ISSET(clients[j]->tcp_socket, &rdfs))
@@ -619,10 +628,10 @@ int main(int argc, char *argv[])
 				{
 					if(clients[j]->tunnel.alive > 0)
 					{
-						trace(LOG_WARNING, "[%s] Client disconnected",
-						      inet_ntoa(clients[j]->tunnel.dest_address));
-						clients[j]->tunnel.alive = 0;
-					} /* TODO : Clean up if not alive (prevent DDos) */
+						trace(LOG_NOTICE, "[%s] client #%d was disconnected, stop its "
+								"thread", inet_ntoa(clients[j]->tunnel.dest_address), j);
+						stop_client_tunnel(clients[j]);
+					}
 				}
 			}
 		}
@@ -697,6 +706,8 @@ delete_tun:
 close_tcp:
 	trace(LOG_INFO, "close TCP server socket...");
 	close(serv_socket);
+free_dh:
+	gnutls_dh_params_deinit(dh_params);
 remove_pidfile:
 	if(strcmp(server_opts.pidfile_path, "") != 0)
 	{

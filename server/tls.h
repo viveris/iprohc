@@ -16,9 +16,17 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 
+#include <stdbool.h>
+
 #include <gnutls/gnutls.h>
 
-int generate_dh_params (gnutls_dh_params_t*dh_params);
-int load_p12(gnutls_certificate_credentials_t xcred, char*p12_file, char*password);
+bool generate_dh_params(gnutls_dh_params_t *const dh_params)
+	__attribute__((nonnull(1), warn_unused_result));
+
+bool load_p12(gnutls_certificate_credentials_t xcred,
+				  const char *const p12_file,
+				  const char *const password)
+	__attribute__((nonnull(2), warn_unused_result));
+
 void gnutls_transport_set_ptr_nowarn(gnutls_session_t session, int ptr);
 

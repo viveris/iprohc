@@ -149,18 +149,21 @@ int handle_client_request(struct client*client)
 				break;
 			}
 			case C_CONNECT_DONE:
-				trace(LOG_INFO, "[%s] Connection started", inet_ntoa(client->tunnel.dest_address));
+				trace(LOG_INFO, "[%s] Connection started by client",
+						inet_ntoa(client->tunnel.dest_address));
 				start_client_tunnel(client);
 				cur++;
 				break;
 			case C_KEEPALIVE:
-				trace(LOG_DEBUG, "[%s] Received keepalive", inet_ntoa(client->tunnel.dest_address));
+				trace(LOG_DEBUG, "[%s] Received keepalive from client",
+						inet_ntoa(client->tunnel.dest_address));
 				gettimeofday(&(client->tunnel.last_keepalive), NULL);
 				cur++;
 				break;
 			case C_DISCONNECT:
-				trace(LOG_INFO, "[%s] Disconnection asked", inet_ntoa(client->tunnel.dest_address));
-				close_tunnel((void*)(&(client->tunnel)));
+				trace(LOG_INFO, "[%s] Disconnection asked by client",
+						inet_ntoa(client->tunnel.dest_address));
+				stop_client_tunnel(client);
 				cur++;
 				break;
 			default:

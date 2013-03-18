@@ -406,6 +406,11 @@ int main(int argc, char *argv[])
 		ret = select(sock + 1, &rdfs, NULL, NULL, &timeout);
 		if(ret < 0)
 		{
+			if(errno == EINTR)
+			{
+				/* interrupted by a signal */
+				continue;
+			}
 			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
 			goto close_tls;
 		}
@@ -438,7 +443,14 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
-	trace(LOG_INFO, "Session interrupted, exiting");
+
+	trace(LOG_INFO, "client interrupted, interrupt established session");
+
+	/* send disconnect message to server */
+	if(!client_send_disconnect_msg(session))
+	{
+		trace(LOG_WARNING, "failed to cleanly close the session with server");
+	}
 
 	exit_status = 0;
 
@@ -452,5 +464,4 @@ close_tcp:
 error:
 	return exit_status;
 }
-
 

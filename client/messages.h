@@ -47,3 +47,6 @@ bool handle_okconnect(struct tunnel *const tunnel,
 							 size_t *const parsed_len)
 	__attribute__((nonnull(1, 2, 4), warn_unused_result));
 
+bool client_send_disconnect_msg(gnutls_session_t session)
+	__attribute__((warn_unused_result));
+

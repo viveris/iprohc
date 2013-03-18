@@ -23,6 +23,8 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <errno.h>
 #include <math.h>
 #include <string.h>
+#include <assert.h>
+#include <signal.h>
 
 #include "log.h"
 
@@ -30,14 +32,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "rohc_tunnel.h"
 #include "client.h"
 #include "tls.h"
-
-void close_tunnel(void*v_tunnel)
-{
-	struct tunnel*tunnel = (struct tunnel*) v_tunnel;
-	trace(LOG_INFO, "[%s] Properly close client", inet_ntoa(tunnel->dest_address));
-	close(tunnel->raw_socket);
-	tunnel->alive = -1;  /* Mark to be deleted */
-}
 
 
 int new_client(int socket, int tun, struct client**clients, int max_clients,
@@ -192,8 +186,7 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	memcpy(&(clients[client_id]->tunnel.params),  &(server_opts.params),
 			 sizeof(struct tunnel_params));
 	clients[client_id]->tunnel.params.local_address = local.s_addr;
-	clients[client_id]->tunnel.alive =   0;
-	clients[client_id]->tunnel.close_callback = close_tunnel;
+	clients[client_id]->tunnel.alive = 0;
 	clients[client_id]->last_keepalive.tv_sec = -1;
 
 	trace(LOG_DEBUG, "Created");
@@ -220,6 +213,43 @@ error:
 }
 
 
+void del_client(struct client *const client)
+{
+	assert(client != NULL);
+
+	free(client->tunnel.stats.stats_packing);
+
+	/* close RAW socket pair */
+	close(client->tunnel.fake_raw[0]);
+	client->tunnel.fake_raw[0] = -1;
+	close(client->tunnel.fake_raw[1]);
+	client->tunnel.fake_raw[1] = -1;
+
+	/* close RAW socket (nothing to do if close_tunnel() was already called) */
+	close(client->tunnel.raw_socket);
+	client->tunnel.raw_socket = -1;
+
+	/* close TUN socket pair */
+	close(client->tunnel.fake_tun[0]);
+	client->tunnel.fake_tun[0] = -1;
+	close(client->tunnel.fake_tun[1]);
+	client->tunnel.fake_tun[1] = -1;
+
+	/* reset TUN fd (do not close it, it is shared with other clients) */
+	client->tunnel.tun = -1;
+
+	/* close TCP socket */
+	close(client->tcp_socket);
+	client->tcp_socket = -1;
+
+	/* free TLS resources */
+	gnutls_deinit(client->tls_session);
+	
+	/* free client context */
+	free(client);
+}
+
+
 int start_client_tunnel(struct client*client)
 {
 	/* Go threads, go ! */
@@ -227,4 +257,15 @@ int start_client_tunnel(struct client*client)
 	return 0;
 }
 
+void stop_client_tunnel(struct client *const client)
+{
+	assert(client != NULL);
+	assert(client->tunnel.raw_socket != -1);
+
+	client->tunnel.alive = -1;  /* Mark to be deleted */
+
+	trace(LOG_INFO, "wait for client thread to stop");
+	pthread_kill(client->thread_tunnel, SIGHUP);
+	pthread_join(client->thread_tunnel, NULL);
+}
 

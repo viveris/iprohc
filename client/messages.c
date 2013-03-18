@@ -228,3 +228,39 @@ error:
 }
 
 
+bool client_send_disconnect_msg(gnutls_session_t session)
+{
+	unsigned char command[1];
+	size_t command_len;
+	size_t emitted_len;
+	int ret;
+
+	assert(session != NULL);
+
+	trace(LOG_INFO, "send disconnect message to server");
+
+	/* build the message */
+	command[0] = C_DISCONNECT;
+	command_len = 1;
+
+	/* send the message */
+	emitted_len = 0;
+	do
+	{
+		ret = gnutls_record_send(session, command + emitted_len,
+										 command_len - emitted_len);
+		if(ret < 0)
+		{
+			trace(LOG_ERR, "failed to send message to server over TLS (%d)", ret);
+			goto error;
+		}
+		emitted_len += ret;
+	}
+	while(emitted_len < command_len);
+
+	return true;
+
+error:
+	return false;
+}
+

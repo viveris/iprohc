@@ -257,7 +257,7 @@ void * new_tunnel(void*arg)
 	if(comp == NULL)
 	{
 		trace(LOG_ERR, "cannot create the ROHC compressor");
-		return NULL;
+		goto error;
 	}
 	rohc_activate_profile(comp, ROHC_PROFILE_UNCOMPRESSED);
 	rohc_activate_profile(comp, ROHC_PROFILE_UDP);
@@ -442,6 +442,8 @@ void * new_tunnel(void*arg)
 	}
 	while(tunnel->alive > 0);
 
+	trace(LOG_INFO, "client thread was asked to stop");
+
 	/*
 	 * Cleaning:
 	 */
@@ -451,12 +453,7 @@ destroy_decomp:
 	rohc_free_decompressor(decomp);
 destroy_comp:
 	rohc_free_compressor(comp);
-
-	if(tunnel->close_callback != NULL)
-	{
-		tunnel->close_callback((void*) tunnel);
-	}
-
+error:
 	return NULL;
 }
 
