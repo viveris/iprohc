@@ -37,6 +37,10 @@ struct client {
 
 int  new_client(int socket, int tun, struct client**clients, int max_clients,
                 struct server_opts server_opts);
-void close_tunnel(void*tunnel);
+void del_client(struct client *const client)
+	__attribute__((nonnull(1)));
+
 int  start_client_tunnel(struct client*client);
+void stop_client_tunnel(struct client *const client)
+	__attribute__((nonnull(1)));
 

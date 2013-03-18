@@ -17,6 +17,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <sys/types.h>
 #include <sys/time.h>
+#include <assert.h>
 
 #include "tlv.h"
 #include "rohc_tunnel.h"
@@ -25,61 +26,92 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "log.h"
 
-char * handle_connect(struct client*client, char*buf)
+bool handle_connect(struct client *const client,
+						  const unsigned char *const message,
+						  size_t *const parsed_len)
 {
-
-	trace(LOG_INFO, "[%s] Connection asked, negotating parameters",
-	      inet_ntoa(client->tunnel.dest_address));
 	/* Receiving parameters */
-	char*newbuf;
 	int packing;
 	int client_proto_version;
 
 	/* Prepare order for connection */
-	char tlv[1024];
-	size_t len = 1;
+	unsigned char tlv[1024];
+	size_t tlv_len;
 
-	newbuf = parse_connrequest(buf, &packing, &client_proto_version);
-	if(newbuf == NULL)
+	bool is_ok;
+
+	assert(client != NULL);
+	assert(message != NULL);
+	assert(parsed_len != NULL);
+
+	*parsed_len = 0;
+	tlv_len = 0;
+
+	trace(LOG_INFO, "[%s] Connection asked, negotating parameters",
+	      inet_ntoa(client->tunnel.dest_address));
+
+	/* parse connect message received from client */
+	is_ok = parse_connrequest(message, parsed_len, &packing, &client_proto_version);
+	if(!is_ok)
 	{
 		trace(LOG_ERR, "Unable to parse connection request");
+
+		/* create failure answer for client */
 		tlv[0] = C_CONNECT_KO;
+		tlv_len++;
+		// TODO : Clear client
+	}
+	else if(client_proto_version != CURRENT_PROTO_VERSION)
+	{
+		/* Current behaviour as for proto version = 1 : refuse any other version */
+		trace(LOG_WARNING, "[%s] Connection refused because of wrong protocol version",
+				inet_ntoa(client->tunnel.dest_address));
+
+		/* create failure answer for client */
+		tlv[0] = C_CONNECT_KO;
+		tlv_len++;
 		// TODO : Clear client
 	}
 	else
 	{
-		if(client_proto_version != CURRENT_PROTO_VERSION)
+		size_t len;
+
+		trace(LOG_INFO, "[%s] Connection asked, negotating parameters "
+				"(proto version %d, asked packing : %d)",
+				inet_ntoa(client->tunnel.dest_address), client_proto_version,
+				packing);
+		client->packing = packing;
+
+		/* create successful answer for client */
+		tlv[0] = C_CONNECT_OK;
+		tlv_len++;
+
+		/* add parameters in TLV format */
+		is_ok = gen_connect(client->tunnel.params, tlv + 1, &len);
+		if(!is_ok)
 		{
-			/* Current behaviour as for proto version = 1 : refuse any other version */
-			trace(LOG_WARNING, "[%s] Connection refused because of wrong protocol version",
-			      inet_ntoa(client->tunnel.dest_address));
-			tlv[0] = C_CONNECT_KO;
-			// TODO : Clear client
+			trace(LOG_ERR, "failed to generate the connect message for client");
+			goto error;
 		}
-		else
-		{
-			trace(
-			   LOG_INFO,
-			   "[%s] Connection asked, negotating parameters (proto version %d, asked packing : %d)",
-			   inet_ntoa(client->tunnel.dest_address), client_proto_version, packing);
-			client->packing = packing;
-			tlv[0] = C_CONNECT_OK;
-		}
+		tlv_len += len;
 	}
 
-	len += gen_connect(tlv + 1, client->tunnel.params);
-	gnutls_record_send(client->tls_session, tlv, len);
+	gnutls_record_send(client->tls_session, tlv, tlv_len);
 
-	return newbuf;
+	return true;
+
+error:
+	return false;
 }
 
 
 int handle_client_request(struct client*client)
 {
-	char buf[1024];
+	unsigned char buf[1024];
 	int length;
-	char*cur;
-	char*bufmax;
+	unsigned char *cur;
+	unsigned char *bufmax;
+	bool is_ok;
 
 	length = gnutls_record_recv(client->tls_session, buf, 1024);
 	if(length == 0)
@@ -100,31 +132,38 @@ int handle_client_request(struct client*client)
 		switch(*cur)
 		{
 			case C_CONNECT:
+			{
+				size_t parsed_len;
+
 				if(++cur >= bufmax)
 				{
 					return -1;
 				}
 
-				cur = handle_connect(client, cur);
-
-				if(cur == NULL)
+				is_ok = handle_connect(client, cur, &parsed_len);
+				if(!is_ok)
 				{
 					return -1;
 				}
+				cur += parsed_len;
 				break;
+			}
 			case C_CONNECT_DONE:
-				trace(LOG_INFO, "[%s] Connection started", inet_ntoa(client->tunnel.dest_address));
+				trace(LOG_INFO, "[%s] Connection started by client",
+						inet_ntoa(client->tunnel.dest_address));
 				start_client_tunnel(client);
 				cur++;
 				break;
 			case C_KEEPALIVE:
-				trace(LOG_DEBUG, "[%s] Received keepalive", inet_ntoa(client->tunnel.dest_address));
+				trace(LOG_DEBUG, "[%s] Received keepalive from client",
+						inet_ntoa(client->tunnel.dest_address));
 				gettimeofday(&(client->tunnel.last_keepalive), NULL);
 				cur++;
 				break;
 			case C_DISCONNECT:
-				trace(LOG_INFO, "[%s] Disconnection asked", inet_ntoa(client->tunnel.dest_address));
-				close_tunnel((void*)(&(client->tunnel)));
+				trace(LOG_INFO, "[%s] Disconnection asked by client",
+						inet_ntoa(client->tunnel.dest_address));
+				stop_client_tunnel(client);
 				cur++;
 				break;
 			default:

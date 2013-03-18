@@ -31,7 +31,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "tlv.h"
 
-typedef void (*tunnel_close_callback_t)(void*tunnel);
 
 struct statitics {
 	int decomp_failed;
@@ -70,8 +69,6 @@ struct tunnel {
 	struct tunnel_params params;
 
 	struct statitics stats;
-
-	tunnel_close_callback_t close_callback;
 };
 
 /* Called in a thread on a new tunnel */

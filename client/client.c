@@ -83,14 +83,13 @@ void sigterm(int signal)
 
 int main(int argc, char *argv[])
 {
+	int exit_status = 1;
 	struct tunnel tunnel;
 	char serv_addr[1024];
 	char port[6]  = {'3','1','2','6', '\0', '\0'};
-	char buf[1024];
+	unsigned char buf[1024];
 	int sock;
 	int c;
-
-	size_t len;
 
 	char pkcs12_f[1024];
 	gnutls_session_t session;
@@ -98,6 +97,7 @@ int main(int argc, char *argv[])
 	unsigned int verify_status;
 
 	int ret;
+	bool is_ok;
 
 	struct client_opts client_opts;
 	client_opts.tun_name = calloc(32, sizeof(char));
@@ -105,8 +105,6 @@ int main(int argc, char *argv[])
 	client_opts.packing = 0;
 	serv_addr[0] = '\0';
 	pkcs12_f[0] = '\0';
-
-	fd_set rdfs;
 
 	/* Initialize logger */
 	openlog("iprohc_client", LOG_PID | LOG_PERROR, LOG_DAEMON);
@@ -151,7 +149,7 @@ int main(int argc, char *argv[])
 				if(strlen(optarg) >= 32)
 				{
 					trace(LOG_ERR, "TUN interface name too long");
-					exit(1);
+					goto error;
 				}
 				strncpy(client_opts.tun_name, optarg, 32);
 				break;
@@ -175,7 +173,7 @@ int main(int argc, char *argv[])
 				if(strlen(optarg) >= 1024)
 				{
 					trace(LOG_ERR, "Up script path too long");
-					exit(1);
+					goto error;
 				}
 				strncpy(client_opts.up_script_path, optarg, 1024);
 				break;
@@ -193,19 +191,19 @@ int main(int argc, char *argv[])
 	if(strcmp(serv_addr, "") == 0)
 	{
 		trace(LOG_ERR, "Remote address is mandatory");
-		exit(1);
+		goto error;
 	}
 
 	if(strcmp(client_opts.tun_name, "") == 0)
 	{
 		trace(LOG_ERR, "TUN interface name is mandatory");
-		exit(1);
+		goto error;
 	}
 
 	if(strcmp(pkcs12_f, "") == 0)
 	{
 		trace(LOG_ERR, "PKCS12 file required");
-		exit(1);
+		goto error;
 	}
 	/*
 	 * GnuTLS stuff
@@ -218,12 +216,11 @@ int main(int argc, char *argv[])
 	{
 		/* Try with empyty password */
 		ret = load_p12(xcred, pkcs12_f, "");
-	}
-
-	if(ret < 0)
-	{
-		trace(LOG_ERR, "Unable to load certificate : %s", gnutls_strerror(ret));
-		exit(1);
+		if(ret < 0)
+		{
+			trace(LOG_ERR, "Unable to load certificate : %s", gnutls_strerror(ret));
+			goto error;
+		}
 	}
 
 
@@ -262,11 +259,11 @@ int main(int argc, char *argv[])
 	if(s != 0)
 	{
 		trace(LOG_ERR, "Unable to connect to %s : %s", serv_addr, gai_strerror(s));
-		exit(1);
+		goto error;
 	}
 
 	/*
-	 *	Creation of TCP socket to neogotiate parameters and maintain it
+	 *	Creation of TCP socket to negotiate parameters and maintain it
 	 */
 	for(rp = result; rp != NULL; rp = rp->ai_next)
 	{
@@ -279,15 +276,15 @@ int main(int argc, char *argv[])
 		if(connect(sock, rp->ai_addr, rp->ai_addrlen) != -1)
 		{
 			break;                  /* Success */
-
 		}
 		close(sock);
 	}
 
 	if(rp == NULL)                  /* No address succeeded */
 	{
-		trace(LOG_ERR, "Connection failed : %s", strerror(errno));
-		exit(1);
+		trace(LOG_ERR, "failed to connect to server: %s (%d)",
+				strerror(errno), errno);
+		goto close_tcp;
 	}
 
 	/*
@@ -296,31 +293,29 @@ int main(int argc, char *argv[])
 
 	/* Get rid of warning, it's a "bug" of GnuTLS (cf http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
 	gnutls_transport_set_ptr_nowarn(session, sock);
-
 	do
 	{
 		ret = gnutls_handshake(session);
 	}
-	while(ret < 0 && gnutls_error_is_fatal (ret) == 0);
+	while(ret < 0 && gnutls_error_is_fatal(ret) == 0);
 
 	if(ret < 0)
 	{
 		trace(LOG_ERR, "TLS handshake failed : %s", gnutls_strerror(ret));
-		gnutls_deinit(session);
-		close(sock);
-		return 2;
+		exit_status = 2;
+		goto close_tls;
 	}
 	trace(LOG_INFO, "TLS handshake succeeded");
 
 	if(gnutls_certificate_verify_peers2(session, &verify_status) < 0)
 	{
 		trace(LOG_ERR, "TLS verify failed : %s", gnutls_strerror(ret));
-		return -3;
+		exit_status = -3;
+		goto close_tls;
 	}
 
-	if(verify_status & GNUTLS_CERT_INVALID
-	   && (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID))
-	   )
+	if((verify_status & GNUTLS_CERT_INVALID) &&
+	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
 	{
 		trace(LOG_ERR, "Certificate can't be verified : ");
 		if(verify_status & GNUTLS_CERT_REVOKED)
@@ -347,8 +342,10 @@ int main(int argc, char *argv[])
 			trace(LOG_ERR, " - The certificate has expired");
 		}
 #endif
-		return -3;
+		exit_status = -3;
+		goto close_tls;
 	}
+	trace(LOG_INFO, "client certificate accepted");
 
 	client_opts.socket = sock;
 	client_opts.tls_session = session;
@@ -357,48 +354,114 @@ int main(int argc, char *argv[])
 	tunnel.dest_address = ((struct sockaddr_in*) rp->ai_addr)->sin_addr;
 
 	/* Ask for connection */
-	char command[1024];
-	command[0] = C_CONNECT;
-	len = 1;
+	unsigned char command[1024];
+	size_t command_len;
+	size_t tlv_len;
 
-	trace(LOG_DEBUG, "Emit connect message");
-	len += gen_connrequest(command + 1, client_opts.packing);
+	command[0] = C_CONNECT;
+	command_len = 1;
+
+	trace(LOG_INFO, "send connect message to server");
+	is_ok = gen_connrequest(client_opts.packing, command + 1, &tlv_len);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "failed to generate the connect messsage for server");
+		goto close_tls;
+	}
+	command_len += tlv_len;
+
 	/* Emit a simple connect message */
-	gnutls_record_send(session, command, len);
+	size_t emitted_len = 0;
+	do
+	{
+		ret = gnutls_record_send(session, command + emitted_len,
+										 command_len - emitted_len);
+		if(ret < 0)
+		{
+			trace(LOG_ERR, "failed to send message to server over TLS (%d)", ret);
+			goto close_tls;
+		}
+		emitted_len += ret;
+	}
+	while(emitted_len < command_len);
 
 	/* Handle SIGTERM */
 	signal(SIGTERM, sigterm);
 	signal(SIGINT, sigterm);
 
-
-	/* Wait for answer and other messages, close when
-	   socket is close */
+	/* Wait for answer and other messages, close when socket is close */
+	trace(LOG_INFO, "wait for connect answer from server");
 	alive = 1;
 	while(alive)
 	{
+		struct timeval timeout;
+		fd_set rdfs;
+
+		timeout.tv_sec = 80;
+		timeout.tv_usec = 0;
+
 		FD_ZERO(&rdfs);
 		FD_SET(sock, &rdfs);
-		if(pselect(sock + 1, &rdfs, NULL, NULL, NULL, NULL) < 0)
+
+		ret = select(sock + 1, &rdfs, NULL, NULL, &timeout);
+		if(ret < 0)
 		{
-			break;
+			if(errno == EINTR)
+			{
+				/* interrupted by a signal */
+				continue;
+			}
+			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
+			goto close_tls;
 		}
+		else if(ret == 0)
+		{
+			/* timeout reached */
+			trace(LOG_WARNING, "timeout reached while waiting to message "
+					"on TCP connection, give up");
+			goto close_tls;
+		}
+
 		if(FD_ISSET(sock, &rdfs))
 		{
-			len = gnutls_record_recv(session, buf, 1024);
-			if(handle_message(&tunnel, buf, len, client_opts) < 0)
+			ret = gnutls_record_recv(session, buf, 1024);
+			if(ret < 0)
 			{
-				return 1;
+				trace(LOG_ERR, "failed to receive data from server on TLS "
+						"session: %s (%d)", gnutls_strerror(ret), ret);
+				goto error;
+			}
+			else if(ret == 0)
+			{
+				trace(LOG_ERR, "TLS session was interrupted by server");
+				goto error;
+			}
+			if(handle_message(&tunnel, buf, ret, client_opts) < 0)
+			{
+				trace(LOG_ERR, "failed to handle message received from server");
+				goto error;
 			}
 		}
 	}
-	trace(LOG_INFO, "Interupted, exiting");
 
+	trace(LOG_INFO, "client interrupted, interrupt established session");
+
+	/* send disconnect message to server */
+	if(!client_send_disconnect_msg(session))
+	{
+		trace(LOG_WARNING, "failed to cleanly close the session with server");
+	}
+
+	exit_status = 0;
+
+close_tls:
 	gnutls_bye(session, GNUTLS_SHUT_RDWR);
 	gnutls_deinit(session);
 	gnutls_certificate_free_credentials(xcred);
 	gnutls_global_deinit();
-
-	return 0;
+close_tcp:
+	close(sock);
+error:
+	return exit_status;
 }
-
 

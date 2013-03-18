@@ -20,6 +20,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
+#include <assert.h>
 
 #include "tlv.h"
 #include "rohc_tunnel.h"
@@ -32,43 +33,83 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "log.h"
 
 /* Generic functions for handling messages */
-int handle_message(struct tunnel*tunnel, char*buf, int length, struct client_opts opts)
+bool handle_message(struct tunnel *const tunnel,
+						  unsigned char *const buf,
+						  const int length,
+						  const struct client_opts opts)
 {
-	char*bufmax = buf + length;
-	while(buf < bufmax)
+	size_t parsed_len;
+	size_t i;
+
+	assert(tunnel != NULL);
+	assert(buf != NULL);
+	assert(length > 0);
+
+	for(i = 0; i < length; i += parsed_len)
 	{
-		switch(*buf)
+		parsed_len = 0;
+
+		switch(buf[i])
 		{
 			case C_CONNECT_OK:
-				buf = handle_okconnect(tunnel, ++buf, opts);
-				if(buf == NULL)
+			{
+				size_t tlv_len;
+				bool is_ok;
+
+				parsed_len++;
+
+				/* TODO: give remaining length */
+				is_ok = handle_okconnect(tunnel, buf + i + 1, opts, &tlv_len);
+				if(!is_ok)
 				{
-					trace(LOG_ERR, "Unable to decode TCP message");
+					trace(LOG_ERR, "failed to decode TCP message, abort");
+					goto error;
 				}
+				parsed_len += tlv_len;
+
 				break;
+			}
+
 			case C_KEEPALIVE:
+			{
 				trace(LOG_DEBUG, "Received keepalive");
 				gettimeofday(&(tunnel->last_keepalive), NULL);
-				buf++;
+				parsed_len++;
 				/* send keepalive */
 				char command[1] = { C_KEEPALIVE };
 				trace(LOG_DEBUG, "Keepalive !");
 				gnutls_record_send(opts.tls_session, command, 1);
 				break;
+			}
+
 			case C_CONNECT_KO:
-				trace(LOG_ERR, "Wrong protocol version, please update client or server\n", *buf);
-				return -1;
+			{
+				trace(LOG_ERR, "Wrong protocol version, please update client or server");
+				parsed_len++;
+				goto error;
+			}
+
 			default:
-				trace(LOG_ERR, "Unexpected %d in command\n", *buf);
-				buf++;
+			{
+				trace(LOG_ERR, "Unexpected 0x%02x in command", buf[i]);
+				parsed_len++;
+				break;
+			}
 		}
 	}
-	return 0;
+
+	return true;
+	
+error:
+	return false;
 }
 
 
 /* Handler of okconnect message from server */
-char * handle_okconnect(struct tunnel*tunnel, char*tlv, struct client_opts opts)
+bool handle_okconnect(struct tunnel *const tunnel,
+							 unsigned char *const tlv,
+							 const struct client_opts opts,
+							 size_t *const parsed_len)
 {
 	int tun, raw;
 	int tun_itf_id;
@@ -76,40 +117,55 @@ char * handle_okconnect(struct tunnel*tunnel, char*tlv, struct client_opts opts)
 	pthread_t tunnel_thread;
 	struct tunnel_params tp;
 	char message[1] = { C_CONNECT_DONE };
-	char*newbuf;
 
 	int pid;
 	int status;
+	bool is_ok;
+	int ret;
+
+	assert(tunnel != NULL);
+	assert(tlv != NULL);
+	assert(parsed_len != NULL);
+
+	*parsed_len = 0;
 
 	/* Parse options received in tlv form from the server */
-	newbuf = parse_connect(tlv, &tp);
-	if(newbuf == NULL)
+	is_ok = parse_connect(tlv, &tp, parsed_len);
+	if(!is_ok)
 	{
-		return NULL;
+		trace(LOG_ERR, "failed to parse connect message received from the server");
+		goto error;
 	}
 
 	/* Tunnel definition */
 	debug_addr.s_addr = tp.local_address;
 	trace(LOG_DEBUG, "Creation of tunnel, local address : %s\n", inet_ntoa(debug_addr));
 
-	/* set tun */
+	/* create the TUN interface */
 	tun = create_tun(opts.tun_name, &tun_itf_id);
-	if(tun < -1)
+	if(tun < 0)
 	{
 		trace(LOG_ERR, "Unable to create TUN device");
-		return NULL;
+		goto error;
 	}
-	set_ip4(tun_itf_id, tp.local_address, 24);
+
+	/* set the IPv4 address on the TUN interface */
+	is_ok = set_ip4(tun_itf_id, tp.local_address, 24);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "failed to set IP address on TUN interface");
+		goto delete_tun;
+	}
 	tunnel->tun = tun;  /* real tun device */
 	tunnel->fake_tun[0] = -1;
 	tunnel->fake_tun[1] = -1;
 
 	/* set RAW  */
 	raw = create_raw();
-	if(raw < -1)
+	if(raw < 0)
 	{
 		trace(LOG_ERR, "Unable to create RAW socket");
-		return NULL;
+		goto delete_tun;
 	}
 	tunnel->raw_socket  = raw;
 	tunnel->fake_raw[0] = -1;
@@ -143,7 +199,7 @@ char * handle_okconnect(struct tunnel*tunnel, char*tlv, struct client_opts opts)
 		{
 			if(status == 0)
 			{
-				trace(LOG_INFO, "%s sucessfully executed", opts.up_script_path);
+				trace(LOG_INFO, "%s successfully executed", opts.up_script_path);
 			}
 			else
 			{
@@ -153,11 +209,58 @@ char * handle_okconnect(struct tunnel*tunnel, char*tlv, struct client_opts opts)
 	}
 
 	/* Go thread, go ! */
-	pthread_create(&tunnel_thread, NULL, new_tunnel, (void*)tunnel);
+	trace(LOG_INFO, "run tunnel thread for new client");
+	ret = pthread_create(&tunnel_thread, NULL, new_tunnel, (void*)tunnel);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to run tunnel thread for new client: %s (%d)",
+				strerror(ret), ret);
+	}
 
 	gnutls_record_send(opts.tls_session, message, 1);
 
-	return newbuf;
+	return true;
+
+delete_tun:
+	close(tun);
+error:
+	return false;
 }
 
+
+bool client_send_disconnect_msg(gnutls_session_t session)
+{
+	unsigned char command[1];
+	size_t command_len;
+	size_t emitted_len;
+	int ret;
+
+	assert(session != NULL);
+
+	trace(LOG_INFO, "send disconnect message to server");
+
+	/* build the message */
+	command[0] = C_DISCONNECT;
+	command_len = 1;
+
+	/* send the message */
+	emitted_len = 0;
+	do
+	{
+		ret = gnutls_record_send(session, command + emitted_len,
+										 command_len - emitted_len);
+		if(ret < 0)
+		{
+			trace(LOG_ERR, "failed to send message to server over TLS (%d)", ret);
+			goto error;
+		}
+		emitted_len += ret;
+	}
+	while(emitted_len < command_len);
+
+	return true;
+
+error:
+	return false;
+}
 

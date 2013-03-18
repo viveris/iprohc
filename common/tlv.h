@@ -15,11 +15,12 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <stdlib.h>
-#include <stdint.h>
-
 #ifndef ROHC_IPIP_TLV_H
 #define ROHC_IPIP_TLV_H
+
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 /* Defines the current protocol version, must be modified each time
    a field is added or removed */
@@ -67,15 +68,29 @@ struct tlv_result {
 };
 
 /* Global parsing and generation functions */
-char * parse_tlv(char*tlv, struct tlv_result**results, int max_results);
-size_t gen_tlv(char*dest, struct tlv_result*tlvs, int max_numbers);
+bool parse_tlv(const unsigned char *const tlv,
+					struct tlv_result **results,
+					const int max_results,
+					size_t *const parsed_len)
+	__attribute__((nonnull(1, 2, 4), warn_unused_result));
+
+bool gen_tlv(unsigned char *const f_dest,
+				 struct tlv_result *const tlvs,
+				 const int max_numbers,
+				 size_t *const length)
+	__attribute__((nonnull(1, 2, 4), warn_unused_result));
 
 /* Callbacks for generation */
+typedef bool (*gen_tlv_callback_t)(unsigned char *const dest,
+											  const struct tlv_result tlv,
+											  size_t *const len);
 
-typedef char* (*gen_tlv_callback_t)(char*dest, struct tlv_result tlv, size_t*len);
-
-char * gen_tlv_uint32(char*dest, struct tlv_result tlv, size_t*len);
-char * gen_tlv_char(char*dest, struct tlv_result tlv, size_t*len);
+bool gen_tlv_uint32(unsigned char *const dest,
+						  const struct tlv_result tlv,
+						  size_t *const len);
+bool gen_tlv_char(unsigned char *const dest,
+						const struct tlv_result tlv,
+						size_t *const len);
 
 /* Association between callbacks and type */
 static inline gen_tlv_callback_t get_gen_cb_for_type(enum types type)
@@ -127,10 +142,26 @@ struct tunnel_params {
 	char rohc_compat_version;
 };
 
-char *  parse_connect(char*buffer, struct tunnel_params*params);
-size_t gen_connect(char*dest, struct tunnel_params params);
+bool parse_connect(const unsigned char *const buffer,
+						 struct tunnel_params *const params,
+						 size_t *const parsed_len)
+	__attribute__((nonnull(1, 2, 3), warn_unused_result));
 
-char * parse_connrequest(char*buffer, int*packing, int*proto_version);
-size_t gen_connrequest(char*dest, int packing);
+bool gen_connect(const struct tunnel_params params,
+					  unsigned char *const dest,
+					  size_t *const length)
+	__attribute__((nonnull(2, 3), warn_unused_result));
+
+bool parse_connrequest(const unsigned char *const buffer,
+							  size_t *const parsed_len,
+							  int *const packing,
+							  int *const proto_version)
+	__attribute__((nonnull(1, 2, 3, 4), warn_unused_result));
+
+bool gen_connrequest(const int packing,
+							unsigned char *const dest,
+							size_t *const length)
+	__attribute__((nonnull(2, 3), warn_unused_result));
+
 #endif
 

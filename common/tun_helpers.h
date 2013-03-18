@@ -15,13 +15,14 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <stdint.h>
-
 #ifndef ROHC_IPIP_TUNH_H
 #define ROHC_IPIP_TUNH_H
 
+#include <stdint.h>
+#include <stdbool.h>
+
 int create_tun(char *name, int*tun_itf_id);
-int set_ip4(int iface_index, uint32_t address, uint8_t network);
+bool set_ip4(int iface_index, uint32_t address, uint8_t network);
 int create_raw();
 
 #endif
