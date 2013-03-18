@@ -1,6 +1,11 @@
 Release 0.5 (XX Xxx 201x)
 	Not published yet.
 
+Release 0.5 (18 Mar 2013)
+	Robustify client & server.
+	Fix memory leaks.
+	Fix file descriptor leaks.
+
 Release 0.4 (27 Nov 2012)
 	Missing information.
 

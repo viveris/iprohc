@@ -1,6 +1,15 @@
+iprohc (0.5-1) stable; urgency=low
+
+  * Robustify client & server.
+  * Fix memory & file descriptor leaks.
+
+ -- Didier Barvaux <didier.barvaux@toulouse.viveris.com> Tue, 18 Mar 2013 15:24:10 +0200
+
 iprohc (0.4-1) stable; urgency=low
 
   * Minor fixes, timeout modified for packing, udpated examples, added GPL headers
+
+ -- Alexandre CHATAIGNON <achataignon@toulouse.viveris.com> Tue, 12 Jun 2012 17:26:16 +0200
 
 iprohc (0.3-1) stable; urgency=low
 
