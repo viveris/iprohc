@@ -149,6 +149,7 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	clients[client_id]->tls_session = session;
 
 	/* dest_addr */
+	clients[client_id]->tunnel.src_address.s_addr = INADDR_ANY;
 	clients[client_id]->tunnel.dest_address  = src_addr.sin_addr;
 	/* local_addr */
 	local.s_addr = htonl(ntohl(server_opts.local_address) + client_id + 10);

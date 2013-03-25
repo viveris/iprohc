@@ -27,6 +27,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <signal.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <netinet/ip.h>
 #include <netinet/udp.h>
 
 #include "rohc_tunnel.h"
@@ -81,7 +82,12 @@ bool callback_rtp_detect(const unsigned char *const ip,
 int send_puree(int to, struct in_addr raddr, unsigned char*compressed_packet, int*total_size,
                int*act_comp,
                struct statitics*stats);
-int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct statitics*stats);
+int raw2tun(struct rohc_decomp *decomp,
+				in_addr_t dst_addr,
+				int from,
+				int to,
+				int packing,
+				struct statitics*stats);
 int tun2raw(struct rohc_comp *comp,
             int from, int to,
             struct in_addr raddr,
@@ -395,7 +401,8 @@ void * new_tunnel(void*arg)
 			if(FD_ISSET(read_raw, &readfds))
 			{
 				trace(LOG_DEBUG, "...from raw\n");
-				failure = raw2tun(decomp, read_raw, tunnel->tun, packing, &(tunnel->stats));
+				failure = raw2tun(decomp, tunnel->src_address.s_addr, read_raw,
+										tunnel->tun, packing, &(tunnel->stats));
 				if(failure)
 				{
 					trace(LOG_ERR, "raw2tun failed\n");
@@ -674,16 +681,25 @@ error:
  * @param to      The TUN file descriptor to write to
  * @return        0 in case of success, a non-null value otherwise
  */
-int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct statitics*stats)
+int raw2tun(struct rohc_decomp *decomp,
+				in_addr_t dst_addr,
+				int from,
+				int to,
+				int packing,
+				struct statitics*stats)
 {
 	unsigned int packet_len = RAW_BUFSIZE;
 	unsigned char*packet = malloc(packet_len * sizeof(unsigned char));
-	unsigned char *packet_p = packet;
+	struct iphdr *ip_header;
+
+	unsigned char *ip_payload;
+	size_t ip_payload_len;
+
+	uint16_t csum;
 
 	/* We add the 4 bytes of TUN headers */
 	unsigned char*decomp_packet = malloc((4 + MAX_ROHC_SIZE) * sizeof(unsigned char));
 
-	int len;
 
 	int decomp_size;
 	int ret;
@@ -691,58 +707,78 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 
 	/* read ROHC packet from the RAW tunnel */
 	ret = read(from, packet, packet_len);
-	stats->total_received++;
 	if(ret < 0 || ret > packet_len)
 	{
 		trace(LOG_ERR, "recvfrom failed: %s (%d)\n", strerror(errno), errno);
 		goto error_unpack;
 	}
-
 	if(ret == 0)
 	{
 		trace(LOG_ERR, "Empty packet received");
-		goto quit;
+		goto ignore;
 	}
-
 	packet_len = ret;
-	trace(LOG_DEBUG, "read one %u-byte ROHC packet on RAW sock\n", packet_len);
-
-	if(packet_len <= 20)
-	{
-		trace(LOG_ERR, "Bad packet received\n");
-		goto error_unpack;
-	}
+	stats->total_received++;
 
 	dump_packet("Decompressing : ", packet, packet_len);
-	/* XXX : We assume here all packets are IPv4 */
-	/* Check checksum */
-	uint16_t*p_chksum =  (uint16_t*) &packet[10];
-	uint16_t csum2 = *p_chksum;
-	*p_chksum = 0;
-	uint16_t csum1 = ip_fast_csum(packet, 5);
 
-	if(csum1 != csum2)
+	/* check that data is a valid IPv4 packet */
+	if(packet_len <= 20)
 	{
-		trace(LOG_ERR, "Wrong IP checksum (%d != %d)", csum1, csum2);
+		trace(LOG_ERR, "bad packet received: too small for IPv4 header, "
+				"only %u bytes received", packet_len);
+		goto error_unpack;
+	}
+	ip_header = (struct iphdr *) packet;
+	if(ip_header->version != 4)
+	{
+		trace(LOG_ERR, "bad packet received: not IP version 4");
+		goto error_unpack;
+	}
+	if(ip_header->ihl != 5)
+	{
+		trace(LOG_ERR, "bad packet received: IP options not supported");
+		goto error_unpack;
+	}
+	csum = ip_fast_csum(packet, ip_header->ihl);
+	if(csum != 0)
+	{
+		trace(LOG_ERR, "bad packet received: wrong IP checksum");
 		goto error_unpack;
 	}
 
-	/* decompress the ROHC packets */
-	packet_p = packet + 20;
-
-	while(packet_p < packet + packet_len)
+	/* filter on IP destination address if asked */
+	if(dst_addr != INADDR_ANY && ntohl(ip_header->daddr) != dst_addr)
 	{
+		trace(LOG_DEBUG, "filter out IP traffic with non-matching IP "
+				"destination address");
+		goto ignore;
+	}
+
+	/* skip the IPv4 header */
+	ip_payload = packet + (ip_header->ihl * 4);
+	ip_payload_len = packet_len - (ip_header->ihl * 4);
+
+	trace(LOG_DEBUG, "read one %u-byte packed ROHC packet on RAW sock\n",
+			ip_payload_len);
+
+	/* unpack, then decompress the ROHC packets */
+	while(ip_payload_len > 0)
+	{
+		int len;
 
 		/* Get packet size */
-		if(*packet_p >= 128)
+		if(ip_payload[0] >= 128)
 		{
-			len = ntohs(*((uint16_t*) packet_p)) & (~(1 << 15)); /* 0b0111111111111111 */;
-			packet_p += 2;
+			len = ntohs(*((uint16_t*) ip_payload)) & (~(1 << 15)); /* 0b0111111111111111 */;
+			ip_payload += 2;
+			ip_payload_len -= 2;
 		}
 		else
 		{
-			len = *packet_p;
-			packet_p += 1;
+			len = ip_payload[0];
+			ip_payload += 1;
+			ip_payload_len -= 1;
 		}
 		stats->decomp_total++;
 
@@ -756,15 +792,16 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 			goto error_unpack;
 		}
 
-		if(len > packet_len)
+		if(len > ip_payload_len)
 		{
 			trace(LOG_ERR, "Packet bigger than containing packet, skipping all");
 			goto error_unpack;
 		}
 
-		dump_packet("Packet : ", packet_p, len);
+		dump_packet("Packet : ", ip_payload, len);
+
 		/* decompress the packet */
-		decomp_size = rohc_decompress(decomp, packet_p, len,
+		decomp_size = rohc_decompress(decomp, ip_payload, len,
 		                              &decomp_packet[4], MAX_ROHC_SIZE);
 		if(decomp_size <= 0)
 		{
@@ -801,11 +838,12 @@ int raw2tun(struct rohc_decomp *decomp, int from, int to, int packing, struct st
 		}
 		trace(LOG_DEBUG, "%u bytes written on fd %d\n", ret, to);
 
-		packet_p += len;
+		ip_payload += len;
+		ip_payload_len -= len;
 	}
 
 
-quit:
+ignore:
 	free(packet);
 	free(decomp_packet);
 	return 0;

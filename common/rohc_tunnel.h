@@ -56,6 +56,7 @@ struct statitics {
 /* Stucture defining a tunnel */
 struct tunnel {
 	struct in_addr dest_address;
+	struct in_addr src_address;
 
 	int raw_socket /* Real RAW */;
 	int fake_raw[2];   /* Fake RAW device for server side */

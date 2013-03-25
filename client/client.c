@@ -86,6 +86,8 @@ int main(int argc, char *argv[])
 	int exit_status = 1;
 	struct tunnel tunnel;
 	char serv_addr[1024];
+	struct sockaddr_in local_addr;
+	socklen_t local_addr_len;
 	char port[6]  = {'3','1','2','6', '\0', '\0'};
 	unsigned char buf[1024];
 	int sock;
@@ -286,6 +288,26 @@ int main(int argc, char *argv[])
 				strerror(errno), errno);
 		goto close_tcp;
 	}
+
+	/* retrieve the local address and port used to contact the server
+	 * (will be used to filter ingress data traffic later on) */
+	local_addr_len = sizeof(struct sockaddr_in);
+	memset(&local_addr, 0, local_addr_len);
+	ret = getsockname(sock, (struct sockaddr *) &local_addr, &local_addr_len);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to determine the local IP address used to "
+				"contact the server: %s (%d)", strerror(errno), errno);
+		goto close_tcp;
+	}
+	tunnel.src_address.s_addr = ntohl(local_addr.sin_addr.s_addr);
+	trace(LOG_INFO, "local address %u.%u.%u.%u:%u is used to contact server",
+			(tunnel.src_address.s_addr >> 24) & 0xff,
+			(tunnel.src_address.s_addr >> 16) & 0xff,
+			(tunnel.src_address.s_addr >>  8) & 0xff,
+			(tunnel.src_address.s_addr >>  0) & 0xff,
+			ntohs(local_addr.sin_port));
+
 
 	/*
 	 * TLS handshake
