@@ -79,25 +79,35 @@ bool callback_rtp_detect(const unsigned char *const ip,
                          const unsigned char *const payload,
                          const unsigned int payload_size,
                          void *const rtp_private);
-int send_puree(int to, struct in_addr raddr, unsigned char*compressed_packet, int*total_size,
-               int*act_comp,
-               struct statitics*stats);
+int send_puree(int to,
+               struct in_addr raddr,
+               unsigned char *compressed_packet,
+               int *total_size,
+               int *act_comp,
+               struct statitics *stats);
 int raw2tun(struct rohc_decomp *decomp,
-				in_addr_t dst_addr,
-				int from,
-				int to,
-				int packing,
-				struct statitics*stats);
+            in_addr_t dst_addr,
+            int from,
+            int to,
+            int packing,
+            struct statitics *stats);
 int tun2raw(struct rohc_comp *comp,
-            int from, int to,
+            int from,
+            int to,
             struct in_addr raddr,
-            int*act_comp, int packing, unsigned char*compressed_packet,
-            int*total_size, struct statitics*stats);
+            int *act_comp,
+            int packing,
+            unsigned char *compressed_packet,
+            int *total_size,
+            struct statitics *stats);
 #ifdef STATS_COLLECTD
 #include <collectd/client.h>
 
-int collect_submit(lcc_connection_t *conn, lcc_identifier_t _id, struct timeval now, char*type,
-                   char*type_instance,
+int collect_submit(lcc_connection_t *conn,
+                   lcc_identifier_t _id,
+                   struct timeval now,
+                   char *type,
+                   char *type_instance,
                    int value)
 {
 	lcc_identifier_t id = _id;
@@ -133,7 +143,6 @@ int collect_stats(struct statitics stats, struct timeval now, struct in_addr add
 	trace(LOG_DEBUG, "Sending stats");
 
 	strncpy(id.plugin_instance, inet_ntoa(addr), LCC_NAME_LEN);
-
 
 	if(lcc_connect(COLLECTD_PATH, &conn) < 0)
 	{
@@ -200,13 +209,12 @@ error:
 	return -1;
 }
 
-
 #endif
 
 
 /*
  * Main functions
-*/
+ */
 
 /**
  * @brief Start a new tunnel
@@ -221,9 +229,8 @@ error:
  * @param arg    A struct tunnel defining tunnel itself
  * @return       0 in case of success, a non-null value otherwise
  */
-void * new_tunnel(void*arg)
+void * new_tunnel(void *arg)
 {
-
 	struct tunnel*tunnel = (struct tunnel*) arg;
 
 	int failure = 0;
@@ -356,8 +363,8 @@ void * new_tunnel(void*arg)
 #ifdef STATS_COLLECTD
 	gettimeofday(&last_stat, NULL);
 #endif
-	/* Initalize packing */
 
+	/* Initalize packing */
 	int act_comp   = 0;  /* Counter for packing */
 	int total_size = 0;  /* Size counter for packing */
 	/* Max size is MAX_ROHC_SIZE + 2 bytes max for packet len multiplied by the packing */
@@ -370,7 +377,8 @@ void * new_tunnel(void*arg)
 		FD_SET(read_tun, &readfds);
 		FD_SET(read_raw, &readfds);
 
-		ret = pselect(max(read_tun, read_raw) + 1, &readfds, NULL, NULL, &timeout, &sigmask);
+		ret = pselect(max(read_tun, read_raw) + 1, &readfds, NULL, NULL,
+		              &timeout, &sigmask);
 		if(ret < 0)
 		{
 			trace(LOG_ERR, "pselect failed: %s (%d)\n", strerror(errno), errno);
@@ -384,10 +392,10 @@ void * new_tunnel(void*arg)
 			if(FD_ISSET(read_tun, &readfds))
 			{
 				trace(LOG_DEBUG, "...from tun\n");
-				failure =
-				   tun2raw(comp, read_tun, tunnel->raw_socket, tunnel->dest_address, &act_comp, packing,
-				           compressed_packet, &total_size,
-				           &(tunnel->stats));
+				failure = tun2raw(comp, read_tun, tunnel->raw_socket,
+				                  tunnel->dest_address, &act_comp, packing,
+				                  compressed_packet, &total_size,
+				                  &(tunnel->stats));
 				gettimeofday(&last, NULL);
 				is_last_init = true;
 				if(failure)
@@ -402,14 +410,13 @@ void * new_tunnel(void*arg)
 			{
 				trace(LOG_DEBUG, "...from raw\n");
 				failure = raw2tun(decomp, tunnel->src_address.s_addr, read_raw,
-										tunnel->tun, packing, &(tunnel->stats));
+				                  tunnel->tun, packing, &(tunnel->stats));
 				if(failure)
 				{
 					trace(LOG_ERR, "raw2tun failed\n");
 					/* tunnel->alive = 0; */
 				}
 			}
-
 		}
 
 		gettimeofday(&now, NULL);
@@ -423,16 +430,15 @@ void * new_tunnel(void*arg)
 			if(total_size > 0)
 			{
 				trace(LOG_DEBUG, "No packets since a while, sending...");
-				send_puree(tunnel->raw_socket, tunnel->dest_address, compressed_packet, &total_size,
-				           &act_comp,
+				send_puree(tunnel->raw_socket, tunnel->dest_address,
+				           compressed_packet, &total_size, &act_comp,
 				           &(tunnel->stats));
 			}
 		}
 		if(now.tv_sec > tunnel->last_keepalive.tv_sec + kp_timeout)
 		{
-			trace(LOG_ERR, "Keepalive timeout detected (%ld > %ld + %d), exiting", now.tv_sec,
-			      tunnel->last_keepalive.tv_sec,
-			      kp_timeout);
+			trace(LOG_ERR, "Keepalive timeout detected (%ld > %ld + %d), exiting",
+			      now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout);
 			tunnel->alive = 0;
 		}
 
@@ -479,17 +485,21 @@ error:
  * @param total_size        Pointer to the total size of the send-to-be "floating" packet
  * @param act_comp          Pointer to the current number of packet in packing
  */
-int send_puree(int to, struct in_addr raddr, unsigned char*compressed_packet, int*total_size,
-               int*act_comp,
-               struct statitics*stats)
+int send_puree(int to,
+               struct in_addr raddr,
+               unsigned char *compressed_packet,
+               int *total_size,
+               int *act_comp,
+               struct statitics *stats)
 {
 	int ret;
 	struct sockaddr_in addr;
+
 	bzero(&addr, sizeof(addr));
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = raddr.s_addr;
 
-	dump_packet("Packet ROHC : ", compressed_packet, *total_size);
+	dump_packet("Packet ROHC: ", compressed_packet, *total_size);
 	stats->stats_packing[*act_comp] += 1;
 
 	if(*total_size > RAW_BUFSIZE)
@@ -500,8 +510,8 @@ int send_puree(int to, struct in_addr raddr, unsigned char*compressed_packet, in
 
 	/* write the ROHC packet in the RAW tunnel */
 	trace(LOG_DEBUG, "Sending on raw socket to %s\n",  inet_ntoa(raddr));
-	ret = sendto(to, compressed_packet, *total_size, 0, (struct sockaddr *) &addr,
-	             sizeof(struct sockaddr_in));
+	ret = sendto(to, compressed_packet, *total_size, 0,
+	             (struct sockaddr *) &addr, sizeof(struct sockaddr_in));
 	if(ret < 0)
 	{
 		trace(LOG_ERR, "sendto failed: %s (%d)\n", strerror(errno), errno);
@@ -541,10 +551,14 @@ error:
  * @return                  0 in case of success, a non-null value otherwise
  */
 int tun2raw(struct rohc_comp *comp,
-            int from, int to,
+            int from,
+            int to,
             struct in_addr raddr,
-            int*act_comp, int packing, unsigned char*compressed_packet,
-            int*total_size, struct statitics*stats)
+            int *act_comp,
+            int packing,
+            unsigned char *compressed_packet,
+            int *total_size,
+            struct statitics *stats)
 {
 	unsigned char buffer[TUNTAP_BUFSIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
@@ -574,7 +588,7 @@ int tun2raw(struct rohc_comp *comp,
 
 	trace(LOG_DEBUG, "Read %u bytes on tun fd %d\n", ret, from);
 
-	dump_packet("Read from tun : ", buffer, buffer_len);
+	dump_packet("Read from tun: ", buffer, buffer_len);
 
 	if(buffer_len == 0)
 	{
@@ -592,7 +606,6 @@ int tun2raw(struct rohc_comp *comp,
 	/* compress the IP packet */
 	comp_result = rohc_compress2(comp, packet, packet_len,
 	                             rohc_packet_temp, MAX_ROHC_SIZE, &rohc_size);
-
 	if(comp_result != ROHC_OK)
 	{
 		trace(LOG_ERR, "compression of packet failed\n");
@@ -607,12 +620,14 @@ int tun2raw(struct rohc_comp *comp,
 		send_puree(to, raddr, compressed_packet, total_size, act_comp, stats);
 	}
 
-	trace(LOG_DEBUG, "Compress packet #%d/%d : %d bytes", *act_comp, packing, packet_len);  /* Not very true, as the packet is already compressed, but the act_comp may have changed if the packet has ben sent because of the new size */
+	trace(LOG_DEBUG, "Compress packet #%d/%d: %d bytes", *act_comp, packing, packet_len);
+	/* Not very true, as the packet is already compressed, but the act_comp may
+	 * have changed if the packet has ben sent because of the new size */
 
 	/* rohc_packet_p will point the correct place for the new packet */
 	rohc_packet_p = compressed_packet + *total_size;
 
-	trace(LOG_DEBUG, "Packet #%d/%d compressed : %d bytes", *act_comp, packing, rohc_size);
+	trace(LOG_DEBUG, "Packet #%d/%d compressed: %d bytes", *act_comp, packing, rohc_size);
 	dump_packet("Compressed packet", rohc_packet_temp, rohc_size);
 
 	/* get packet statistics */
@@ -656,7 +671,7 @@ int tun2raw(struct rohc_comp *comp,
 
 	if(*act_comp == packing)
 	{
-		/* All packets loaded : GOGOGO */
+		/* All packets loaded: GOGOGO */
 		send_puree(to, raddr, compressed_packet, total_size, act_comp, stats);
 	}
 
@@ -686,10 +701,10 @@ int raw2tun(struct rohc_decomp *decomp,
 				int from,
 				int to,
 				int packing,
-				struct statitics*stats)
+				struct statitics *stats)
 {
 	unsigned int packet_len = RAW_BUFSIZE;
-	unsigned char*packet = malloc(packet_len * sizeof(unsigned char));
+	unsigned char *packet = malloc(packet_len * sizeof(unsigned char));
 	struct iphdr *ip_header;
 
 	unsigned char *ip_payload;
@@ -699,7 +714,6 @@ int raw2tun(struct rohc_decomp *decomp,
 
 	/* We add the 4 bytes of TUN headers */
 	unsigned char*decomp_packet = malloc((4 + MAX_ROHC_SIZE) * sizeof(unsigned char));
-
 
 	int decomp_size;
 	int ret;
@@ -720,13 +734,13 @@ int raw2tun(struct rohc_decomp *decomp,
 	packet_len = ret;
 	stats->total_received++;
 
-	dump_packet("Decompressing : ", packet, packet_len);
+	dump_packet("Decompressing: ", packet, packet_len);
 
 	/* check that data is a valid IPv4 packet */
 	if(packet_len <= 20)
 	{
 		trace(LOG_ERR, "bad packet received: too small for IPv4 header, "
-				"only %u bytes received", packet_len);
+		      "only %u bytes received", packet_len);
 		goto error_unpack;
 	}
 	ip_header = (struct iphdr *) packet;
@@ -751,7 +765,7 @@ int raw2tun(struct rohc_decomp *decomp,
 	if(dst_addr != INADDR_ANY && ntohl(ip_header->daddr) != dst_addr)
 	{
 		trace(LOG_DEBUG, "filter out IP traffic with non-matching IP "
-				"destination address");
+		      "destination address");
 		goto ignore;
 	}
 
@@ -760,7 +774,7 @@ int raw2tun(struct rohc_decomp *decomp,
 	ip_payload_len = packet_len - (ip_header->ihl * 4);
 
 	trace(LOG_DEBUG, "read one %u-byte packed ROHC packet on RAW sock\n",
-			ip_payload_len);
+	      ip_payload_len);
 
 	/* unpack, then decompress the ROHC packets */
 	while(ip_payload_len > 0)
@@ -798,7 +812,7 @@ int raw2tun(struct rohc_decomp *decomp,
 			goto error_unpack;
 		}
 
-		dump_packet("Packet : ", ip_payload, len);
+		dump_packet("Packet: ", ip_payload, len);
 
 		/* decompress the packet */
 		decomp_size = rohc_decompress(decomp, ip_payload, len,
@@ -841,7 +855,6 @@ int raw2tun(struct rohc_decomp *decomp,
 		ip_payload += len;
 		ip_payload_len -= len;
 	}
-
 
 ignore:
 	free(packet);
@@ -909,7 +922,6 @@ void dump_packet(char *descr, unsigned char *packet, unsigned int length)
  *                 the trace is related to
  * @param format   The format string of the trace
  */
-
 static void print_rohc_traces(rohc_trace_level_t level,
                               rohc_trace_entity_t entity,
                               int profile,
@@ -1029,5 +1041,4 @@ bool callback_rtp_detect(const unsigned char *const ip,
 not_rtp:
 	return is_rtp;
 }
-
 
