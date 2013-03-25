@@ -546,7 +546,7 @@ int tun2raw(struct rohc_comp *comp,
             int*act_comp, int packing, unsigned char*compressed_packet,
             int*total_size, struct statitics*stats)
 {
-	static unsigned char buffer[TUNTAP_BUFSIZE];
+	unsigned char buffer[TUNTAP_BUFSIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
 
 	unsigned char*rohc_packet_temp = malloc(MAX_ROHC_SIZE * sizeof(char));
