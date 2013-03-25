@@ -1,5 +1,12 @@
-Release 0.5 (XX Xxx 201x)
+Release 0.7 (XX Xxx 201x)
 	Not published yet.
+
+Release 0.6 (25 Mar 2013)
+	Do not use static variables in threaded functions.
+	At client, filter traffic on destination IP address to avoid mixing
+		traffic between several clients.
+	Do not print syslog traces on stderr.
+	Style cleanup.
 
 Release 0.5 (18 Mar 2013)
 	Robustify client & server.

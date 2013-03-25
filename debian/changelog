@@ -1,3 +1,13 @@
+iprohc (0.6-1) stable; urgency=low
+
+  * Do not use static variables in threaded functions.
+  * At client, filter traffic on destination IP address to avoid mixing
+    traffic between several clients.
+  * Do not print syslog traces on stderr.
+  * Style cleanup.
+
+ -- Didier Barvaux <didier.barvaux@toulouse.viveris.com> Mon, 25 Mar 2013 16:23:10 +0200
+
 iprohc (0.5-1) stable; urgency=low
 
   * Robustify client & server.
