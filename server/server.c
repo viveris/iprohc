@@ -320,7 +320,7 @@ int main(int argc, char *argv[])
 	strcpy(conf_file, "/etc/iprohc_server.conf");
 
 	/* Initialize logger */
-	openlog("iprohc_server", LOG_PID | LOG_PERROR, LOG_DAEMON);
+	openlog("iprohc_server", LOG_PID, LOG_DAEMON);
 
 	clients = calloc(MAX_CLIENTS, sizeof(struct clients*));
 	if(clients == NULL)

@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
 	pkcs12_f[0] = '\0';
 
 	/* Initialize logger */
-	openlog("iprohc_client", LOG_PID | LOG_PERROR, LOG_DAEMON);
+	openlog("iprohc_client", LOG_PID, LOG_DAEMON);
 
 	/*
 	 * Parsing options
