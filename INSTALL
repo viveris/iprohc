@@ -15,6 +15,9 @@ The IP/ROHC program uses the following external dependencies:
 
 Cmake (http://www.cmake.org/) is used for configuring and building the program.
 
+Please install Cmake and any above dependencies from sources or with your
+favorite package manager before going further.
+
 
 Build and install
 -----------------
