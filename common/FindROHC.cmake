@@ -5,6 +5,8 @@
 #  ROHC_LIBRARIES - The libraries needed to use ROHC
 #  ROHC_DEFINITIONS - Compiler switches required for using ROHC
 
+include(CheckLibraryExists)
+
 find_package(PkgConfig)
 
 pkg_check_modules(PC_ROHC rohc)
@@ -13,6 +15,7 @@ if (PC_ROHC_FOUND)
     set(ROHC_DEFINITIONS ${PC_ROHC_CFLAGS_OTHER})
     set(ROHC_LIBRARIES ${PC_ROHC_LIBRARIES} )
     set(ROHC_INCLUDE_DIR ${PC_ROHC_INCLUDE_DIRS})
+    set(ROHC_LIBRARIES_DIR ${PC_ROHC_LIBRARY_DIRS})
 
     ## handle the QUIETLY and REQUIRED arguments and set ROHC_FOUND to TRUE
     ## if all listed variables are TRUE
@@ -32,6 +35,11 @@ else (PC_ROHC_FOUND)
     find_package_handle_standard_args(ROHC DEFAULT_MSG
                                       ROHC_LIBRARIES ROHC_INCLUDE_DIR)
 endif (PC_ROHC_FOUND)
+
+CHECK_LIBRARY_EXISTS(rohc_comp rohc_compress2 "${PC_ROHC_LIBRARY_DIRS}" HAVE_ROHC_COMPRESS2)
+if (NOT HAVE_ROHC_COMPRESS2)
+    message(FATAL_ERROR "rohc_compress2() not available in the ROHC library, please upgrade to 1.6.0 or greater")
+endif()
 
 set(ROHC_INCLUDE_DIRS ${ROHC_INCLUDE_DIR} )
 
