@@ -29,7 +29,7 @@ else (STATS_COLLECTD)
 endif (STATS_COLLECTD)
 
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
+include_directories(${CMAKE_CURRENT_BINARY_DIR} ${ROHC_INCLUDE_DIRS})
 
 add_library (iprohc_common SHARED rohc_tunnel.c tun_helpers.c tlv.c)
 add_definitions("-Wall")
