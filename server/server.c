@@ -222,11 +222,13 @@ void switch_log_max(int sig)
 
 void usage(char*arg0)
 {
-	printf("Usage : %s %d.%d [opts]\n", arg0, IPROHC_SERVER_VERSION_MAJOR,
+	printf("Usage: %s %d.%d [opts]\n", arg0, IPROHC_SERVER_VERSION_MAJOR,
 	       IPROHC_SERVER_VERSION_MINOR);
 	printf("\n");
-	printf("Options : \n");
-	printf(" --conf: Path to configuration file (default: /etc/iprohc_server.conf)\n");
+	printf("Options: \n");
+	printf(" -c --conf   Path to configuration file (default: /etc/iprohc_server.conf)\n");
+	printf(" -d --debug  Enable debuging\n");
+	printf(" -h --help   Print this help message\n");
 	exit(2);
 }
 
