@@ -350,7 +350,7 @@ int main(int argc, char *argv[])
 		}
 		if(verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
 		{
-			trace(LOG_ERR, " - Certificate issue is not a CA");
+			trace(LOG_ERR, " - Certificate issuer is not a CA");
 		}
 #ifdef GNUTLS_CERT_NOT_ACTIVATED
 		if(verify_status & GNUTLS_CERT_NOT_ACTIVATED)

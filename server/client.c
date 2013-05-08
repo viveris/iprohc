@@ -108,7 +108,7 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 		}
 		if(verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
 		{
-			trace(LOG_ERR, " - Certificate issue is not a CA");
+			trace(LOG_ERR, " - Certificate issuer is not a CA");
 		}
 		if(verify_status & GNUTLS_CERT_NOT_ACTIVATED)
 		{
