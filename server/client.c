@@ -146,6 +146,7 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 		goto tls_deinit;
 	}
 	trace(LOG_DEBUG, "Allocating %p", clients[client_id]);
+	memset(&clients[client_id]->tunnel.stats, 0, sizeof(struct statitics));
 	clients[client_id]->tcp_socket = conn;
 	clients[client_id]->tls_session = session;
 

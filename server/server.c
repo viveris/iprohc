@@ -156,32 +156,45 @@ void dump_opts(struct server_opts opts)
 
 void dump_stats_client(struct client*client)
 {
-	int i;
-
-	trace(LOG_NOTICE, "------------------------------------------------------");
-	trace(LOG_NOTICE, "Client %s", inet_ntoa(client->tunnel.dest_address));
-	trace(LOG_NOTICE, "Packing : %d", client->packing);
-	trace(LOG_NOTICE, "Stats : ");
-	trace(LOG_NOTICE, " . Failed decompression : %d", client->tunnel.stats.decomp_failed);
-	trace(LOG_NOTICE, " . Total  decompression : %d", client->tunnel.stats.decomp_total);
-	trace(LOG_NOTICE, " . Failed compression   : %d", client->tunnel.stats.comp_failed);
-	trace(LOG_NOTICE, " . Total  compression   : %d", client->tunnel.stats.comp_total);
-	trace(LOG_NOTICE, " . Failed depacketization        : %d", client->tunnel.stats.unpack_failed);
-	trace(LOG_NOTICE, " . Total received packets on raw : %d", client->tunnel.stats.total_received);
-	trace(LOG_NOTICE, " . Total compressed header size  : %d bytes",
-	      client->tunnel.stats.head_comp_size);
-	trace(LOG_NOTICE, " . Total compressed packet size  : %d bytes",
-	      client->tunnel.stats.total_comp_size);
-	trace(LOG_NOTICE, " . Total header size before comp : %d bytes",
-	      client->tunnel.stats.head_uncomp_size);
-	trace(LOG_NOTICE, " . Total packet size before comp : %d bytes",
-	      client->tunnel.stats.total_uncomp_size);
-	trace(LOG_NOTICE, "Stats packing : ");
-	for(i = 0; i < client->tunnel.stats.n_stats_packing; i++)
+	trace(LOG_INFO, "--------------------------------------------------");
+	trace(LOG_INFO, "client %s", inet_ntoa(client->tunnel.dest_address));
+	trace(LOG_INFO, "status: %s",
+	      ((client->tunnel.alive < 0) ? "pending delete" :
+	       ((client->tunnel.alive == 0) ? "connecting" : "connected")));
+	if(client->tunnel.alive > 0)
 	{
-		trace(LOG_NOTICE, " . %d : %d", i, client->tunnel.stats.stats_packing[i]);
+		int i;
+
+		trace(LOG_INFO, "packing: %d", client->packing);
+		trace(LOG_INFO, "stats: ");
+		trace(LOG_INFO, " . failed decompression:       %d",
+		      client->tunnel.stats.decomp_failed);
+		trace(LOG_INFO, " . total  decompression:       %d",
+		      client->tunnel.stats.decomp_total);
+		trace(LOG_INFO, " . failed compression:         %d",
+		      client->tunnel.stats.comp_failed);
+		trace(LOG_INFO, " . total  compression:         %d",
+		      client->tunnel.stats.comp_total);
+		trace(LOG_INFO, " . failed depacketization:     %d",
+		      client->tunnel.stats.unpack_failed);
+		trace(LOG_INFO, " . total received packets on raw: %d",
+		      client->tunnel.stats.total_received);
+		trace(LOG_INFO, " . total compressed header size:  %d bytes",
+		      client->tunnel.stats.head_comp_size);
+		trace(LOG_INFO, " . total compressed packet size:  %d bytes",
+		      client->tunnel.stats.total_comp_size);
+		trace(LOG_INFO, " . total header size before comp: %d bytes",
+		      client->tunnel.stats.head_uncomp_size);
+		trace(LOG_INFO, " . total packet size before comp: %d bytes",
+		      client->tunnel.stats.total_uncomp_size);
+		trace(LOG_INFO, "stats packing:");
+		for(i = 1; i < client->tunnel.stats.n_stats_packing; i++)
+		{
+			trace(LOG_INFO, " . %d packets: %d", i,
+			      client->tunnel.stats.stats_packing[i]);
+		}
 	}
-	trace(LOG_NOTICE, "------------------------------------------------------");
+	trace(LOG_INFO, "--------------------------------------------------");
 }
 
 
