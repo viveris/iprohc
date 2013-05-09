@@ -97,7 +97,8 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 	if((verify_status & GNUTLS_CERT_INVALID) &&
 	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
 	{
-		trace(LOG_ERR, "Certificate cannot be verified: ");
+		trace(LOG_ERR, "certificate cannot be verified (status %u)",
+		      verify_status);
 		if(verify_status & GNUTLS_CERT_REVOKED)
 		{
 			trace(LOG_ERR, " - Revoked certificate");

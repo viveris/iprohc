@@ -339,7 +339,8 @@ int main(int argc, char *argv[])
 	if((verify_status & GNUTLS_CERT_INVALID) &&
 	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
 	{
-		trace(LOG_ERR, "Certificate can't be verified : ");
+		trace(LOG_ERR, "certificate cannot be verified (status %u)",
+		      verify_status);
 		if(verify_status & GNUTLS_CERT_REVOKED)
 		{
 			trace(LOG_ERR, " - Revoked certificate");
