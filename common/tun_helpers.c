@@ -31,7 +31,8 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "log.h"
 
 #include "tun_helpers.h"
-#include "config.h"
+#include "iprohc.h"
+#include "iprohc_common.h"
 
 int set_link_up(char*dev)
 {

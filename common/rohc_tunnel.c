@@ -43,7 +43,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /* Initialize logger */
 #include "log.h"
 
-#include "config.h"
+#include "iprohc.h"
 
 #include "stats.h"
 

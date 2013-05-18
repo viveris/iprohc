@@ -37,8 +37,8 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "tls.h"
 
 #include "config.h"
+#include "iprohc.h"
 
-#include "config_server.h"
 // XXX : Config ?
 #define MAX_CLIENTS 50
 
@@ -235,8 +235,15 @@ void switch_log_max(int sig)
 
 void usage(char*arg0)
 {
-	printf("Usage: %s %d.%d [opts]\n", arg0, IPROHC_SERVER_VERSION_MAJOR,
-	       IPROHC_SERVER_VERSION_MINOR);
+	printf("\n");
+	printf("IP/ROHC server, version %d.%d",
+	       IPROHC_VERSION_MAJOR, IPROHC_VERSION_MINOR);
+	if(IPROHC_VERSION_REVNO != 0)
+	{
+		printf(", revision %d", IPROHC_VERSION_REVNO);
+	}
+	printf("\n\n");
+	printf("Usage: %s [opts]\n", arg0);
 	printf("\n");
 	printf("Options: \n");
 	printf(" -c --conf   Path to configuration file (default: /etc/iprohc_server.conf)\n");

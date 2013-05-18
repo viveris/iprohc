@@ -49,7 +49,7 @@ Returns :
 #include <sys/socket.h>
 #include <netdb.h>
 
-#include "config_client.h"
+#include "iprohc.h"
 #include "log.h"
 int log_max_priority = LOG_INFO;
 
@@ -58,9 +58,15 @@ int log_max_priority = LOG_INFO;
 
 void usage(char*arg0)
 {
-	printf("Usage : %s %d.%d --remote addr --dev itf_name  [opts]\n", arg0,
-	       IPROHC_CLIENT_VERSION_MAJOR,
-	       IPROHC_CLIENT_VERSION_MINOR);
+	printf("\n");
+	printf("IP/ROHC client, version %d.%d",
+	       IPROHC_VERSION_MAJOR, IPROHC_VERSION_MINOR);
+	if(IPROHC_VERSION_REVNO != 0)
+	{
+		printf(", revision %d", IPROHC_VERSION_REVNO);
+	}
+	printf("\n\n");
+	printf("Usage: %s --remote addr --dev itf_name [opts]\n", arg0);
 	printf("\n");
 	printf("Options : \n");
 	printf(" --remote : Address of the remote server \n");

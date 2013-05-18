@@ -12,8 +12,7 @@ set(LIBS ${LIBS} ${GNUTLS_LIBRARIES})
 
 include_directories("../common")
 
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config_client.h.in ${CMAKE_CURRENT_BINARY_DIR}/config_client.h)
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
+include_directories(${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/..)
 
 add_executable (iprohc_client client.c messages.c tls.c)
 

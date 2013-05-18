@@ -3,8 +3,7 @@ CMakeFiles
 *.cmake
 Makefile
 cscope.out
-common/config.h
-client/config_client.h
-client/iprohc_client
-server/config_server.h
-server/iprohc_server
+./iprohc.h
+./common/iprohc_common.h
+./client/iprohc_client
+./server/iprohc_server
