@@ -15,6 +15,7 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <asm/types.h>
@@ -26,6 +27,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <string.h>
+#include <netinet/ip.h>
 #include <libnetlink.h>
 
 #include "log.h"
@@ -34,7 +36,93 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "iprohc.h"
 #include "iprohc_common.h"
 
-int set_link_up(char*dev)
+
+/** The maximal size (in bytes) taken by the tunnel headers */
+#define MAX_TUNNEL_OVERHEAD (sizeof(struct iphdr) + 2 + 20U)
+
+
+/**
+ * @brief Set the MTU of a new device wrt the MTU of its base device
+ *
+ * @param base_dev      The name of the base device
+ * @param new_dev       The name of the new device
+ * @param base_dev_mtu  OUT: The MTU of the base device
+ * @param new_dev_mtu   OUT: The MTU of the new device
+ * @return              true in case of success, false in case of failure
+ */
+bool set_link_mtu(const char *const base_dev,
+                  const char *const new_dev,
+                  size_t *const base_dev_mtu,
+                  size_t *const new_dev_mtu)
+{
+	bool is_success = false;
+	struct ifreq ifr;
+	int fd;
+	int err;
+
+	assert(base_dev != NULL);
+	assert(new_dev != NULL);
+	assert(base_dev_mtu != NULL);
+	assert(new_dev_mtu != NULL);
+
+	/* open one INET socket to talk to the kernel */
+	fd = socket(PF_INET, SOCK_DGRAM, 0);
+	if(fd < 0)
+	{
+		trace(LOG_ERR, "failed to set MTU on interface '%s': failed to open "
+		      "one INET socket: %s (%d)", new_dev, strerror(errno), errno);
+		goto error;
+	}
+
+	/* get the MTU of the base device */
+	memset(&ifr, 0, sizeof(struct ifreq));
+	strncpy(ifr.ifr_name, base_dev, IFNAMSIZ);
+	err = ioctl(fd, SIOCGIFMTU, &ifr);
+	if(err != 0)
+	{
+		trace(LOG_ERR, "failed to set MTU on interface '%s': failed to get MTU "
+		      "of base interface '%s': %s (%d)", new_dev, base_dev,
+		      strerror(errno), errno);
+		goto close;
+	}
+
+	/* compute the new MTU */
+	if(ifr.ifr_mtu <= 0 || ifr.ifr_mtu <= MAX_TUNNEL_OVERHEAD)
+	{
+		trace(LOG_ERR, "failed to set MTU on interface '%s': MTU of base "
+		      "interface '%s' is too small: %d bytes while more than %u "
+		      "bytes required", new_dev, base_dev, ifr.ifr_mtu,
+		      MAX_TUNNEL_OVERHEAD);
+		goto close;
+	}
+	*base_dev_mtu = ifr.ifr_mtu;
+	*new_dev_mtu = ifr.ifr_mtu - MAX_TUNNEL_OVERHEAD;
+
+	/* set the new MTU on the new device */
+	memset(&ifr, 0, sizeof(struct ifreq));
+	strncpy(ifr.ifr_name, new_dev, IFNAMSIZ);
+	ifr.ifr_mtu = *new_dev_mtu;
+	err = ioctl(fd, SIOCSIFMTU, &ifr);
+	if(err != 0)
+	{
+		trace(LOG_ERR, "failed to set MTU %zd on interface '%s': "
+		      "ioctl(SIOCSIFMTU) failed: %s (%d)", *new_dev_mtu, new_dev,
+		      strerror(errno), errno);
+		goto close;
+	}
+
+	/* everything went fine */
+	is_success = true;
+
+close:
+	close(fd);
+error:
+	return is_success;
+}
+
+
+
+int set_link_up(const char *const dev)
 {
 	struct ifreq ifr;
 	int fd;
@@ -68,7 +156,7 @@ int set_link_up(char*dev)
 }
 
 
-int get_device_id(char*dev, int*tun_itf_id)
+int get_device_id(const char *const dev, int *const tun_itf_id)
 {
 	struct ifreq ifr;
 	int fd;
@@ -96,17 +184,27 @@ int get_device_id(char*dev, int*tun_itf_id)
 }
 
 
-int create_tun(char *name, int*tun_itf_id)
+int create_tun(const char *const name,
+               const char *const basedev,
+               int *const tun_itf_id,
+               size_t *const basedev_mtu,
+               size_t *const tun_itf_mtu)
 {
 	struct ifreq ifr;
 	int fd, err;
+
+	assert(name != NULL);
+	assert(basedev != NULL);
+	assert(tun_itf_id != NULL);
+	assert(basedev_mtu != NULL);
+	assert(tun_itf_mtu != NULL);
 
 	/* open a file descriptor on the kernel interface */
 	if((fd = open("/dev/net/tun", O_RDWR)) < 0)
 	{
 		trace(LOG_ERR, "failed to open /dev/net/tun: %s (%d)\n",
 		      strerror(errno), errno);
-		return fd;
+		goto error;
 	}
 
 	/* flags: IFF_TUN   - TUN device (no Ethernet headers)
@@ -122,14 +220,40 @@ int create_tun(char *name, int*tun_itf_id)
 	{
 		trace(LOG_ERR, "failed to ioctl(TUNSETIFF) on /dev/net/tun: %s (%d)\n",
 		      strerror(errno), errno);
-		close(fd);
-		return err;
+		goto close;
 	}
 
-	set_link_up(name);
-	get_device_id(name, tun_itf_id);
+	if(!set_link_mtu(basedev, name, basedev_mtu, tun_itf_mtu))
+	{
+		trace(LOG_ERR, "failed to create TUN interface '%s': failed to set MTU",
+		      name);
+		goto close;
+	}
+	trace(LOG_INFO, "MTU of underlying interface '%s' set to %zd bytes",
+	      basedev, *basedev_mtu);
+	trace(LOG_INFO, "MTU of tunnel interface '%s' set to %zd bytes", name,
+	      *tun_itf_mtu);
+
+	if(set_link_up(name) != 0)
+	{
+		trace(LOG_ERR, "failed to create TUN interface '%s': failed to set "
+		      "link up", name);
+		goto close;
+	}
+
+	if(get_device_id(name, tun_itf_id) != 0)
+	{
+		trace(LOG_ERR, "failed to create TUN interface '%s': failed to get "
+		      "device ID", name);
+		goto close;
+	}
 
 	return fd;
+
+close:
+	close(fd);
+error:
+	return -1;
 }
 
 

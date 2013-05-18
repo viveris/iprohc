@@ -59,9 +59,11 @@ struct tunnel {
 	struct in_addr src_address;
 
 	int raw_socket /* Real RAW */;
+	size_t basedev_mtu;  /**< The MTU (in bytes) of the base interface */
 	int fake_raw[2];   /* Fake RAW device for server side */
 
 	int tun;   /* Real TUN device */
+	size_t tun_itf_mtu;  /**< The MTU (in bytes) of the TUN interface */
 	int fake_tun[2];   /* Fake TUN device for server side */
 
 	char alive;

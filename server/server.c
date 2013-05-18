@@ -246,9 +246,11 @@ void usage(char*arg0)
 	printf("Usage: %s [opts]\n", arg0);
 	printf("\n");
 	printf("Options: \n");
-	printf(" -c --conf   Path to configuration file (default: /etc/iprohc_server.conf)\n");
-	printf(" -d --debug  Enable debuging\n");
-	printf(" -h --help   Print this help message\n");
+	printf(" -c --conf     Path to configuration file\n");
+	printf("               (default: /etc/iprohc_server.conf)\n");
+	printf(" -b --basedev  Name of the underlying interface\n");
+	printf(" -d --debug    Enable debuging\n");
+	printf(" -h --help     Print this help message\n");
 	exit(2);
 }
 
@@ -312,6 +314,8 @@ int main(int argc, char *argv[])
 
 	int tun, raw;
 	int tun_itf_id;
+	size_t tun_itf_mtu;
+	size_t basedev_mtu;
 
 	struct route_args route_args_tun;
 	struct route_args route_args_raw;
@@ -367,6 +371,7 @@ int main(int argc, char *argv[])
 	server_opts.port = 3126;
 	server_opts.pkcs12_f[0] = '\0';
 	server_opts.pidfile_path[0]  = '\0';
+	memset(server_opts.basedev, 0, IFNAMSIZ);
 	server_opts.local_address       = inet_addr("192.168.99.1");
 
 	server_opts.params.packing             = 5;
@@ -379,20 +384,36 @@ int main(int argc, char *argv[])
 
 	struct option options[] = {
 		{ "conf",    required_argument, NULL, 'c' },
-		{ "debug",   no_argument,      NULL, 'd' },
-		{ "help",   no_argument,       NULL, 'h' },
+		{ "basedev", required_argument, NULL, 'b' },
+		{ "debug",   no_argument,       NULL, 'd' },
+		{ "help",    no_argument,       NULL, 'h' },
 		{NULL, 0, 0, 0}
 	};
 	int option_index = 0;
 	do
 	{
-		c = getopt_long(argc, argv, "c:hd", options, &option_index);
+		c = getopt_long(argc, argv, "c:b:hd", options, &option_index);
 		switch(c)
 		{
 			case 'c':
-				trace(LOG_DEBUG, "Using file : %s", conf_file);
+				trace(LOG_DEBUG, "Using file : %s", optarg);
 				strncpy(conf_file, optarg, 1024);
 				conf_file[1023] = '\0';
+				break;
+			case 'b':
+				trace(LOG_DEBUG, "underlying interface: %s", optarg);
+				if(strlen(optarg) >= IFNAMSIZ)
+				{
+					trace(LOG_ERR, "underlying interface name too long");
+					goto free_client_contexts;
+				}
+				if(if_nametoindex(optarg) <= 0)
+				{
+					trace(LOG_ERR, "underlying interface '%s' does not exist",
+					      optarg);
+					goto free_client_contexts;
+				}
+				strncpy(server_opts.basedev, optarg, IFNAMSIZ);
 				break;
 			case 'd':
 				log_max_priority = LOG_DEBUG;
@@ -412,6 +433,12 @@ int main(int argc, char *argv[])
 		goto free_client_contexts;
 	}
 	dump_opts(server_opts);
+
+	if(strcmp(server_opts.basedev, "") == 0)
+	{
+		trace(LOG_ERR, "underlying interface name is mandatory");
+		goto free_client_contexts;
+	}
 
 	if(strcmp(server_opts.pkcs12_f, "") == 0)
 	{
@@ -508,7 +535,8 @@ int main(int argc, char *argv[])
 
 	/* TUN create */
 	trace(LOG_INFO, "create TUN interface");
-	tun = create_tun("tun_ipip", &tun_itf_id);
+	tun = create_tun("tun_ipip", server_opts.basedev,
+	                 &tun_itf_id, &basedev_mtu, &tun_itf_mtu);
 	if(tun < 0)
 	{
 		trace(LOG_ERR, "failed to create TUN device");
@@ -605,7 +633,8 @@ int main(int argc, char *argv[])
 		/* Read on serv_socket : new client */
 		if(FD_ISSET(serv_socket, &rdfs))
 		{
-			ret = new_client(serv_socket, tun, clients, MAX_CLIENTS, server_opts);
+			ret = new_client(serv_socket, tun, tun_itf_mtu, basedev_mtu,
+			                 clients, MAX_CLIENTS, server_opts);
 			if(ret < 0)
 			{
 				trace(LOG_ERR, "new_client returned %d\n", ret);

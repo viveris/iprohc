@@ -47,6 +47,7 @@ Returns :
 #include <signal.h>
 #include <gnutls/gnutls.h>
 #include <sys/socket.h>
+#include <net/if.h>
 #include <netdb.h>
 
 #include "iprohc.h"
@@ -72,6 +73,7 @@ void usage(char*arg0)
 	printf(" --remote : Address of the remote server \n");
 	printf(" --port : Port of the remote server \n");
 	printf(" --dev : Name of the TUN interface that will be created \n");
+	printf(" --basedev : Name of the underlying interface\n");
 	printf(" --debug : Enable debuging \n");
 	printf(" --up : Path to a shell script that will be executed when network is up\n");
 	printf(" --p12 : Path to the pkcs12 file containing server CA, client key and client crt\n");
@@ -108,7 +110,9 @@ int main(int argc, char *argv[])
 	bool is_ok;
 
 	struct client_opts client_opts;
-	client_opts.tun_name = calloc(32, sizeof(char));
+
+	memset(client_opts.tun_name, 0, IFNAMSIZ);
+	memset(client_opts.basedev, 0, IFNAMSIZ);
 	client_opts.up_script_path = calloc(1024, sizeof(char));
 	client_opts.packing = 0;
 	serv_addr[0] = '\0';
@@ -122,14 +126,15 @@ int main(int argc, char *argv[])
 	 */
 
 	struct option options[] = {
-		{ "dev",    required_argument, NULL, 'i' },
-		{ "remote", required_argument, NULL, 'r' },
-		{ "port",   required_argument, NULL, 'p' },
-		{ "p12",    required_argument, NULL, 'P' },
+		{ "dev",     required_argument, NULL, 'i' },
+		{ "basedev", required_argument, NULL, 'b' },
+		{ "remote",  required_argument, NULL, 'r' },
+		{ "port",    required_argument, NULL, 'p' },
+		{ "p12",     required_argument, NULL, 'P' },
 		{ "packing", required_argument, NULL, 'k' },
-		{ "up",     required_argument, NULL, 'u' },
-		{ "debug",  no_argument, NULL, 'd' },
-		{ "help",   no_argument, NULL, 'h' },
+		{ "up",      required_argument, NULL, 'u' },
+		{ "debug",   no_argument, NULL, 'd' },
+		{ "help",    no_argument, NULL, 'h' },
 		{NULL, 0, 0, 0}
 	};
 
@@ -149,17 +154,32 @@ int main(int argc, char *argv[])
 	optind = 1;
 	do
 	{
-		c = getopt_long(argc, argv, "i:r:p:u:P:hk:", options, NULL);
+		c = getopt_long(argc, argv, "i:b:r:p:u:P:hk:", options, NULL);
 		switch(c)
 		{
 			case 'i':
-				trace(LOG_DEBUG, "TUN interface name : %s", optarg);
-				if(strlen(optarg) >= 32)
+				trace(LOG_DEBUG, "TUN interface: %s", optarg);
+				if(strlen(optarg) >= IFNAMSIZ)
 				{
 					trace(LOG_ERR, "TUN interface name too long");
 					goto error;
 				}
-				strncpy(client_opts.tun_name, optarg, 32);
+				strncpy(client_opts.tun_name, optarg, IFNAMSIZ);
+				break;
+			case 'b':
+				trace(LOG_DEBUG, "underlying interface: %s", optarg);
+				if(strlen(optarg) >= IFNAMSIZ)
+				{
+					trace(LOG_ERR, "underlying interface name too long");
+					goto error;
+				}
+				if(if_nametoindex(optarg) <= 0)
+				{
+					trace(LOG_ERR, "underlying interface '%s' does not exist",
+					      optarg);
+					goto error;
+				}
+				strncpy(client_opts.basedev, optarg, IFNAMSIZ);
 				break;
 			case 'r':
 				trace(LOG_DEBUG, "Remote address : %s", optarg);
@@ -205,6 +225,12 @@ int main(int argc, char *argv[])
 	if(strcmp(client_opts.tun_name, "") == 0)
 	{
 		trace(LOG_ERR, "TUN interface name is mandatory");
+		goto error;
+	}
+
+	if(strcmp(client_opts.basedev, "") == 0)
+	{
+		trace(LOG_ERR, "underlying interface name is mandatory");
 		goto error;
 	}
 

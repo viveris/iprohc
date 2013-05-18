@@ -35,8 +35,13 @@ struct client {
 	int packing;
 };
 
-int  new_client(int socket, int tun, struct client**clients, int max_clients,
-                struct server_opts server_opts);
+int new_client(int socket,
+               int tun,
+               const size_t tun_itf_mtu,
+               const size_t basedev_mtu,
+               struct client**clients,
+               int max_clients,
+               struct server_opts server_opts);
 void del_client(struct client *const client)
 	__attribute__((nonnull(1)));
 

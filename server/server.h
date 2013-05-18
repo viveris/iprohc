@@ -15,10 +15,11 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <gnutls/gnutls.h>
-#include <stdint.h>
-
 #include "tlv.h"
+
+#include <stdint.h>
+#include <net/if.h>
+#include <gnutls/gnutls.h>
 
 /* Structure defining global parameters for the server */
 struct server_opts
@@ -29,6 +30,7 @@ struct server_opts
 	int port;
 	char pkcs12_f[1024];
 	char pidfile_path[1024];
+	char basedev[IFNAMSIZ];
 
 	uint32_t local_address;
 

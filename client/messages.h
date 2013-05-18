@@ -18,6 +18,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "rohc_tunnel.h"
 #include "tlv.h"
 
+#include <net/if.h>
 #include <gnutls/gnutls.h>
 
 /* Structure defining the options
@@ -27,7 +28,8 @@ struct client_opts {
 	int socket;
 	gnutls_session_t tls_session;
 
-	char *tun_name;
+	char tun_name[IFNAMSIZ];
+	char basedev[IFNAMSIZ];
 	char *up_script_path;
 
 	int packing;

@@ -21,7 +21,13 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdint.h>
 #include <stdbool.h>
 
-int create_tun(char *name, int*tun_itf_id);
+int create_tun(const char *const name,
+               const char *const basedev,
+               int *const tun_itf_id,
+               size_t *const basedev_mtu,
+               size_t *const tun_itf_mtu)
+	__attribute__((warn_unused_result));
+
 bool set_ip4(int iface_index, uint32_t address, uint8_t network);
 int create_raw();
 

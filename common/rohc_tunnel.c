@@ -59,9 +59,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /// The maximal size of data that can be received on the virtual interface
 #define TUNTAP_BUFSIZE 1518
 
-/// The maximal size of data that can be sent on the raw socket
-#define RAW_BUFSIZE 1450
-
 /// The maximal size of a ROHC packet
 #define MAX_ROHC_SIZE   (5 * 1024)
 
@@ -82,6 +79,7 @@ bool callback_rtp_detect(const unsigned char *const ip,
                          void *const rtp_private);
 int send_puree(int to,
                struct in_addr raddr,
+               const size_t mtu,
                unsigned char *compressed_packet,
                size_t *total_size,
                size_t *act_comp,
@@ -90,12 +88,14 @@ int raw2tun(struct rohc_decomp *decomp,
             in_addr_t dst_addr,
             int from,
             int to,
+				const size_t mtu,
             int packing,
             struct statitics *stats);
 int tun2raw(struct rohc_comp *comp,
             int from,
             int to,
             struct in_addr raddr,
+            const size_t mtu,
             unsigned char *const packing_frame,
             const size_t packing_max_len,
             size_t *const packing_cur_len,
@@ -258,11 +258,10 @@ void * new_tunnel(void *arg)
 	struct rohc_decomp *decomp;
 
 	unsigned char *packing_frame;
-	const size_t packing_max_len = RAW_BUFSIZE;
+	const size_t packing_max_len = tunnel->basedev_mtu - sizeof(struct iphdr);
 	size_t packing_cur_len = 0;  /* number of packed bytes */
 	const size_t packing_max_pkts = tunnel->params.packing;
 	size_t packing_cur_pkts = 0;  /* number of packed frames */
-
 
 	/* TODO : Check assumed present attributes
 	   (thread, local_address, dest_address, tun, fake_tun, raw_socket) */
@@ -401,7 +400,8 @@ void * new_tunnel(void *arg)
 			{
 				trace(LOG_DEBUG, "...from tun\n");
 				failure = tun2raw(comp, read_tun, tunnel->raw_socket,
-				                  tunnel->dest_address, packing_frame,
+				                  tunnel->dest_address, tunnel->basedev_mtu,
+				                  packing_frame,
 				                  packing_max_len, &packing_cur_len,
 				                  packing_max_pkts, &packing_cur_pkts,
 				                  &(tunnel->stats));
@@ -419,7 +419,8 @@ void * new_tunnel(void *arg)
 			{
 				trace(LOG_DEBUG, "...from raw\n");
 				failure = raw2tun(decomp, tunnel->src_address.s_addr, read_raw,
-				                  tunnel->tun, packing_max_pkts, &(tunnel->stats));
+				                  tunnel->tun, tunnel->basedev_mtu,
+				                  packing_max_pkts, &(tunnel->stats));
 				if(failure)
 				{
 					trace(LOG_ERR, "raw2tun failed\n");
@@ -440,6 +441,7 @@ void * new_tunnel(void *arg)
 			{
 				trace(LOG_DEBUG, "No packets since a while, sending...");
 				send_puree(tunnel->raw_socket, tunnel->dest_address,
+				           tunnel->basedev_mtu,
 				           packing_frame, &packing_cur_len, &packing_cur_pkts,
 				           &(tunnel->stats));
 				assert(packing_cur_len == 0);
@@ -497,6 +499,7 @@ error:
  */
 int send_puree(int to,
                struct in_addr raddr,
+               const size_t mtu,
                unsigned char *compressed_packet,
                size_t *total_size,
                size_t *act_comp,
@@ -512,7 +515,7 @@ int send_puree(int to,
 	dump_packet("Packet ROHC: ", compressed_packet, *total_size);
 	stats->stats_packing[*act_comp] += 1;
 
-	if(*total_size > RAW_BUFSIZE)
+	if((*total_size) > (mtu - sizeof(struct iphdr)))
 	{
 		trace(LOG_ERR, "Packet too big to be sent, abort");
 		goto error;
@@ -553,6 +556,7 @@ error:
  * @param from              The TUN file descriptor to read from
  * @param to                The RAW socket descriptor to write to
  * @param raddr             The remote address of the tunnel
+ * @param mtu               The MTU (in bytes) of the output interface
  * @param packing_frame     IN/OUT: The incomplete packing frame being built
  * @param packing_max_len   The max number of bytes in packing frame
  * @param packing_cur_len   IN/OUT: The current number of bytes in packing
@@ -567,6 +571,7 @@ int tun2raw(struct rohc_comp *comp,
             int from,
             int to,
             struct in_addr raddr,
+            const size_t mtu,
             unsigned char *const packing_frame,
             const size_t packing_max_len,
             size_t *const packing_cur_len,
@@ -638,8 +643,7 @@ int tun2raw(struct rohc_comp *comp,
 		goto error;
 	}
 
-	/* discard ROHC packets larger than the whole packing frame minus the
-	 * packing header (2 bytes), we cannot handle them! */
+	/* discard ROHC packets larger than the whole packing frame */
 	if(rohc_size > (packing_max_len - packing_header_len))
 	{
 		trace(LOG_ERR, "discard too large compressed packet: packet is "
@@ -652,9 +656,9 @@ int tun2raw(struct rohc_comp *comp,
 	 * new ROHC packet will be over the MTU, thus making room for the new
 	 * compressed packet */
 	/* XXX : MTU should also be a parameter */
-	if(((*packing_cur_len) + rohc_size + 4) >= (RAW_BUFSIZE - 20))
+	if(((*packing_cur_len) + rohc_size + packing_header_len) >= packing_max_len)
 	{
-		send_puree(to, raddr, packing_frame, packing_cur_len,
+		send_puree(to, raddr, mtu, packing_frame, packing_cur_len,
 		           packing_cur_pkts, stats);
 		assert((*packing_cur_len) == 0);
 		assert((*packing_cur_pkts) == 0);
@@ -714,8 +718,8 @@ int tun2raw(struct rohc_comp *comp,
 	if((*packing_cur_pkts) >= packing_max_pkts)
 	{
 		/* All packets loaded: GOGOGO */
-		send_puree(to, raddr, packing_frame, packing_cur_len, packing_cur_pkts,
-		           stats);
+		send_puree(to, raddr, mtu, packing_frame, packing_cur_len,
+		           packing_cur_pkts, stats);
 		assert((*packing_cur_len) == 0);
 		assert((*packing_cur_pkts) == 0);
 	}
@@ -739,16 +743,18 @@ error:
  * @param decomp  The ROHC decompressor
  * @param from    The RAW socket descriptor to read from
  * @param to      The TUN file descriptor to write to
+ * @param mtu     The MTU (in bytes) of the input interface
  * @return        0 in case of success, a non-null value otherwise
  */
 int raw2tun(struct rohc_decomp *decomp,
 				in_addr_t dst_addr,
 				int from,
 				int to,
+				const size_t mtu,
 				int packing,
 				struct statitics *stats)
 {
-	unsigned int packet_len = RAW_BUFSIZE;
+	unsigned int packet_len = mtu;
 	unsigned char *packet = malloc(packet_len * sizeof(unsigned char));
 	struct iphdr *ip_header;
 

@@ -34,7 +34,12 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "tls.h"
 
 
-int new_client(int socket, int tun, struct client**clients, int max_clients,
+int new_client(int socket,
+               int tun,
+               const size_t tun_itf_mtu,
+               const size_t basedev_mtu,
+               struct client**clients,
+               int max_clients,
                struct server_opts server_opts)
 {
 	int conn;
@@ -159,6 +164,7 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 
 	/* set tun */
 	clients[client_id]->tunnel.tun = tun;  /* real tun device */
+	clients[client_id]->tunnel.tun_itf_mtu = tun_itf_mtu;
 	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[client_id]->tunnel.fake_tun) < 0)
 	{
 		trace(LOG_ERR, "failed to create a socket pair for TUN: %s (%d)",
@@ -177,6 +183,7 @@ int new_client(int socket, int tun, struct client**clients, int max_clients,
 		goto close_tun_pair;
 	}
 	clients[client_id]->tunnel.raw_socket = raw;
+	clients[client_id]->tunnel.basedev_mtu = basedev_mtu;
 	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[client_id]->tunnel.fake_raw) < 0)
 	{
 		trace(LOG_ERR, "failed to create a socket pair for the raw socket: "
@@ -256,7 +263,8 @@ void del_client(struct client *const client)
 int start_client_tunnel(struct client*client)
 {
 	/* Go threads, go ! */
-	pthread_create(&(client->thread_tunnel), NULL, new_tunnel, (void*)(&(client->tunnel)));
+	pthread_create(&(client->thread_tunnel), NULL, new_tunnel,
+	               (void*)(&(client->tunnel)));
 	return 0;
 }
 

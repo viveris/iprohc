@@ -142,7 +142,8 @@ bool handle_okconnect(struct tunnel *const tunnel,
 	trace(LOG_DEBUG, "Creation of tunnel, local address : %s\n", inet_ntoa(debug_addr));
 
 	/* create the TUN interface */
-	tun = create_tun(opts.tun_name, &tun_itf_id);
+	tun = create_tun(opts.tun_name, opts.basedev,
+	                 &tun_itf_id, &tunnel->basedev_mtu, &tunnel->tun_itf_mtu);
 	if(tun < 0)
 	{
 		trace(LOG_ERR, "Unable to create TUN device");
