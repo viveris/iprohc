@@ -18,6 +18,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /* rohc_tunnel.c -- Functions handling a tunnel, client or server-side
 */
 
+#include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -82,8 +83,8 @@ bool callback_rtp_detect(const unsigned char *const ip,
 int send_puree(int to,
                struct in_addr raddr,
                unsigned char *compressed_packet,
-               int *total_size,
-               int *act_comp,
+               size_t *total_size,
+               size_t *act_comp,
                struct statitics *stats);
 int raw2tun(struct rohc_decomp *decomp,
             in_addr_t dst_addr,
@@ -95,10 +96,11 @@ int tun2raw(struct rohc_comp *comp,
             int from,
             int to,
             struct in_addr raddr,
-            int *act_comp,
-            int packing,
-            unsigned char *compressed_packet,
-            int *total_size,
+            unsigned char *const packing_frame,
+            const size_t packing_max_len,
+            size_t *const packing_cur_len,
+            const size_t packing_max_pkts,
+            size_t *const packing_cur_pkts,
             struct statitics *stats);
 #ifdef STATS_COLLECTD
 #include <collectd/client.h>
@@ -248,7 +250,6 @@ void * new_tunnel(void *arg)
 #endif
 
 	int kp_timeout   = tunnel->params.keepalive_timeout;
-	int packing      = tunnel->params.packing;
 
 	int read_tun, read_raw;
 	int ret;
@@ -256,6 +257,11 @@ void * new_tunnel(void *arg)
 	struct rohc_comp *comp;
 	struct rohc_decomp *decomp;
 
+	unsigned char *packing_frame;
+	const size_t packing_max_len = RAW_BUFSIZE;
+	size_t packing_cur_len = 0;  /* number of packed bytes */
+	const size_t packing_max_pkts = tunnel->params.packing;
+	size_t packing_cur_pkts = 0;  /* number of packed frames */
 
 
 	/* TODO : Check assumed present attributes
@@ -358,17 +364,19 @@ void * new_tunnel(void *arg)
 	tunnel->stats.total_uncomp_size = 0;
 	tunnel->stats.unpack_failed     = 0;
 	tunnel->stats.total_received    = 0;
-	tunnel->stats.n_stats_packing   = packing + 1;
+	tunnel->stats.n_stats_packing   = packing_max_pkts + 1;
 	tunnel->stats.stats_packing     = calloc(tunnel->stats.n_stats_packing, sizeof(int));
 #ifdef STATS_COLLECTD
 	gettimeofday(&last_stat, NULL);
 #endif
 
-	/* Initalize packing */
-	int act_comp   = 0;  /* Counter for packing */
-	int total_size = 0;  /* Size counter for packing */
-	/* Max size is MAX_ROHC_SIZE + 2 bytes max for packet len multiplied by the packing */
-	unsigned char*compressed_packet = malloc(RAW_BUFSIZE * sizeof(char));
+	/* Initalize packing frame */
+	packing_frame = malloc(packing_max_len);
+	if(packing_frame == NULL)
+	{
+		trace(LOG_ERR, "failed to allocate memory for the packing frame\n");
+		goto destroy_decomp;
+	}
 
 	do
 	{
@@ -393,8 +401,9 @@ void * new_tunnel(void *arg)
 			{
 				trace(LOG_DEBUG, "...from tun\n");
 				failure = tun2raw(comp, read_tun, tunnel->raw_socket,
-				                  tunnel->dest_address, &act_comp, packing,
-				                  compressed_packet, &total_size,
+				                  tunnel->dest_address, packing_frame,
+				                  packing_max_len, &packing_cur_len,
+				                  packing_max_pkts, &packing_cur_pkts,
 				                  &(tunnel->stats));
 				gettimeofday(&last, NULL);
 				is_last_init = true;
@@ -410,7 +419,7 @@ void * new_tunnel(void *arg)
 			{
 				trace(LOG_DEBUG, "...from raw\n");
 				failure = raw2tun(decomp, tunnel->src_address.s_addr, read_raw,
-				                  tunnel->tun, packing, &(tunnel->stats));
+				                  tunnel->tun, packing_max_pkts, &(tunnel->stats));
 				if(failure)
 				{
 					trace(LOG_ERR, "raw2tun failed\n");
@@ -427,12 +436,14 @@ void * new_tunnel(void *arg)
 		}
 		if(now.tv_sec > last.tv_sec + timeout.tv_sec)
 		{
-			if(total_size > 0)
+			if(packing_cur_len > 0)
 			{
 				trace(LOG_DEBUG, "No packets since a while, sending...");
 				send_puree(tunnel->raw_socket, tunnel->dest_address,
-				           compressed_packet, &total_size, &act_comp,
+				           packing_frame, &packing_cur_len, &packing_cur_pkts,
 				           &(tunnel->stats));
+				assert(packing_cur_len == 0);
+				assert(packing_cur_pkts == 0);
 			}
 		}
 		if(now.tv_sec > tunnel->last_keepalive.tv_sec + kp_timeout)
@@ -460,8 +471,7 @@ void * new_tunnel(void *arg)
 	/*
 	 * Cleaning:
 	 */
-	free(compressed_packet);
-
+	free(packing_frame);
 destroy_decomp:
 	rohc_free_decompressor(decomp);
 destroy_comp:
@@ -488,8 +498,8 @@ error:
 int send_puree(int to,
                struct in_addr raddr,
                unsigned char *compressed_packet,
-               int *total_size,
-               int *act_comp,
+               size_t *total_size,
+               size_t *act_comp,
                struct statitics *stats)
 {
 	int ret;
@@ -543,23 +553,29 @@ error:
  * @param from              The TUN file descriptor to read from
  * @param to                The RAW socket descriptor to write to
  * @param raddr             The remote address of the tunnel
- * @param act_comp          Pointer to the current number of packet in packing
- * @param packing           The max number of packets in packing (*act_comp <= packing)
- * @param compressed_packet Pointer to the send-to-be "floating" packet when *act_comp == packing or timeout
- * @param total_size        Pointer to the total size of the send-to-be "floating" packet
- * @param stats             Pointer to the statistics of the current tunnel
+ * @param packing_frame     IN/OUT: The incomplete packing frame being built
+ * @param packing_max_len   The max number of bytes in packing frame
+ * @param packing_cur_len   IN/OUT: The current number of bytes in packing
+ *                                  frame
+ * @param packing_max_pkts  The max number of packets in packing frame
+ * @param packing_cur_pkts  IN/OUT: The current number of packets in packing
+ *                                  frame
+ * @param stats             IN/OUT: The statistics of the current tunnel
  * @return                  0 in case of success, a non-null value otherwise
  */
 int tun2raw(struct rohc_comp *comp,
             int from,
             int to,
             struct in_addr raddr,
-            int *act_comp,
-            int packing,
-            unsigned char *compressed_packet,
-            int *total_size,
+            unsigned char *const packing_frame,
+            const size_t packing_max_len,
+            size_t *const packing_cur_len,
+            const size_t packing_max_pkts,
+            size_t *const packing_cur_pkts,
             struct statitics *stats)
 {
+	const size_t packing_header_len = 2;
+
 	unsigned char buffer[TUNTAP_BUFSIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
 
@@ -576,6 +592,16 @@ int tun2raw(struct rohc_comp *comp,
 
 	int ret;
 	bool ok;
+
+	/* sanity checks */
+	assert(comp != NULL);
+	assert(packing_frame != NULL);
+	assert(packing_cur_len != NULL);
+	assert(packing_cur_pkts != NULL);
+	assert(packing_max_len > packing_header_len);
+	assert(packing_max_pkts > 0);
+	assert((*packing_cur_len) < packing_max_len);
+	assert((*packing_cur_pkts) < packing_max_pkts);
 
 	/* read the IP packet from the virtual interface */
 	ret = read(from, buffer, buffer_len);
@@ -612,22 +638,38 @@ int tun2raw(struct rohc_comp *comp,
 		goto error;
 	}
 
-	/* send current "floating" packet if the total size including the new packet will be
-	   over the MTU, thus making room for the new compressed packet */
-	/* XXX : MTU should also be a parameter */
-	if(*total_size + rohc_size + 4 >= RAW_BUFSIZE - 20)
+	/* discard ROHC packets larger than the whole packing frame minus the
+	 * packing header (2 bytes), we cannot handle them! */
+	if(rohc_size > (packing_max_len - packing_header_len))
 	{
-		send_puree(to, raddr, compressed_packet, total_size, act_comp, stats);
+		trace(LOG_ERR, "discard too large compressed packet: packet is "
+		      "%zd-byte long, but packing frame can only handle up to %zd-byte "
+		      "packets\n", rohc_size, packing_max_len - packing_header_len);
+		goto quit;
 	}
 
-	trace(LOG_DEBUG, "Compress packet #%d/%d: %d bytes", *act_comp, packing, packet_len);
+	/* send current incomplete packing frame if the total size including the
+	 * new ROHC packet will be over the MTU, thus making room for the new
+	 * compressed packet */
+	/* XXX : MTU should also be a parameter */
+	if(((*packing_cur_len) + rohc_size + 4) >= (RAW_BUFSIZE - 20))
+	{
+		send_puree(to, raddr, packing_frame, packing_cur_len,
+		           packing_cur_pkts, stats);
+		assert((*packing_cur_len) == 0);
+		assert((*packing_cur_pkts) == 0);
+	}
+
+	trace(LOG_DEBUG, "Compress packet #%zd/%zd: %d bytes", *packing_cur_pkts,
+	      packing_max_pkts, packet_len);
 	/* Not very true, as the packet is already compressed, but the act_comp may
 	 * have changed if the packet has ben sent because of the new size */
 
 	/* rohc_packet_p will point the correct place for the new packet */
-	rohc_packet_p = compressed_packet + *total_size;
+	rohc_packet_p = packing_frame + (*packing_cur_len);
 
-	trace(LOG_DEBUG, "Packet #%d/%d compressed: %d bytes", *act_comp, packing, rohc_size);
+	trace(LOG_DEBUG, "Packet #%zd/%zd compressed: %zd bytes",
+	      *packing_cur_pkts, packing_max_pkts, rohc_size);
 	dump_packet("Compressed packet", rohc_packet_temp, rohc_size);
 
 	/* get packet statistics */
@@ -653,26 +695,29 @@ int tun2raw(struct rohc_comp *comp,
 		/* over 128 => 2 bytes with the first bit to 1 and the length coded on 15 bits */
 		*((uint16_t*) rohc_packet_p) = htons(rohc_size | (1 << 15));  /* 0b1000000000000000 */
 		rohc_packet_p += 2;
-		*total_size   += 2;
+		*packing_cur_len += 2;
 	}
 	else
 	{
 		/* under 128 => 1 bytes with the first bit to 0 and the length coded on 7 bits */
 		*rohc_packet_p = rohc_size;
 		rohc_packet_p += 1;
-		*total_size   += 1;
+		*packing_cur_len += 1;
 	}
 
 	/* Copy newly compressed packet in "floating" packet */
 	memcpy(rohc_packet_p, rohc_packet_temp, rohc_size);
 
-	*total_size += rohc_size;
-	*act_comp = *act_comp + 1;
+	*packing_cur_len += rohc_size;
+	(*packing_cur_pkts)++;
 
-	if(*act_comp == packing)
+	if((*packing_cur_pkts) >= packing_max_pkts)
 	{
 		/* All packets loaded: GOGOGO */
-		send_puree(to, raddr, compressed_packet, total_size, act_comp, stats);
+		send_puree(to, raddr, packing_frame, packing_cur_len, packing_cur_pkts,
+		           stats);
+		assert((*packing_cur_len) == 0);
+		assert((*packing_cur_pkts) == 0);
 	}
 
 quit:
