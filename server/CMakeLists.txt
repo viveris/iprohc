@@ -4,12 +4,15 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/../" ${C
 find_library(M_LIB m)
 set(LIBS ${LIBS} ${M_LIB})
 
+message("Checking for threads")
 find_package (Threads REQUIRED)
 set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
 
+message("Checking for GnuTLS")
 find_package (GnuTLS REQUIRED)
 set(LIBS ${LIBS} ${GNUTLS_LIBRARIES})
 
+message("Checking for libyaml")
 find_package(Yaml REQUIRED)
 set (LIBS ${LIBS} ${YAML_LIBRARIES})
 

@@ -1,12 +1,7 @@
 cmake_minimum_required (VERSION 2.6)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/../")
 
-# Version
-
-set (IPROHC_CLIENT_VERSION_MAJOR 0)
-set (IPROHC_CLIENT_VERSION_MINOR 4)
-
-
+message("Checking for GnuTLS")
 find_package (GnuTLS REQUIRED)
 set(LIBS ${LIBS} ${GNUTLS_LIBRARIES})
 

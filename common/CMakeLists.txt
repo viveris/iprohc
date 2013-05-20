@@ -1,10 +1,29 @@
 cmake_minimum_required (VERSION 2.6)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/")
 
+message("Checking for threads")
 find_package (Threads REQUIRED)
 set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
+
+message("Checking for ROHC")
 find_package (ROHC REQUIRED)
 set(LIBS ${LIBS} ${ROHC_LIBRARIES})
+
+
+#
+# Check for libnetlink
+#
+
+message("Checking for libnetlink")
+
+# Check for libnetlink.h header file
+find_file(HAVE_LIBNETLINK_H "libnetlink.h")
+if (HAVE_LIBNETLINK_H STREQUAL "")
+    message(FATAL_ERROR "libnetlink.h not found, please install the "
+            "development package of iproute2")
+else ()
+    message(STATUS "Header libnetlink.h found at ${HAVE_LIBNETLINK_H}")
+endif ()
 
 # Check for rtnl_talk prototype
 include(CheckCSourceCompiles)
@@ -16,17 +35,26 @@ check_c_source_compiles("#include <stdio.h>
 int main(int argc, char* argv[]){rtnl_talk(NULL, NULL, 0, 0, NULL);}" NEW_RTNL)
 
 if (NEW_RTNL)
-    message("Using new rtnl_talk prototype")
+    message(STATUS "Using new rtnl_talk prototype")
 else (NEW_RTNL)
-    message("Using old rtnl_talk prototype")
+    message(STATUS "Using old rtnl_talk prototype")
 endif (NEW_RTNL)
 
+
+#
+# Check for collectd
+#
+
+message("Checking for collectd")
+
 if (STATS_COLLECTD)
-    message("Stats with collectd enabled")
+	message(STATUS "Stats with collectd enabled")
     set(LIBS ${LIBS} collectdclient)
 else (STATS_COLLECTD)
-    message("Stats with collectd disabled")
+	message(STATUS "Stats with collectd disabled")
 endif (STATS_COLLECTD)
+
+
 
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/iprohc_common.h.in ${CMAKE_CURRENT_BINARY_DIR}/iprohc_common.h)
 include_directories(${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/.. ${ROHC_INCLUDE_DIRS})
