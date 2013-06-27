@@ -196,7 +196,7 @@ int new_client(int socket,
 	memcpy(&(clients[client_id]->tunnel.params),  &(server_opts.params),
 			 sizeof(struct tunnel_params));
 	clients[client_id]->tunnel.params.local_address = local.s_addr;
-	clients[client_id]->tunnel.alive = 0;
+	clients[client_id]->tunnel.status = IPROHC_TUNNEL_CONNECTING;
 	clients[client_id]->last_keepalive.tv_sec = -1;
 
 	trace(LOG_DEBUG, "Created");
@@ -262,9 +262,18 @@ void del_client(struct client *const client)
 
 int start_client_tunnel(struct client*client)
 {
+	int ret;
+
 	/* Go threads, go ! */
-	pthread_create(&(client->thread_tunnel), NULL, new_tunnel,
-	               (void*)(&(client->tunnel)));
+	ret = pthread_create(&(client->thread_tunnel), NULL, new_tunnel,
+	                     (void*)(&(client->tunnel)));
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to create the client tunnel thread: %s (%d)",
+		      strerror(ret), ret);
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -273,7 +282,7 @@ void stop_client_tunnel(struct client *const client)
 	assert(client != NULL);
 	assert(client->tunnel.raw_socket != -1);
 
-	client->tunnel.alive = -1;  /* Mark to be deleted */
+	client->tunnel.status = IPROHC_TUNNEL_PENDING_DELETE;  /* Mark to be deleted */
 
 	trace(LOG_INFO, "wait for client thread to stop");
 	pthread_kill(client->thread_tunnel, SIGHUP);

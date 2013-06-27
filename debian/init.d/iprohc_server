@@ -26,9 +26,16 @@ SCRIPTNAME=/etc/init.d/$NAME
 # Read configuration variable file if it is present
 [ -r /etc/default/$NAME ] && . /etc/default/$NAME
 
+DAEMON_ARGS=""
+
 if [ -n "$IPROHC_CONF" ]; then
-	DAEMON_ARGS="--conf $IPROHC_CONF"
+	DAEMON_ARGS="$DAEMON_ARGS --conf $IPROHC_CONF"
 fi
+
+if [ -n "$IPROHC_BASE_IFACE" ]; then
+	DAEMON_ARGS="$DAEMON_ARGS -b $IPROHC_BASE_IFACE"
+fi
+
 
 # Load the VERBOSE setting and other rcS variables
 . /lib/lsb/init-functions
@@ -39,6 +46,11 @@ fi
 #
 do_start()
 {
+	if [ -z "$IPROHC_BASE_IFACE" ]; then
+		[ "$VERBOSE" != no ] && log_progress_msg "(not started, IPROHC_BASE_IFACE missing in /etc/default/${NAME})"
+		return 1
+	fi
+
 	# Return
 	#   0 if daemon has been started
 	#   1 if daemon was already running

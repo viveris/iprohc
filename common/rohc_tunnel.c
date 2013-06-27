@@ -62,7 +62,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /// The maximal size of a ROHC packet
 #define MAX_ROHC_SIZE   (5 * 1024)
 
-#define MAX_TRACE_SIZE 256
+#define MAX_TRACE_SIZE 2048
 
 /* Prototypes for local functions */
 
@@ -328,7 +328,7 @@ void * new_tunnel(void *arg)
 
 	/* initialize the last time we sent a packet */
 	gettimeofday(&(tunnel->last_keepalive), NULL);
-	tunnel->alive = 1;
+	tunnel->status = IPROHC_TUNNEL_CONNECTED;
 
 	/* We read the fake TUN device if we are on a server */
 	if(tunnel->fake_tun[0] == -1 && tunnel->fake_tun[1] == -1)
@@ -390,7 +390,7 @@ void * new_tunnel(void *arg)
 		{
 			trace(LOG_ERR, "pselect failed: %s (%d)\n", strerror(errno), errno);
 			failure = 1;
-			tunnel->alive = 0;
+			tunnel->status = IPROHC_TUNNEL_PENDING_DELETE;
 		}
 		else if(ret > 0)
 		{
@@ -409,8 +409,7 @@ void * new_tunnel(void *arg)
 				is_last_init = true;
 				if(failure)
 				{
-					trace(LOG_ERR, "tun2raw failed\n");
-					/* tunnel->alive = 0; */
+					trace(LOG_NOTICE, "tun2raw failed\n");
 				}
 			}
 
@@ -423,8 +422,7 @@ void * new_tunnel(void *arg)
 				                  packing_max_pkts, &(tunnel->stats));
 				if(failure)
 				{
-					trace(LOG_ERR, "raw2tun failed\n");
-					/* tunnel->alive = 0; */
+					trace(LOG_NOTICE, "raw2tun failed\n");
 				}
 			}
 		}
@@ -452,7 +450,7 @@ void * new_tunnel(void *arg)
 		{
 			trace(LOG_ERR, "Keepalive timeout detected (%ld > %ld + %d), exiting",
 			      now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout);
-			tunnel->alive = 0;
+			tunnel->status = IPROHC_TUNNEL_PENDING_DELETE;
 		}
 
 #ifdef STATS_COLLECTD
@@ -466,7 +464,7 @@ void * new_tunnel(void *arg)
 		}
 #endif
 	}
-	while(tunnel->alive > 0);
+	while(tunnel->status == IPROHC_TUNNEL_CONNECTED);
 
 	trace(LOG_INFO, "client thread was asked to stop");
 

@@ -1,2 +1,7 @@
-# IPROHC configuration file
+# Defaults settings for iprohc_server
+
+# IPROHC configuration file (optional, default /etc/iprohc_server.conf)
 IPROHC_CONF="/etc/iprohc_server.conf"
+# Network interface on which ROHC packets are transmitted (mandatory)
+IPROHC_BASE_IFACE="eth0"
+

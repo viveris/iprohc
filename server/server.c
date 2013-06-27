@@ -158,10 +158,22 @@ void dump_stats_client(struct client*client)
 {
 	trace(LOG_INFO, "--------------------------------------------------");
 	trace(LOG_INFO, "client %s", inet_ntoa(client->tunnel.dest_address));
-	trace(LOG_INFO, "status: %s",
-	      ((client->tunnel.alive < 0) ? "pending delete" :
-	       ((client->tunnel.alive == 0) ? "connecting" : "connected")));
-	if(client->tunnel.alive > 0)
+	switch(client->tunnel.status)
+	{
+		case IPROHC_TUNNEL_CONNECTING:
+			trace(LOG_INFO, "status: connecting");
+			break;
+		case IPROHC_TUNNEL_CONNECTED:
+			trace(LOG_INFO, "status: connected");
+			break;
+		case IPROHC_TUNNEL_PENDING_DELETE:
+			trace(LOG_INFO, "status: pending delete");
+			break;
+		default:
+			trace(LOG_INFO, "status: unknown (%d)", client->tunnel.status);
+			break;
+	}
+	if(client->tunnel.status == IPROHC_TUNNEL_CONNECTED)
 	{
 		int i;
 
@@ -207,7 +219,7 @@ void dump_stats(int sig)
 
 	for(j = 0; j < MAX_CLIENTS; j++)
 	{
-		if(clients[j] != NULL && clients[j]->tunnel.alive >= 0)
+		if(clients[j] != NULL)
 		{
 			dump_stats_client(clients[j]);
 		}
@@ -613,7 +625,8 @@ int main(int argc, char *argv[])
 		/* Add client to select readfds */
 		for(j = 0; j < MAX_CLIENTS; j++)
 		{
-			if(clients[j] != NULL && clients[j]->tunnel.alive >= 0)
+			if(clients[j] != NULL &&
+			   clients[j]->tunnel.status >= IPROHC_TUNNEL_CONNECTING)
 			{
 				FD_SET(clients[j]->tcp_socket, &rdfs);
 				max = (clients[j]->tcp_socket > max) ? clients[j]->tcp_socket : max;
@@ -650,7 +663,7 @@ int main(int argc, char *argv[])
 				continue;
 			}
 
-			if(clients[j]->tunnel.alive == 1 &&
+			if(clients[j]->tunnel.status == IPROHC_TUNNEL_CONNECTED &&
 			   (clients[j]->last_keepalive.tv_sec == -1 ||
 			    clients[j]->last_keepalive.tv_sec +
 			    ceil(clients[j]->tunnel.params.keepalive_timeout / 3) < now.tv_sec))
@@ -661,7 +674,7 @@ int main(int argc, char *argv[])
 				gnutls_record_send(clients[j]->tls_session, command, 1);
 				gettimeofday(&(clients[j]->last_keepalive), NULL);
 			}
-			else if(clients[j]->tunnel.alive == -1)
+			else if(clients[j]->tunnel.status == IPROHC_TUNNEL_PENDING_DELETE)
 			{
 				/* free dead client */
 				trace(LOG_INFO, "remove context of client #%d", j);
@@ -677,11 +690,17 @@ int main(int argc, char *argv[])
 				ret = handle_client_request(clients[j]);
 				if(ret < 0)
 				{
-					if(clients[j]->tunnel.alive > 0)
+					if(clients[j]->tunnel.status == IPROHC_TUNNEL_CONNECTED)
 					{
 						trace(LOG_NOTICE, "[%s] client #%d was disconnected, stop its "
 								"thread", inet_ntoa(clients[j]->tunnel.dest_address), j);
 						stop_client_tunnel(clients[j]);
+					}
+					else if(clients[j]->tunnel.status == IPROHC_TUNNEL_CONNECTING)
+					{
+						trace(LOG_NOTICE, "[%s] failed to connect client #%d, aborting",
+						      inet_ntoa(clients[j]->tunnel.dest_address), j);
+						clients[j]->tunnel.status = IPROHC_TUNNEL_PENDING_DELETE;
 					}
 				}
 			}

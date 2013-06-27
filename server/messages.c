@@ -150,8 +150,11 @@ int handle_client_request(struct client*client)
 			}
 			case C_CONNECT_DONE:
 				trace(LOG_INFO, "[%s] Connection started by client",
-						inet_ntoa(client->tunnel.dest_address));
-				start_client_tunnel(client);
+				      inet_ntoa(client->tunnel.dest_address));
+				if(start_client_tunnel(client) < 0)
+				{
+					return -1;
+				}
 				cur++;
 				break;
 			case C_KEEPALIVE:

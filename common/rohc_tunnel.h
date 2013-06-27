@@ -53,6 +53,14 @@ struct statitics {
 };
 
 
+typedef enum
+{
+	IPROHC_TUNNEL_PENDING_DELETE  = 0,
+	IPROHC_TUNNEL_CONNECTING      = 1,
+	IPROHC_TUNNEL_CONNECTED       = 2,
+} iprohc_tunnel_status_t;
+
+
 /* Stucture defining a tunnel */
 struct tunnel {
 	struct in_addr dest_address;
@@ -66,7 +74,7 @@ struct tunnel {
 	size_t tun_itf_mtu;  /**< The MTU (in bytes) of the TUN interface */
 	int fake_tun[2];   /* Fake TUN device for server side */
 
-	char alive;
+	iprohc_tunnel_status_t status;
 	struct timeval last_keepalive;
 
 	struct tunnel_params params;
