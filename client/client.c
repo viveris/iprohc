@@ -57,7 +57,8 @@ int log_max_priority = LOG_INFO;
 #include "messages.h"
 #include "tls.h"
 
-void usage(char*arg0)
+
+static void usage(const char *const arg0)
 {
 	printf("\n");
 	printf("IP/ROHC client, version %d.%d",
@@ -120,6 +121,7 @@ int main(int argc, char *argv[])
 
 	/* Initialize logger */
 	openlog("iprohc_client", LOG_PID, LOG_DAEMON);
+
 
 	/*
 	 * Parsing options
@@ -248,7 +250,7 @@ int main(int argc, char *argv[])
 
 	/*
 	 * GnuTLS stuff
-	*/
+	 */
 
 	gnutls_global_init();
 	gnutls_certificate_allocate_credentials(&xcred);
@@ -263,7 +265,6 @@ int main(int argc, char *argv[])
 			goto error;
 		}
 	}
-
 
 	gnutls_init(&session, GNUTLS_CLIENT);
 	/* const char* err ;
@@ -303,9 +304,11 @@ int main(int argc, char *argv[])
 		goto error;
 	}
 
+
 	/*
-	 *	Creation of TCP socket to negotiate parameters and maintain it
+	 * Creation of TCP socket to negotiate parameters and maintain it
 	 */
+
 	for(rp = result; rp != NULL; rp = rp->ai_next)
 	{
 		sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
@@ -352,7 +355,8 @@ int main(int argc, char *argv[])
 	 * TLS handshake
 	 */
 
-	/* Get rid of warning, it's a "bug" of GnuTLS (cf http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
+	/* Get rid of warning, it's a "bug" of GnuTLS
+	 * (cf. http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
 	gnutls_transport_set_ptr_nowarn(session, sock);
 	do
 	{
@@ -437,7 +441,7 @@ int main(int argc, char *argv[])
 	do
 	{
 		ret = gnutls_record_send(session, command + emitted_len,
-										 command_len - emitted_len);
+		                         command_len - emitted_len);
 		if(ret < 0)
 		{
 			trace(LOG_ERR, "failed to send message to server over TLS (%d)", ret);
@@ -480,7 +484,7 @@ int main(int argc, char *argv[])
 		{
 			/* timeout reached */
 			trace(LOG_WARNING, "timeout reached while waiting to message "
-					"on TCP connection, give up");
+			      "on TCP connection, give up");
 			goto close_tls;
 		}
 
@@ -490,7 +494,7 @@ int main(int argc, char *argv[])
 			if(ret < 0)
 			{
 				trace(LOG_ERR, "failed to receive data from server on TLS "
-						"session: %s (%d)", gnutls_strerror(ret), ret);
+				      "session: %s (%d)", gnutls_strerror(ret), ret);
 				goto error;
 			}
 			else if(ret == 0)
