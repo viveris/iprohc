@@ -218,27 +218,34 @@ int main(int argc, char *argv[])
 
 	if(strcmp(serv_addr, "") == 0)
 	{
-		trace(LOG_ERR, "Remote address is mandatory");
+		trace(LOG_ERR, "wrong usage: remote address is mandatory, "
+		      "use the --remote or -r option to specify it");
 		goto error;
 	}
 
 	if(strcmp(client_opts.tun_name, "") == 0)
 	{
-		trace(LOG_ERR, "TUN interface name is mandatory");
+		trace(LOG_ERR, "wrong usage: TUN interface name is mandatory, "
+		      "use the --dev or -i option to specify it");
 		goto error;
 	}
 
 	if(strcmp(client_opts.basedev, "") == 0)
 	{
-		trace(LOG_ERR, "underlying interface name is mandatory");
+		trace(LOG_ERR, "wrong usage: underlying interface name is mandatory, "
+		      "use the --basedev or -b option to specify it");
 		goto error;
 	}
 
 	if(strcmp(pkcs12_f, "") == 0)
 	{
 		trace(LOG_ERR, "PKCS12 file required");
+		trace(LOG_ERR, "wrong usage: PKCS12 file is mandatory, "
+		      "use the --p12 or -P option to specify it");
 		goto error;
 	}
+
+
 	/*
 	 * GnuTLS stuff
 	*/

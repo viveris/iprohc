@@ -448,7 +448,8 @@ int main(int argc, char *argv[])
 
 	if(strcmp(server_opts.basedev, "") == 0)
 	{
-		trace(LOG_ERR, "underlying interface name is mandatory");
+		trace(LOG_ERR, "wrong usage: underlying interface name is mandatory, "
+		      "use the --basedev or -b option to specify it");
 		goto free_client_contexts;
 	}
 
