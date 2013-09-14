@@ -1,12 +1,16 @@
 cmake_minimum_required (VERSION 2.6)
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/")
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/"
+    "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 message("Checking for threads")
 find_package (Threads REQUIRED)
 set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
 
 message("Checking for ROHC")
-find_package (ROHC REQUIRED)
+find_package (ROHC REQUIRED 1.6.0)
+include_directories(${ROHC_INCLUDE_DIR})
+link_directories(${ROHC_LIBRARIES_DIR})
+add_definitions(${ROHC_DEFINITIONS})
 set(LIBS ${LIBS} ${ROHC_LIBRARIES})
 
 
@@ -60,7 +64,7 @@ CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/iprohc_common.h.in ${CMAKE_CURRENT_BI
 include_directories(${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/.. ${ROHC_INCLUDE_DIRS})
 
 add_library (iprohc_common SHARED rohc_tunnel.c tun_helpers.c tlv.c)
-add_definitions("-Wall")
+add_definitions("-Wall ${CFLAGS}")
 target_link_libraries(iprohc_common ${LIBS} netlink) 
 
 install (TARGETS iprohc_common DESTINATION lib)
