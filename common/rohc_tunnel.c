@@ -252,7 +252,7 @@ void * new_tunnel(void *arg)
 	int kp_timeout   = tunnel->params.keepalive_timeout;
 
 	int read_tun, read_raw;
-	int ret;
+	bool is_ok;
 
 	struct rohc_comp *comp;
 	struct rohc_decomp *decomp;
@@ -271,29 +271,36 @@ void * new_tunnel(void *arg)
 	 */
 
 	/* create the compressor and activate profiles */
-	comp = rohc_alloc_compressor(tunnel->params.max_cid, 0, 0, 0);
+	comp = rohc_comp_new(ROHC_SMALL_CID, tunnel->params.max_cid);
 	if(comp == NULL)
 	{
 		trace(LOG_ERR, "cannot create the ROHC compressor");
 		goto error;
 	}
-	rohc_activate_profile(comp, ROHC_PROFILE_UNCOMPRESSED);
-	rohc_activate_profile(comp, ROHC_PROFILE_UDP);
-	rohc_activate_profile(comp, ROHC_PROFILE_IP);
-	rohc_activate_profile(comp, ROHC_PROFILE_UDPLITE);
-	rohc_activate_profile(comp, ROHC_PROFILE_RTP);
 
-	/* handle compressor trace */
-	ret = rohc_comp_set_traces_cb(comp, print_rohc_traces);
-	if(ret != ROHC_OK)
+	/* handle compressor traces */
+	is_ok = rohc_comp_set_traces_cb(comp, print_rohc_traces);
+	if(!is_ok)
 	{
 		trace(LOG_ERR, "cannot set trace callback for compressor");
 		goto destroy_comp;
 	}
 
+	/* enable all safe compression profiles */
+	is_ok = rohc_comp_enable_profiles(comp, ROHC_PROFILE_UNCOMPRESSED,
+	                                  ROHC_PROFILE_IP,
+	                                  ROHC_PROFILE_UDP,
+	                                  ROHC_PROFILE_UDPLITE,
+	                                  ROHC_PROFILE_RTP, -1);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "cannot enable profiles for compressor");
+		goto destroy_comp;
+	}
+
 	/* set RTP callback for detecting RTP packets */
-	ret = rohc_comp_set_rtp_detection_cb(comp, callback_rtp_detect, NULL);
-	if(ret != ROHC_OK)
+	is_ok = rohc_comp_set_rtp_detection_cb(comp, callback_rtp_detect, NULL);
+	if(!is_ok)
 	{
 		trace(LOG_ERR, "failed to set RTP detection callback");
 		goto destroy_comp;
@@ -301,7 +308,9 @@ void * new_tunnel(void *arg)
 
 
 	/* create the decompressor (associate it with the compressor) */
-	decomp = rohc_alloc_decompressor(is_umode ? NULL : comp);
+	decomp = rohc_decomp_new(ROHC_SMALL_CID, tunnel->params.max_cid,
+	                         (is_umode ? ROHC_U_MODE : ROHC_O_MODE),
+	                         (is_umode ? NULL : comp));
 	if(decomp == NULL)
 	{
 		trace(LOG_ERR, "cannot create the ROHC decompressor");
@@ -309,10 +318,23 @@ void * new_tunnel(void *arg)
 	}
 
 	/* handle compressor trace */
-	ret = rohc_decomp_set_traces_cb(decomp, print_rohc_traces);
-	if(ret != ROHC_OK)
+	is_ok = rohc_decomp_set_traces_cb(decomp, print_rohc_traces);
+	if(!is_ok)
 	{
 		trace(LOG_ERR, "cannot set trace callback for decompressor");
+		goto destroy_decomp;
+	}
+
+	/* enable all safe decompression profiles */
+	is_ok = rohc_decomp_enable_profiles(decomp,
+	                                    ROHC_PROFILE_UNCOMPRESSED,
+	                                    ROHC_PROFILE_IP,
+	                                    ROHC_PROFILE_UDP,
+	                                    ROHC_PROFILE_UDPLITE,
+	                                    ROHC_PROFILE_RTP, -1);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "cannot enable profiles for decompressor");
 		goto destroy_decomp;
 	}
 
@@ -379,6 +401,8 @@ void * new_tunnel(void *arg)
 
 	do
 	{
+		int ret;
+
 		/* poll the read sockets/file descriptors */
 		FD_ZERO(&readfds);
 		FD_SET(read_tun, &readfds);
@@ -473,9 +497,9 @@ void * new_tunnel(void *arg)
 	 */
 	free(packing_frame);
 destroy_decomp:
-	rohc_free_decompressor(decomp);
+	rohc_decomp_free(decomp);
 destroy_comp:
-	rohc_free_compressor(comp);
+	rohc_comp_free(comp);
 error:
 	return NULL;
 }
@@ -577,6 +601,7 @@ int tun2raw(struct rohc_comp *comp,
             size_t *const packing_cur_pkts,
             struct statitics *stats)
 {
+	const struct timespec arrival_time = { .tv_sec = 0, .tv_nsec = 0 };
 	const size_t packing_header_len = 2;
 
 	unsigned char buffer[TUNTAP_BUFSIZE];
@@ -584,14 +609,12 @@ int tun2raw(struct rohc_comp *comp,
 
 	unsigned char*rohc_packet_temp = malloc(MAX_ROHC_SIZE * sizeof(char));
 	unsigned char *rohc_packet_p;
+	size_t rohc_size;
 
 	unsigned char *packet;
 	unsigned int packet_len;
 
 	rohc_comp_last_packet_info2_t last_packet_info;
-
-	size_t rohc_size;
-	int comp_result;
 
 	int ret;
 	bool ok;
@@ -633,11 +656,11 @@ int tun2raw(struct rohc_comp *comp,
 	stats->comp_total++;
 
 	/* compress the IP packet */
-	comp_result = rohc_compress2(comp, packet, packet_len,
-	                             rohc_packet_temp, MAX_ROHC_SIZE, &rohc_size);
-	if(comp_result != ROHC_OK)
+	ret = rohc_compress3(comp, arrival_time, packet, packet_len,
+	                     rohc_packet_temp, MAX_ROHC_SIZE, &rohc_size);
+	if(ret != ROHC_OK)
 	{
-		trace(LOG_ERR, "compression of packet failed\n");
+		trace(LOG_ERR, "compression of packet failed (%d)\n", ret);
 		goto error;
 	}
 
@@ -752,6 +775,8 @@ int raw2tun(struct rohc_decomp *decomp,
 				int packing,
 				struct statitics *stats)
 {
+	const struct timespec arrival_time = { .tv_sec = 0, .tv_nsec = 0 };
+
 	unsigned int packet_len = mtu;
 	unsigned char *packet = malloc(packet_len * sizeof(unsigned char));
 	struct iphdr *ip_header;
@@ -764,7 +789,6 @@ int raw2tun(struct rohc_decomp *decomp,
 	/* We add the 4 bytes of TUN headers */
 	unsigned char*decomp_packet = malloc((4 + MAX_ROHC_SIZE) * sizeof(unsigned char));
 
-	int decomp_size;
 	int ret;
 	int i = 0;
 
@@ -828,6 +852,7 @@ int raw2tun(struct rohc_decomp *decomp,
 	/* unpack, then decompress the ROHC packets */
 	while(ip_payload_len > 0)
 	{
+		size_t decomp_size;
 		int len;
 
 		/* Get packet size */
@@ -864,11 +889,11 @@ int raw2tun(struct rohc_decomp *decomp,
 		dump_packet("Packet: ", ip_payload, len);
 
 		/* decompress the packet */
-		decomp_size = rohc_decompress(decomp, ip_payload, len,
-		                              &decomp_packet[4], MAX_ROHC_SIZE);
-		if(decomp_size <= 0)
+		ret = rohc_decompress2(decomp, arrival_time, ip_payload, len,
+		                       &decomp_packet[4], MAX_ROHC_SIZE, &decomp_size);
+		if(ret != ROHC_OK)
 		{
-			trace(LOG_ERR, "decompression of packet failed\n");
+			trace(LOG_ERR, "decompression of packet failed (%d)\n", ret);
 			goto error;
 		}
 

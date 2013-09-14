@@ -6,7 +6,7 @@ find_package (GnuTLS REQUIRED)
 set(LIBS ${LIBS} ${GNUTLS_LIBRARIES})
 
 message("Checking for ROHC")
-find_package (ROHC REQUIRED 1.6.0)
+find_package (ROHC REQUIRED 1.7.0)
 include_directories(${ROHC_INCLUDE_DIR})
 link_directories(${ROHC_LIBRARIES_DIR})
 add_definitions(${ROHC_DEFINITIONS})
