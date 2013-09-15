@@ -25,9 +25,9 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdbool.h>
 #include <sys/time.h>
 
-#include <rohc.h>
-#include <rohc_comp.h>
-#include <rohc_decomp.h>
+#include <rohc/rohc.h>
+#include <rohc/rohc_comp.h>
+#include <rohc/rohc_decomp.h>
 
 #include "tlv.h"
 

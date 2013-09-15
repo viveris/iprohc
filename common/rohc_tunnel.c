@@ -33,12 +33,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "rohc_tunnel.h"
 
-/* ROHC includes */
-#include <rohc.h>
-#include <rohc_comp.h>
-#include <rohc_decomp.h>
-#include <rohc_traces.h>
-
 #include "ip_chksum.h"
 
 /* Initialize logger */
