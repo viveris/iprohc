@@ -32,4 +32,6 @@ test_*.sh.trs
 ./doc/doxygen
 ./doc/html
 ./src/client/iprohc_client
+./src/client/iprohc_client.1
 ./src/server/iprohc_server
+./src/server/iprohc_server.1
