@@ -18,6 +18,8 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /* server.c -- Implements server side of the ROHC IP-IP tunnel
 */
 
+#include "config.h"
+
 #include <sys/socket.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -31,13 +33,10 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <gnutls/pkcs12.h>
 
 #include "tun_helpers.h"
-
 #include "client.h"
 #include "messages.h"
 #include "tls.h"
-
-#include "config.h"
-#include "iprohc.h"
+#include "server_config.h"
 
 // XXX : Config ?
 #define MAX_CLIENTS 50
@@ -73,6 +72,7 @@ void * route(void*arg)
 
 	int i;
 	int ret;
+	size_t len;
 
 	unsigned char buffer[TUNTAP_BUFSIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
@@ -91,8 +91,9 @@ void * route(void*arg)
 			trace(LOG_ERR, "read failed: %s (%d)\n", strerror(errno), errno);
 			return NULL;
 		}
+		len = ret;
+		trace(LOG_DEBUG, "Read %zu bytes\n", len);
 
-		trace(LOG_DEBUG, "Read %d bytes\n", ret);
 		/* Get packet destination IP if tun or source IP if raw */
 		if(type == TUN)
 		{
@@ -117,7 +118,19 @@ void * route(void*arg)
 				{
 					if(addr.s_addr == clients[i]->local_address.s_addr)
 					{
-						write(clients[i]->tunnel.fake_tun[1], buffer, ret);
+						ret = write(clients[i]->tunnel.fake_tun[1], buffer, len);
+						if(ret < 0)
+						{
+							trace(LOG_WARNING, "failed to send %zu-byte packet to "
+							      "TUN interface: %s (%d)", len, strerror(errno),
+							      errno);
+						}
+						else if(ret != len)
+						{
+							trace(LOG_WARNING, "partial write: only %d bytes of the "
+							      "%zu-byte packet were sent to the TUN interface",
+							      ret, len);
+						}
 						break;
 					}
 				}
@@ -125,7 +138,19 @@ void * route(void*arg)
 				{
 					if(addr.s_addr == clients[i]->tunnel.dest_address.s_addr)
 					{
-						write(clients[i]->tunnel.fake_raw[1], buffer, ret);
+						ret = write(clients[i]->tunnel.fake_raw[1], buffer, len);
+						if(ret < 0)
+						{
+							trace(LOG_WARNING, "failed to send %zu-byte packet to "
+							      "the underlying interface: %s (%d)", len,
+							      strerror(errno), errno);
+						}
+						else if(ret != len)
+						{
+							trace(LOG_WARNING, "partial write: only %d bytes of the "
+							      "%zu-byte packet were sent to the underlying "
+							      "interface", ret, len);
+						}
 						break;
 					}
 				}
@@ -248,12 +273,7 @@ void switch_log_max(int sig)
 void usage(char*arg0)
 {
 	printf("\n");
-	printf("IP/ROHC server, version %d.%d",
-	       IPROHC_VERSION_MAJOR, IPROHC_VERSION_MINOR);
-	if(IPROHC_VERSION_REVNO != 0)
-	{
-		printf(", revision %d", IPROHC_VERSION_REVNO);
-	}
+	printf("IP/ROHC server, version %s%s", PACKAGE_VERSION, PACKAGE_REVNO);
 	printf("\n\n");
 	printf("Usage: %s [opts]\n", arg0);
 	printf("\n");

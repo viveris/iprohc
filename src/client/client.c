@@ -34,6 +34,8 @@ Returns :
  * 2 : Unable to connect
 */
 
+#include "config.h"
+
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
@@ -50,7 +52,6 @@ Returns :
 #include <net/if.h>
 #include <netdb.h>
 
-#include "iprohc.h"
 #include "log.h"
 int log_max_priority = LOG_INFO;
 
@@ -61,12 +62,7 @@ int log_max_priority = LOG_INFO;
 static void usage(const char *const arg0)
 {
 	printf("\n");
-	printf("IP/ROHC client, version %d.%d",
-	       IPROHC_VERSION_MAJOR, IPROHC_VERSION_MINOR);
-	if(IPROHC_VERSION_REVNO != 0)
-	{
-		printf(", revision %d", IPROHC_VERSION_REVNO);
-	}
+	printf("IP/ROHC client, version %s%s", PACKAGE_VERSION, PACKAGE_REVNO);
 	printf("\n\n");
 	printf("Usage: %s --remote addr --dev itf_name [opts]\n", arg0);
 	printf("\n");
@@ -308,7 +304,11 @@ int main(int argc, char *argv[])
 	/*
 	 * Creation of TCP socket to negotiate parameters and maintain it
 	 */
-
+	if(result == NULL) /* no address available */
+	{
+		trace(LOG_ERR, "failed connect to server: no address available");
+		goto error;
+	}
 	for(rp = result; rp != NULL; rp = rp->ai_next)
 	{
 		sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
@@ -323,8 +323,7 @@ int main(int argc, char *argv[])
 		}
 		close(sock);
 	}
-
-	if(rp == NULL)                  /* No address succeeded */
+	if(rp == NULL || sock < 0) /* no address succeeded */
 	{
 		trace(LOG_ERR, "failed to connect to server: %s (%d)",
 				strerror(errno), errno);

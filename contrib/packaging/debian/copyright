@@ -1,5 +1,5 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: ROHC
+Upstream-Name: IP/ROHC tunnel
 Source: https://launchpad.net/rohc/+download
 
 Files: *

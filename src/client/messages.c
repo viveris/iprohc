@@ -59,7 +59,8 @@ bool handle_message(struct tunnel *const tunnel,
 				parsed_len++;
 
 				/* TODO: give remaining length */
-				is_ok = handle_okconnect(tunnel, buf + i + 1, opts, &tlv_len);
+				is_ok = handle_okconnect(tunnel, buf + i + 1, length - i - 1,
+				                         opts, &tlv_len);
 				if(!is_ok)
 				{
 					trace(LOG_ERR, "failed to decode TCP message, abort");
@@ -107,7 +108,8 @@ error:
 
 /* Handler of okconnect message from server */
 bool handle_okconnect(struct tunnel *const tunnel,
-							 unsigned char *const tlv,
+							 unsigned char *const data,
+							 const size_t data_len,
 							 const struct client_opts opts,
 							 size_t *const parsed_len)
 {
@@ -124,13 +126,13 @@ bool handle_okconnect(struct tunnel *const tunnel,
 	int ret;
 
 	assert(tunnel != NULL);
-	assert(tlv != NULL);
+	assert(data != NULL);
 	assert(parsed_len != NULL);
 
 	*parsed_len = 0;
 
 	/* Parse options received in tlv form from the server */
-	is_ok = parse_connect(tlv, &tp, parsed_len);
+	is_ok = parse_connect(data, data_len, &tp, parsed_len);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "failed to parse connect message received from the server");

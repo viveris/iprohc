@@ -15,6 +15,8 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "config.h"
+
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -31,10 +33,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <libnetlink.h>
 
 #include "log.h"
-
 #include "tun_helpers.h"
-#include "iprohc.h"
-#include "iprohc_common.h"
 
 
 /** The maximal size (in bytes) taken by the tunnel headers */
@@ -299,10 +298,12 @@ bool set_ip4(int iface_index, uint32_t address, uint8_t network)
 	addattr_l(&req.nh, sizeof(req), IFA_ADDRESS, ip_data, 4);
 
 	/* GOGOGO */
-#ifdef NEW_RTNL
+#if RTNL_TALK_PARAMS == 5
 	ret = rtnl_talk(&rth, &req.nh, 0, 0, NULL);
-#else
+#elif RTNL_TALK_PARAMS == 7
 	ret = rtnl_talk(&rth, &req.nh, 0, 0, NULL, NULL, NULL);
+#else
+#  error "unsupported version of rtnl_talk()"
 #endif
 	if(ret < 0)
 	{
@@ -321,7 +322,7 @@ error:
 }
 
 
-int create_raw()
+int create_raw(void)
 {
 	int sock;
 

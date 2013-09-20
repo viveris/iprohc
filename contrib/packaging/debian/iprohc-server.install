@@ -1,7 +1,8 @@
-usr/bin/iprohc_server
+usr/sbin/iprohc_server
+usr/share/man/man1/iprohc_server.1
 debian/init.d/iprohc_server /etc/init.d/
 debian/default/iprohc_server /etc/default/
-server/iprohc_server.conf /etc/
+src/server/iprohc_server.conf /etc/
 debian/doc/sip.conf /usr/share/doc/iprohc-server/
 debian/doc/rtp.conf /usr/share/doc/iprohc-server/
 debian/doc/chan_dahdi.conf /usr/share/doc/iprohc-server/

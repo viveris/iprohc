@@ -44,10 +44,11 @@ bool handle_message(struct tunnel *const tunnel,
 
 /* Handlers of differents messages types */
 bool handle_okconnect(struct tunnel *const tunnel,
-							 unsigned char *const tlv,
+							 unsigned char *const data,
+							 const size_t data_len,
 							 const struct client_opts opts,
 							 size_t *const parsed_len)
-	__attribute__((nonnull(1, 2, 4), warn_unused_result));
+	__attribute__((nonnull(1, 2, 5), warn_unused_result));
 
 bool client_send_disconnect_msg(gnutls_session_t session)
 	__attribute__((warn_unused_result));

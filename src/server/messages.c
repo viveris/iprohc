@@ -28,6 +28,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 bool handle_connect(struct client *const client,
 						  const unsigned char *const message,
+						  const size_t message_len,
 						  size_t *const parsed_len)
 {
 	/* Receiving parameters */
@@ -51,7 +52,8 @@ bool handle_connect(struct client *const client,
 	      inet_ntoa(client->tunnel.dest_address));
 
 	/* parse connect message received from client */
-	is_ok = parse_connrequest(message, parsed_len, &packing, &client_proto_version);
+	is_ok = parse_connrequest(message, message_len, parsed_len, &packing,
+	                          &client_proto_version);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "Unable to parse connection request");
@@ -140,7 +142,7 @@ int handle_client_request(struct client*client)
 					return -1;
 				}
 
-				is_ok = handle_connect(client, cur, &parsed_len);
+				is_ok = handle_connect(client, cur, cur - buf, &parsed_len);
 				if(!is_ok)
 				{
 					return -1;

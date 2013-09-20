@@ -36,78 +36,64 @@ communications between server and client
 #define DEBUG_STR_SIZE 1024
 
 /* Generic function to parse tlv string */
-bool parse_tlv(const unsigned char *const tlv,
+bool parse_tlv(const unsigned char *const data,
+               const size_t data_len,
 					struct tlv_result **results,
 					const int max_results,
 					size_t *const parsed_len)
 {
-	enum parse_step step = TYPE;
 	struct tlv_result*result;
-	int i = 0;
-	int j;
-	uint16_t len;
-	const unsigned char *c;
-	int alive = 1;
-	char debug[DEBUG_STR_SIZE];
-	char temp_debug[DEBUG_STR_SIZE];
+	bool end_found = false;
+	size_t len = 0;
+	size_t i;
 
-	assert(tlv != NULL);
+	assert(data != NULL);
 	assert(results != NULL);
 	assert(parsed_len != NULL);
 
-	*parsed_len = 0;
-
-	c = tlv;
-	while(alive && i < max_results)
+	for((*parsed_len) = 0, i = 0;
+	    (*parsed_len) < (data_len - 3) && i < max_results;
+	    (*parsed_len) += (3 + len), i++)
 	{
-		/* TODO: check that there are enough remaining bytes */
-		switch(step)
-		{
-			case TYPE:
-				result = malloc(sizeof(struct tlv_result));
-				result->type = *c;
-				snprintf(debug, DEBUG_STR_SIZE, "Type : %x, ", *c);
-				c++;
-				break;
-			case LENGTH:
-				len = ntohs(*((uint16_t*) c));
-				c += sizeof(uint16_t);
-				snprintf(temp_debug, DEBUG_STR_SIZE, "length : %d,", len);
-				strncat(debug, temp_debug, DEBUG_STR_SIZE);
-				break;
-			case VALUE:
-				result->value = (unsigned char*) c;
-				snprintf(temp_debug, DEBUG_STR_SIZE, "value :  ");
-				strncat(debug, temp_debug, DEBUG_STR_SIZE);
-				for(j = 0; j < len; j++)
-				{
-					snprintf(temp_debug, DEBUG_STR_SIZE, "%x:", *(c + j));
-					strncat(debug, temp_debug, DEBUG_STR_SIZE);
-				}
-				trace(LOG_DEBUG, debug);
-				c += len;
+		size_t j;
 
-				results[i] = result;
-				i++;
-				break;
+		/* parse type */
+		result = malloc(sizeof(struct tlv_result));
+		result->type = data[*parsed_len];
+		trace(LOG_DEBUG, "TLV: Type = 0x%02x", data[*parsed_len]);
+		if(result->type == END)
+		{
+			end_found = true;
+			(*parsed_len)++;
+			break;
 		}
 
-		/* Switch to next step */
-		step = (step + 1) % 3;
-		if(step == TYPE && *c == END)
+		/* parse length */
+		len = ntohs(*((uint16_t*) (data + (*parsed_len) + 1)));
+		trace(LOG_DEBUG, "TLV: Length = 0x%zu", len);
+
+		/* parse value */
+		if(((*parsed_len) + 3 + len) > data_len)
 		{
-			alive = 0;
-			c++;
+			/* not enough data for value field */
+			goto error;
 		}
+		result->value = (unsigned char *) (data + (*parsed_len) + 3);
+		for(j = 0; j < len; j++)
+		{
+			trace(LOG_DEBUG, "TLV: Value = 0x%02x", data[(*parsed_len) + 3 + j]);
+		}
+
+		/* record the option in context */
+		results[i] = result;
 	}
 
-	if(i == max_results && alive)
+	if(i == max_results && !end_found)
 	{
 		trace(LOG_WARNING, "TLV option 'END' not found");
 		goto error;
 	}
 
-	*parsed_len = c - tlv;
 	return true;
 
 error:
@@ -247,7 +233,8 @@ void mark_received(enum types *const list,
 }
 
 
-bool parse_connect(const unsigned char *const buffer,
+bool parse_connect(const unsigned char *const data,
+                   const size_t data_len,
 						 struct tunnel_params *const params,
 						 size_t *const parsed_len)
 {
@@ -260,7 +247,7 @@ bool parse_connect(const unsigned char *const buffer,
 	bool is_ok;
 	int i;
 
-	assert(buffer != NULL);
+	assert(data != NULL);
 	assert(params != NULL);
 	assert(parsed_len != NULL);
 
@@ -274,7 +261,7 @@ bool parse_connect(const unsigned char *const buffer,
 		goto error;
 	}
 
-	is_ok = parse_tlv(buffer, results, N_TUNNEL_PARAMS, parsed_len);
+	is_ok = parse_tlv(data, data_len, results, N_TUNNEL_PARAMS, parsed_len);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "failed to parse TLV parameters");
@@ -404,7 +391,8 @@ error:
 
 
 /* Connection request (client -> server) */
-bool parse_connrequest(const unsigned char *const buffer,
+bool parse_connrequest(const unsigned char *const data,
+                       const size_t data_len,
 							  size_t *const parsed_len,
 							  int *const packing,
 							  int *const proto_version)
@@ -415,7 +403,7 @@ bool parse_connrequest(const unsigned char *const buffer,
 	size_t err_nr;
 	int i;
 
-	assert(buffer != NULL);
+	assert(data != NULL);
 	assert(parsed_len != NULL);
 	assert(packing != NULL);
 	assert(proto_version != NULL);
@@ -429,7 +417,7 @@ bool parse_connrequest(const unsigned char *const buffer,
 		goto error;
 	}
 
-	is_ok = parse_tlv(buffer, results, N_CONNREQ_FIELD, parsed_len);
+	is_ok = parse_tlv(data, data_len, results, N_CONNREQ_FIELD, parsed_len);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "failed to parse TLV parameters");

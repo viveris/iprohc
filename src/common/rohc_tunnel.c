@@ -38,7 +38,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /* Initialize logger */
 #include "log.h"
 
-#include "iprohc.h"
+#include "config.h"
 
 #include "stats.h"
 
@@ -83,7 +83,6 @@ int raw2tun(struct rohc_decomp *decomp,
             int from,
             int to,
 				const size_t mtu,
-            int packing,
             struct statitics *stats);
 int tun2raw(struct rohc_comp *comp,
             int from,
@@ -437,7 +436,7 @@ void * new_tunnel(void *arg)
 				trace(LOG_DEBUG, "...from raw\n");
 				failure = raw2tun(decomp, tunnel->src_address.s_addr, read_raw,
 				                  tunnel->tun, tunnel->basedev_mtu,
-				                  packing_max_pkts, &(tunnel->stats));
+				                  &(tunnel->stats));
 				if(failure)
 				{
 					trace(LOG_NOTICE, "raw2tun failed\n");
@@ -502,16 +501,21 @@ error:
 /**
  * @brief Send the current packet
  *
- * The function actually send to the RAW socket the send-to-be "floating" packet.
- * It is triggered : - when the packet contains #packing packets (nominal case)
- *                   - when including another packet would make this packet too big for MTU
- *                   - when no packet were sent for 1 seconds
+ * The function actually send to the RAW socket the send-to-be "floating"
+ * packet. It is triggered:
+ *  - when the packet contains \e packing packets (nominal case)
+ *  - when including another packet would make this packet too big for MTU
+ *  - when no packet were sent for 1 seconds
  *
  * @param to                The RAW socket descriptor to write to
  * @param raddr             The remote address of the tunnel
- * @param compressed_packet Pointer to the send-to-be "floating" packet when *act_comp == packing or timeout
- * @param total_size        Pointer to the total size of the send-to-be "floating" packet
+ * @param mtu               The MTU of the underlying network interface
+ * @param compressed_packet Pointer to the send-to-be "floating" packet when
+ *                          *act_comp = packing or timeout
+ * @param total_size        Pointer to the total size of the send-to-be
+ *                          "floating" packet
  * @param act_comp          Pointer to the current number of packet in packing
+ * @param stats             The compression/decompression statistics
  */
 int send_puree(int to,
                struct in_addr raddr,
@@ -755,18 +759,19 @@ error:
  * The function decompresses the ROHC packets thanks to the ROHC library before
  * sending them on the TUN interface.
  *
- * @param decomp  The ROHC decompressor
- * @param from    The RAW socket descriptor to read from
- * @param to      The TUN file descriptor to write to
- * @param mtu     The MTU (in bytes) of the input interface
- * @return        0 in case of success, a non-null value otherwise
+ * @param decomp    The ROHC decompressor
+ * @param dst_addr  The IP destination address to filter traffic on
+ * @param from      The RAW socket descriptor to read from
+ * @param to        The TUN file descriptor to write to
+ * @param mtu       The MTU (in bytes) of the input interface
+ * @param stats     The decompression statistics
+ * @return          0 in case of success, a non-null value otherwise
  */
 int raw2tun(struct rohc_decomp *decomp,
 				in_addr_t dst_addr,
 				int from,
 				int to,
 				const size_t mtu,
-				int packing,
 				struct statitics *stats)
 {
 	const struct timespec arrival_time = { .tv_sec = 0, .tv_nsec = 0 };
@@ -1064,6 +1069,8 @@ static void print_rohc_traces(rohc_trace_level_t level,
  * @param udp          The udp header of the packet
  * @param payload      The payload of the packet
  * @param payload_size The size of the payload (in bytes)
+ * @param rtp_private  The optional private opaque context to help detecting
+ *                     RTP streams
  * @return             true if the packet is an RTP packet, false otherwise
  */
 bool callback_rtp_detect(const unsigned char *const ip,

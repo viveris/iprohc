@@ -1,7 +1,7 @@
 Requirements
 ------------
 
-The IP/ROHC program uses the following external dependencies:
+The IP/ROHC program uses the following external runtime dependencies:
 
  +-----------+---------------+--------------------------------+
  | Name      | License       | Website                        |
@@ -13,10 +13,20 @@ The IP/ROHC program uses the following external dependencies:
  | GnuTLS    | LGPLv3+       | http://www.gnutls.org/         |
  +-----------+---------------+--------------------------------+
 
-Cmake (http://www.cmake.org/) is used for configuring and building the program.
 
-Please install Cmake and any above dependencies from sources or with your
-favorite package manager before going further.
+The IP/ROHC program uses the following external and optional build
+dependencies:
+
+ +-----------+---------------+---------------------------------------+
+ | Name      | License       | Website                               |
+ +-----------+---------------+---------------------------------------+
+ | Doxygen   | GPLv2         | http://www.doxygen.org/               |
+ +-----------+---------------+---------------------------------------+
+ | help2man  | GPLv3         | http://www.gnu.org/software/help2man/ |
+ +-----------+---------------+---------------------------------------+
+
+Autotools are used for configuring and building the program. A C99 compiler
+is also required (tested with GCC and Clang).
 
 
 Build and install
@@ -24,7 +34,19 @@ Build and install
 
 Configure the program:
 
- $ cmake CMakeLists.txt
+ $ ./configure [options]
+
+ available options:
+  --enable-client           enable IP/ROHC client (default=yes)
+  --enable-server           enable IP/ROHC server (default=yes)
+  --enable-fail-on-warning  build fails on warnings if enabled (default=no)
+  --enable-fortify-sources  build uses -D_FORTIFY_SOURCE=2 (default=no)
+  --enable-doc-html         generate documentation in HTML format (default=no)
+  --enable-doc-man          generate documentation in man format (default=no)
+
+
+ Use ./autogen.sh instead of ./configure if you retrieved sources from
+ the Bazaar source repository.
 
 Build the program:
 

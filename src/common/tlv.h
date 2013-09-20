@@ -55,12 +55,6 @@ enum types {
 #define N_CONNECT_FIELD 8
 #define N_CONNREQ_FIELD 2
 
-enum parse_step {
-	TYPE,
-	LENGTH,
-	VALUE
-};
-
 struct tlv_result {
 	char type;
 	uint16_t length;
@@ -68,11 +62,12 @@ struct tlv_result {
 };
 
 /* Global parsing and generation functions */
-bool parse_tlv(const unsigned char *const tlv,
+bool parse_tlv(const unsigned char *const data,
+               const size_t data_len,
 					struct tlv_result **results,
 					const int max_results,
 					size_t *const parsed_len)
-	__attribute__((nonnull(1, 2, 4), warn_unused_result));
+	__attribute__((nonnull(1, 3, 5), warn_unused_result));
 
 bool gen_tlv(unsigned char *const f_dest,
 				 struct tlv_result *const tlvs,
@@ -142,21 +137,23 @@ struct tunnel_params {
 	char rohc_compat_version;
 };
 
-bool parse_connect(const unsigned char *const buffer,
+bool parse_connect(const unsigned char *const data,
+                   const size_t data_len,
 						 struct tunnel_params *const params,
 						 size_t *const parsed_len)
-	__attribute__((nonnull(1, 2, 3), warn_unused_result));
+	__attribute__((nonnull(1, 3, 4), warn_unused_result));
 
 bool gen_connect(const struct tunnel_params params,
 					  unsigned char *const dest,
 					  size_t *const length)
 	__attribute__((nonnull(2, 3), warn_unused_result));
 
-bool parse_connrequest(const unsigned char *const buffer,
+bool parse_connrequest(const unsigned char *const data,
+                       const size_t data_len,
 							  size_t *const parsed_len,
 							  int *const packing,
 							  int *const proto_version)
-	__attribute__((nonnull(1, 2, 3, 4), warn_unused_result));
+	__attribute__((nonnull(1, 3, 4, 5), warn_unused_result));
 
 bool gen_connrequest(const int packing,
 							unsigned char *const dest,
