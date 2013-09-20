@@ -46,6 +46,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "log.h"
 int log_max_priority = LOG_INFO;
+bool iprohc_log_stderr = true;
 
 /* List of clients */
 struct client**clients;
@@ -270,20 +271,44 @@ void switch_log_max(int sig)
 }
 
 
-void usage(char*arg0)
+static void usage(void)
 {
-	printf("\n");
-	printf("IP/ROHC server, version %s%s", PACKAGE_VERSION, PACKAGE_REVNO);
-	printf("\n\n");
-	printf("Usage: %s [opts]\n", arg0);
-	printf("\n");
-	printf("Options: \n");
-	printf(" -c --conf     Path to configuration file\n");
-	printf("               (default: /etc/iprohc_server.conf)\n");
-	printf(" -b --basedev  Name of the underlying interface\n");
-	printf(" -d --debug    Enable debuging\n");
-	printf(" -h --help     Print this help message\n");
-	exit(2);
+	printf("IP/ROHC server: establish tunnels requested by IP/ROHC clients\n"
+	       "\n"
+	       "Usage: iprohc_server -b itfname [opts]\n"
+	       "   or: iprohc_server -h|--help\n"
+	       "   or: iprohc_server -v|--version\n"
+	       "\n"
+	       "Options:\n"
+	       "Mandatory options:\n"
+	       "  -b, --basedev ITF   Name of the underlying interface\n"
+	       "\n"
+	       "Other options:\n"
+	       "  -c --conf PATH      Path to configuration file\n"
+	       "                      (default: /etc/iprohc_server.conf)\n"
+	       "  -d, --debug         Enable debuging\n"
+	       "  -h, --help          Print this help message\n"
+	       "  -v, --version       Print the software version\n"
+	       "\n"
+	       "Examples:\n"
+	       "\n"
+	       "Start the IP/ROHC server with default configuration file, compute\n"
+	       "tunnel MTU based on network interface eth0:\n"
+	       "  iprohc_server -b eth0\n"
+	       "\n"
+	       "Start the IP/ROHC server with the given configuration file, compute\n"
+	       "tunnel MTU based on network interface wlan:\n"
+	       "  iprohc_server -b wlan -c /etc/iprohc/server.cnf\n"
+	       "\n"
+	       "Print software version:\n"
+	       "  iprohc_server --version\n"
+	       "\n"
+	       "Print usage help:\n"
+	       "  iprohc_server --help\n"
+	       "\n"
+	       "Report bugs to <%s>.\n",
+	       PACKAGE_BUGREPORT);
+
 }
 
 
@@ -419,12 +444,13 @@ int main(int argc, char *argv[])
 		{ "basedev", required_argument, NULL, 'b' },
 		{ "debug",   no_argument,       NULL, 'd' },
 		{ "help",    no_argument,       NULL, 'h' },
+		{ "version", no_argument,       NULL, 'v' },
 		{NULL, 0, 0, 0}
 	};
 	int option_index = 0;
 	do
 	{
-		c = getopt_long(argc, argv, "c:b:hd", options, &option_index);
+		c = getopt_long(argc, argv, "c:b:hvd", options, &option_index);
 		switch(c)
 		{
 			case 'c':
@@ -452,15 +478,20 @@ int main(int argc, char *argv[])
 				trace(LOG_DEBUG, "Debugging enabled");
 				break;
 			case 'h':
-				usage(argv[0]);
-				break;
+				usage();
+				goto error;
+			case 'v':
+				printf("IP/ROHC server, version %s%s", PACKAGE_VERSION,
+				       PACKAGE_REVNO);
+				goto error;
 		}
 	}
 	while(c != -1);
 
 	if(parse_config(conf_file, &server_opts) < 0)
 	{
-		trace(LOG_ERR, "Unable to parse configuration file, exiting...");
+		trace(LOG_ERR, "Unable to parse configuration file '%s', exiting...",
+		      conf_file);
 		exit_status = 2;
 		goto free_client_contexts;
 	}
@@ -618,8 +649,10 @@ int main(int argc, char *argv[])
 		goto delete_raw;
 	}
 
-	struct timespec timeout;
+	/* stop writing logs on stderr */
+	iprohc_log_stderr = false;
 
+	struct timespec timeout;
 	struct timeval now;
 
 	/* mask signals during interface polling */
@@ -808,6 +841,14 @@ remove_pidfile:
 free_client_contexts:
 	free(clients);
 error:
+	if(exit_status == 0)
+	{
+		trace(LOG_INFO, "server stops with exit code %d", exit_status);
+	}
+	else
+	{
+		trace(LOG_NOTICE, "server stops with exit code %d", exit_status);
+	}
 	trace(LOG_INFO, "server stops with exit code %d", exit_status);
 	trace(LOG_INFO, "close syslog session");
 	closelog();

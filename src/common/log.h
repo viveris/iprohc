@@ -19,9 +19,12 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #define IPROHC_LOG_H
 
 #include <syslog.h>
+#include <stdio.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 extern int log_max_priority;
+extern bool iprohc_log_stderr;
 
 static inline void trace(int priority, const char *format, ...)
 {
@@ -32,6 +35,14 @@ static inline void trace(int priority, const char *format, ...)
 		va_start(args, format);
 		vsyslog(LOG_MAKEPRI(LOG_DAEMON, priority), format, args);
 		va_end(args);
+
+		if(iprohc_log_stderr && priority <= LOG_NOTICE)
+		{
+			va_start(args, format);
+			vfprintf(stderr, format, args);
+			fprintf(stderr, "\n");
+			va_end(args);
+		}
 	}
 
 }

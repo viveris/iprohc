@@ -54,28 +54,60 @@ Returns :
 
 #include "log.h"
 int log_max_priority = LOG_INFO;
+bool iprohc_log_stderr = true;
 
 #include "messages.h"
 #include "tls.h"
 
 
-static void usage(const char *const arg0)
+static void usage(void)
 {
-	printf("\n");
-	printf("IP/ROHC client, version %s%s", PACKAGE_VERSION, PACKAGE_REVNO);
-	printf("\n\n");
-	printf("Usage: %s --remote addr --dev itf_name [opts]\n", arg0);
-	printf("\n");
-	printf("Options : \n");
-	printf(" --remote : Address of the remote server \n");
-	printf(" --port : Port of the remote server \n");
-	printf(" --dev : Name of the TUN interface that will be created \n");
-	printf(" --basedev : Name of the underlying interface\n");
-	printf(" --debug : Enable debuging \n");
-	printf(" --up : Path to a shell script that will be executed when network is up\n");
-	printf(" --p12 : Path to the pkcs12 file containing server CA, client key and client crt\n");
-	printf(" --packing : Override packing\n");
-	exit(2);
+	printf("IP/ROHC client: establish a tunnel with an instance of IP/ROHC server\n"
+	       "\n"
+	       "You must be root to run the IP/ROHC tunnel client.\n"
+	       "\n"
+	       "Usage: iprohc_client -r remoteaddr -b itfname -i itfname -P pkcs12file [options]\n"
+	       "   or: iprohc_client -h|--help\n"
+	       "   or: iprohc_client -v|--version\n"
+	       "\n"
+	       "Options:\n"
+	       "Mandatory options:\n"
+	       "  -b, --basedev ITF   The name of the underlying interface\n"
+	       "  -i, --dev ITF       The name of the interface that will be\n"
+	       "                      created\n"
+	       "  -P, --p12 PATH      The path to the PKCS#12 file containing\n"
+	       "                      server CA, client key and client crt\n"
+	       "  -r, --remote ADDR   The address of the remote server\n"
+	       "\n"
+	       "Other options:\n"
+	       "  -d, --debug         Enable debuging\n"
+	       "  -h, --help          Print this help message\n"
+	       "  -k, --packing NUM   Override packing level sent by server\n"
+	       "  -p, --port NUM      The port of the remote server\n"
+	       "  -u, --up PATH       Path to a shell script that will be run\n"
+	       "                      when tunnel is ready\n"
+	       "  -v, --version       Print the software version\n"
+	       "\n"
+	       "Examples:\n"
+	       "\n"
+	       "Establish an IP/ROHC tunnel with remote server located at 192.168.1.14\n"
+	       "through the local network interface eth0:\n"
+	       "  iprohc_client -r 192.168.1.14 -b eth0 -i iprohc -P ./client.p12\n"
+	       "\n"
+	       "Establish an IP/ROHC tunnel with server 10.2.5.3 through the local\n"
+	       "network interface eth2 and run the ./set_routes.sh script once tunnel\n"
+	       "is established:\n"
+	       "  iprohc_client -r 10.2.5.3 -b eth2 -i iprohc -P ./certificate \\\n"
+	       "                -u ./set_routes.sh\n"
+	       "\n"
+	       "Print software version:\n"
+	       "  iprohc_client --version\n"
+	       "\n"
+	       "Print usage help:\n"
+	       "  iprohc_client --help\n"
+	       "\n"
+	       "Report bugs to <%s>.\n",
+	       PACKAGE_BUGREPORT);
 }
 
 
@@ -133,6 +165,7 @@ int main(int argc, char *argv[])
 		{ "up",      required_argument, NULL, 'u' },
 		{ "debug",   no_argument, NULL, 'd' },
 		{ "help",    no_argument, NULL, 'h' },
+		{ "version", no_argument, NULL, 'v' },
 		{NULL, 0, 0, 0}
 	};
 
@@ -152,7 +185,7 @@ int main(int argc, char *argv[])
 	optind = 1;
 	do
 	{
-		c = getopt_long(argc, argv, "i:b:r:p:u:P:hk:", options, NULL);
+		c = getopt_long(argc, argv, "i:b:r:p:u:P:hvk:", options, NULL);
 		switch(c)
 		{
 			case 'i':
@@ -208,8 +241,12 @@ int main(int argc, char *argv[])
 				trace(LOG_DEBUG, "Using forced packing : %d\n", client_opts.packing);
 				break;
 			case 'h':
-				usage(argv[0]);
-				break;
+				usage();
+				goto error;
+			case 'v':
+				printf("IP/ROHC client, version %s%s\n", PACKAGE_VERSION,
+				       PACKAGE_REVNO);
+				goto error;
 		}
 	}
 	while(c != -1);
@@ -348,6 +385,10 @@ int main(int argc, char *argv[])
 			(tunnel.src_address.s_addr >>  8) & 0xff,
 			(tunnel.src_address.s_addr >>  0) & 0xff,
 			ntohs(local_addr.sin_port));
+
+
+	/* stop writing logs on stderr */
+	iprohc_log_stderr = false;
 
 
 	/*

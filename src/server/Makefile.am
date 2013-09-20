@@ -43,7 +43,6 @@ noinst_HEADERS = \
 iprohc_server.1: $(iprohc_server_SOURCES)
 	$(AM_V_GEN)help2man --output=$@ -s 1 --no-info \
 		-m "$(PACKAGE_NAME)'s tools" -S "$(PACKAGE_NAME)" \
-		--help-option=help --version-option=version \
 		-n "The IP/ROHC server" \
 		$(builddir)/iprohc_server
 

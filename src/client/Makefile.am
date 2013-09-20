@@ -37,7 +37,6 @@ noinst_HEADERS = \
 iprohc_client.1: $(iprohc_client_SOURCES)
 	$(AM_V_GEN)help2man --output=$@ -s 1 --no-info \
 		-m "$(PACKAGE_NAME)'s tools" -S "$(PACKAGE_NAME)" \
-		--help-option=help --version-option=version \
 		-n "The IP/ROHC client" \
 		$(builddir)/iprohc_client
 
