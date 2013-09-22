@@ -31,7 +31,8 @@ iprohc_server_SOURCES = \
 
 iprohc_server_LDADD = \
 	-liprohc_common \
-	-lyaml
+	-lyaml \
+	-lm
 
 noinst_HEADERS = \
 	client.h \
