@@ -41,7 +41,7 @@ noinst_HEADERS = \
 	server.h \
 	tls.h
 
-iprohc_server.1: $(iprohc_server_SOURCES)
+iprohc_server.1: $(iprohc_server_SOURCES) $(builddir)/iprohc_server
 	$(AM_V_GEN)help2man --output=$@ -s 1 --no-info \
 		-m "$(PACKAGE_NAME)'s tools" -S "$(PACKAGE_NAME)" \
 		-n "The IP/ROHC server" \

@@ -34,7 +34,7 @@ noinst_HEADERS = \
 	messages.h \
 	tls.h
 
-iprohc_client.1: $(iprohc_client_SOURCES)
+iprohc_client.1: $(iprohc_client_SOURCES) $(builddir)/iprohc_client
 	$(AM_V_GEN)help2man --output=$@ -s 1 --no-info \
 		-m "$(PACKAGE_NAME)'s tools" -S "$(PACKAGE_NAME)" \
 		-n "The IP/ROHC client" \
