@@ -12,7 +12,8 @@ endif
 
 SUBDIRS = \
 	src \
-	$(DOC_DIR)
+	$(DOC_DIR) \
+	contrib
 
 dist_doc_DATA = \
 	README \

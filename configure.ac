@@ -304,6 +304,7 @@ AC_CONFIG_FILES([ \
 	src/server/Makefile \
 	doc/Makefile \
 	doc/doxygen.conf \
+	contrib/Makefile \
 ])
 
 AC_OUTPUT
