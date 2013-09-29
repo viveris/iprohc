@@ -599,7 +599,7 @@ int tun2raw(struct rohc_comp *comp,
             size_t *const packing_cur_pkts,
             struct statitics *stats)
 {
-	const struct timespec arrival_time = { .tv_sec = 0, .tv_nsec = 0 };
+	const struct rohc_timestamp arrival_time = { .sec = 0, .nsec = 0 };
 	const size_t packing_header_len = 2;
 
 	unsigned char buffer[TUNTAP_BUFSIZE];
@@ -774,7 +774,7 @@ int raw2tun(struct rohc_decomp *decomp,
 				const size_t mtu,
 				struct statitics *stats)
 {
-	const struct timespec arrival_time = { .tv_sec = 0, .tv_nsec = 0 };
+	const struct rohc_timestamp arrival_time = { .sec = 0, .nsec = 0 };
 
 	unsigned int packet_len = mtu;
 	unsigned char *packet = malloc(packet_len * sizeof(unsigned char));
