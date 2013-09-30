@@ -51,11 +51,22 @@ bool parse_tlv(const unsigned char *const data,
 	assert(results != NULL);
 	assert(parsed_len != NULL);
 
+	trace(LOG_DEBUG, "parse a maximum of %d parameters in TLV format on %zu "
+	      "bytes", max_results + 1, data_len);
+
 	for((*parsed_len) = 0, i = 0;
-	    (*parsed_len) < (data_len - 3) && i < max_results;
+	    (*parsed_len) < data_len && i < (max_results + 1);
 	    (*parsed_len) += (3 + len), i++)
 	{
 		size_t j;
+
+		/* enough data for type field? */
+		if(((*parsed_len) + 1) > data_len)
+		{
+			trace(LOG_WARNING, "malformed TLV: 1 byte required for type while only "
+			      "%zu bytes available", data_len);
+			goto error;
+		}
 
 		/* parse type */
 		result = malloc(sizeof(struct tlv_result));
@@ -68,14 +79,26 @@ bool parse_tlv(const unsigned char *const data,
 			break;
 		}
 
+		/* enough data for length field? */
+		if(((*parsed_len) + 3) > data_len)
+		{
+			trace(LOG_WARNING, "malformed TLV (type = 0x%02x): %zu bytes "
+			      "required while only %zu bytes available", result->type,
+			      (*parsed_len) + 3, data_len);
+			goto error;
+		}
+
 		/* parse length */
 		len = ntohs(*((uint16_t*) (data + (*parsed_len) + 1)));
-		trace(LOG_DEBUG, "TLV: Length = 0x%zu", len);
+		trace(LOG_DEBUG, "TLV: Length = %zu", len);
 
 		/* parse value */
 		if(((*parsed_len) + 3 + len) > data_len)
 		{
 			/* not enough data for value field */
+			trace(LOG_WARNING, "malformed TLV (type = 0x%02x, length = %zu): "
+			      "%zu bytes required while only %zu bytes available",
+			      result->type, len, (*parsed_len) + 3 + len, data_len);
 			goto error;
 		}
 		result->value = (unsigned char *) (data + (*parsed_len) + 3);
@@ -88,7 +111,7 @@ bool parse_tlv(const unsigned char *const data,
 		results[i] = result;
 	}
 
-	if(i == max_results && !end_found)
+	if(!end_found)
 	{
 		trace(LOG_WARNING, "TLV option 'END' not found");
 		goto error;
@@ -147,12 +170,13 @@ bool gen_tlv(unsigned char *const f_dest,
 		*length += tlv_opt_len;
 
 		trace(LOG_DEBUG, "generate a %zd-byte TLV option of type %d",
-				tlv_opt_len, tlvs[i].type);
+				1 + tlv_opt_len, tlvs[i].type);
 	}
 
 	*dest = END;
 	dest++;
 	(*length)++;
+	trace(LOG_DEBUG, "generate a 1-byte TLV option of type END (%d)", END);
 
 	return true;
 
@@ -264,7 +288,7 @@ bool parse_connect(const unsigned char *const data,
 	is_ok = parse_tlv(data, data_len, results, N_TUNNEL_PARAMS, parsed_len);
 	if(!is_ok)
 	{
-		trace(LOG_ERR, "failed to parse TLV parameters");
+		trace(LOG_ERR, "parse_connect: failed to parse TLV parameters");
 		goto free_results;
 	}
 	trace(LOG_DEBUG, "Parsing ok");
@@ -420,24 +444,29 @@ bool parse_connrequest(const unsigned char *const data,
 	is_ok = parse_tlv(data, data_len, results, N_CONNREQ_FIELD, parsed_len);
 	if(!is_ok)
 	{
-		trace(LOG_ERR, "failed to parse TLV parameters");
+		trace(LOG_ERR, "parse_connrequest: failed to parse TLV parameters");
 		goto free_results;
 	}
 
 	err_nr = 0;
-	for(i = 0; i < N_CONNREQ_FIELD; i++)
+	for(i = 0; i < N_CONNREQ_FIELD && results[i] != NULL; i++)
 	{
-		if(results[i] != NULL && results[i]->type == CPACKING)
+		if(results[i]->type == CPACKING)
 		{
+			trace(LOG_DEBUG, "connection request: parameter PACKING (%u) found",
+			      results[i]->type);
 			*packing = *((char*) results[i]->value);
 		}
-		else if(results[i] != NULL && results[i]->type == CPROTO_VERSION)
+		else if(results[i]->type == CPROTO_VERSION)
 		{
+			trace(LOG_DEBUG, "connection request: parameter PROTO_VERSION (%u) "
+			      "found", results[i]->type);
 			*proto_version = *((char*) results[i]->value);
 		}
 		else
 		{
-			trace(LOG_ERR, "Unknown connection request field");
+			trace(LOG_WARNING, "connection request: unexpected parameter %u",
+			      results[i]->type);
 			err_nr++;
 		}
 		free(results[i]);

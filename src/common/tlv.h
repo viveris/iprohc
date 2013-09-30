@@ -27,29 +27,31 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #define CURRENT_PROTO_VERSION 1
 
 /* Global structures */
-enum commands {
-	C_CONNECT,
-	C_CONNECT_OK,
-	C_CONNECT_KO,
-	C_CONNECT_DONE,
-	C_DISCONNECT,
-	C_KEEPALIVE
+enum commands
+{
+	C_CONNECT       = 1,
+	C_CONNECT_OK    = 2,
+	C_CONNECT_KO    = 3,
+	C_CONNECT_DONE  = 4,
+	C_DISCONNECT    = 5,
+	C_KEEPALIVE     = 6,
 };
 
-enum types {
-	END,
+enum types
+{
+	END            =  1,
 	/* connect types */
-	IP_ADDR,
-	PACKING,
-	MAXCID,
-	UNID,
-	WINDOWSIZE,
-	REFRESH,
-	KEEPALIVE,
-	ROHC_COMPAT,
+	IP_ADDR        =  2,
+	PACKING        =  3,
+	MAXCID         =  4,
+	UNID           =  5,
+	WINDOWSIZE     =  6,
+	REFRESH        =  7,
+	KEEPALIVE      =  8,
+	ROHC_COMPAT    =  9,
 	/* connrequest types */
-	CPACKING,
-	CPROTO_VERSION
+	CPACKING       = 10,
+	CPROTO_VERSION = 11,
 };
 
 #define N_CONNECT_FIELD 8
