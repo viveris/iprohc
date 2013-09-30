@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
 		{
 			case 'd':
 				log_max_priority = LOG_DEBUG;
-				trace(LOG_DEBUG, "Debbuging enabled", optarg);
+				trace(LOG_DEBUG, "Debbuging enabled");
 				break;
 		}
 	}
@@ -542,7 +542,7 @@ int main(int argc, char *argv[])
 				trace(LOG_ERR, "TLS session was interrupted by server");
 				goto error;
 			}
-			if(handle_message(&tunnel, buf, ret, client_opts) < 0)
+			if(!handle_message(&tunnel, buf, ret, client_opts))
 			{
 				trace(LOG_ERR, "failed to handle message received from server");
 				goto error;

@@ -15,6 +15,9 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef IPROHC_SERVER_SERVER_H
+#define IPROHC_SERVER_SERVER_H
+
 #include "tlv.h"
 
 #include <stdint.h>
@@ -36,4 +39,6 @@ struct server_opts
 
 	struct tunnel_params params;
 };
+
+#endif
 

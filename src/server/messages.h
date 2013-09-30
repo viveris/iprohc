@@ -15,7 +15,19 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "client.h"
 #include "rohc_tunnel.h"
+
+
+/** Print in logs a trace related to the given client */
+#define client_trace(client, prio, format, ...) \
+	do \
+	{ \
+		trace((prio), "[client %s] " format, \
+		      (client)->tunnel.dest_addr_str, ##__VA_ARGS__); \
+	} \
+	while(0)
+
 
 int handle_client_request(struct client*client);
 

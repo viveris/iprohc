@@ -27,6 +27,9 @@ extern int log_max_priority;
 extern bool iprohc_log_stderr;
 
 static inline void trace(int priority, const char *format, ...)
+	__attribute__((format(printf, 2, 3)));
+
+static inline void trace(int priority, const char *format, ...)
 {
 	va_list args;
 

@@ -37,7 +37,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 
 /** The maximal size (in bytes) taken by the tunnel headers */
-#define MAX_TUNNEL_OVERHEAD (sizeof(struct iphdr) + 2 + 20U)
+#define MAX_TUNNEL_OVERHEAD ((size_t)(sizeof(struct iphdr) + 2U + 20U))
 
 
 /**
@@ -89,7 +89,7 @@ bool set_link_mtu(const char *const base_dev,
 	if(ifr.ifr_mtu <= 0 || ifr.ifr_mtu <= MAX_TUNNEL_OVERHEAD)
 	{
 		trace(LOG_ERR, "failed to set MTU on interface '%s': MTU of base "
-		      "interface '%s' is too small: %d bytes while more than %u "
+		      "interface '%s' is too small: %d bytes while more than %zu "
 		      "bytes required", new_dev, base_dev, ifr.ifr_mtu,
 		      MAX_TUNNEL_OVERHEAD);
 		goto close;

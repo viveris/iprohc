@@ -37,6 +37,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "messages.h"
 #include "tls.h"
 #include "server_config.h"
+#include "log.h"
 
 // XXX : Config ?
 #define MAX_CLIENTS 50
@@ -44,12 +45,13 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /// The maximal size of data that can be received on the virtual interface
 #define TUNTAP_BUFSIZE 1518
 
-#include "log.h"
+/** Toggle to true to print clients stats at next event loop */
+static bool clients_do_dump_stats = false;
+
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
 
-/* List of clients */
-struct client**clients;
+
 
 /*
  * Route function that will be threaded twice to route
@@ -174,65 +176,65 @@ void dump_opts(struct server_opts opts)
 	trace(LOG_DEBUG, "Tunnel params :");
 	trace(LOG_DEBUG, " . Local IP  : %s", inet_ntoa(addr));
 	trace(LOG_DEBUG, " . Packing   : %d", opts.params.packing);
-	trace(LOG_DEBUG, " . Max cid   : %d", opts.params.max_cid);
+	trace(LOG_DEBUG, " . Max cid   : %zu", opts.params.max_cid);
 	trace(LOG_DEBUG, " . Unid      : %d", opts.params.is_unidirectional);
-	trace(LOG_DEBUG, " . Keepalive : %d", opts.params.keepalive_timeout);
+	trace(LOG_DEBUG, " . Keepalive : %zu", opts.params.keepalive_timeout);
 }
 
 
 void dump_stats_client(struct client*client)
 {
-	trace(LOG_INFO, "--------------------------------------------------");
-	trace(LOG_INFO, "client %s", inet_ntoa(client->tunnel.dest_address));
+	client_trace(client, LOG_INFO, "--------------------------------------------");
 	switch(client->tunnel.status)
 	{
 		case IPROHC_TUNNEL_CONNECTING:
-			trace(LOG_INFO, "status: connecting");
+			client_trace(client, LOG_INFO, "status: connecting");
 			break;
 		case IPROHC_TUNNEL_CONNECTED:
-			trace(LOG_INFO, "status: connected");
+			client_trace(client, LOG_INFO, "status: connected");
 			break;
 		case IPROHC_TUNNEL_PENDING_DELETE:
-			trace(LOG_INFO, "status: pending delete");
+			client_trace(client, LOG_INFO, "status: pending delete");
 			break;
 		default:
-			trace(LOG_INFO, "status: unknown (%d)", client->tunnel.status);
+			client_trace(client, LOG_INFO, "status: unknown (%d)",
+			             client->tunnel.status);
 			break;
 	}
 	if(client->tunnel.status == IPROHC_TUNNEL_CONNECTED)
 	{
 		int i;
 
-		trace(LOG_INFO, "packing: %d", client->packing);
-		trace(LOG_INFO, "stats: ");
-		trace(LOG_INFO, " . failed decompression:       %d",
-		      client->tunnel.stats.decomp_failed);
-		trace(LOG_INFO, " . total  decompression:       %d",
-		      client->tunnel.stats.decomp_total);
-		trace(LOG_INFO, " . failed compression:         %d",
-		      client->tunnel.stats.comp_failed);
-		trace(LOG_INFO, " . total  compression:         %d",
-		      client->tunnel.stats.comp_total);
-		trace(LOG_INFO, " . failed depacketization:     %d",
-		      client->tunnel.stats.unpack_failed);
-		trace(LOG_INFO, " . total received packets on raw: %d",
-		      client->tunnel.stats.total_received);
-		trace(LOG_INFO, " . total compressed header size:  %d bytes",
-		      client->tunnel.stats.head_comp_size);
-		trace(LOG_INFO, " . total compressed packet size:  %d bytes",
-		      client->tunnel.stats.total_comp_size);
-		trace(LOG_INFO, " . total header size before comp: %d bytes",
-		      client->tunnel.stats.head_uncomp_size);
-		trace(LOG_INFO, " . total packet size before comp: %d bytes",
-		      client->tunnel.stats.total_uncomp_size);
-		trace(LOG_INFO, "stats packing:");
+		client_trace(client, LOG_INFO, "packing: %d", client->packing);
+		client_trace(client, LOG_INFO, "stats:");
+		client_trace(client, LOG_INFO, "  failed decompression:          %d",
+		             client->tunnel.stats.decomp_failed);
+		client_trace(client, LOG_INFO, "  total  decompression:          %d",
+		             client->tunnel.stats.decomp_total);
+		client_trace(client, LOG_INFO, "  failed compression:            %d",
+		             client->tunnel.stats.comp_failed);
+		client_trace(client, LOG_INFO, "  total  compression:            %d",
+		             client->tunnel.stats.comp_total);
+		client_trace(client, LOG_INFO, "  failed depacketization:        %d",
+		             client->tunnel.stats.unpack_failed);
+		client_trace(client, LOG_INFO, "  total received packets on raw: %d",
+		             client->tunnel.stats.total_received);
+		client_trace(client, LOG_INFO, "  total compressed header size:  %d bytes",
+		             client->tunnel.stats.head_comp_size);
+		client_trace(client, LOG_INFO, "  total compressed packet size:  %d bytes",
+		             client->tunnel.stats.total_comp_size);
+		client_trace(client, LOG_INFO, "  total header size before comp: %d bytes",
+		             client->tunnel.stats.head_uncomp_size);
+		client_trace(client, LOG_INFO, "  total packet size before comp: %d bytes",
+		             client->tunnel.stats.total_uncomp_size);
+		client_trace(client, LOG_INFO, "stats packing:");
 		for(i = 1; i < client->tunnel.stats.n_stats_packing; i++)
 		{
-			trace(LOG_INFO, " . %d packets: %d", i,
-			      client->tunnel.stats.stats_packing[i]);
+			client_trace(client, LOG_INFO, "  %d packets: %d", i,
+			             client->tunnel.stats.stats_packing[i]);
 		}
 	}
-	trace(LOG_INFO, "--------------------------------------------------");
+	client_trace(client, LOG_INFO, "--------------------------------------------");
 }
 
 
@@ -241,15 +243,7 @@ void dump_stats_client(struct client*client)
  */
 void dump_stats(int sig)
 {
-	int j;
-
-	for(j = 0; j < MAX_CLIENTS; j++)
-	{
-		if(clients[j] != NULL)
-		{
-			dump_stats_client(clients[j]);
-		}
-	}
+	clients_do_dump_stats = true;
 }
 
 
@@ -366,6 +360,9 @@ int main(int argc, char *argv[])
 {
 	int exit_status = 1;
 
+	struct client**clients = NULL;
+	size_t clients_nr = 0;
+
 	size_t client_id;
 	int serv_socket;
 
@@ -412,6 +409,7 @@ int main(int argc, char *argv[])
 				MAX_CLIENTS);
 		goto error;
 	}
+	clients_nr = 0;
 
 	/* Signal for stats and log */
 	signal(SIGINT,  quit);
@@ -701,7 +699,7 @@ int main(int argc, char *argv[])
 		if(FD_ISSET(serv_socket, &rdfs))
 		{
 			ret = new_client(serv_socket, tun, tun_itf_mtu, basedev_mtu,
-			                 clients, MAX_CLIENTS, server_opts);
+			                 clients, &clients_nr, MAX_CLIENTS, server_opts);
 			if(ret < 0)
 			{
 				trace(LOG_ERR, "new_client returned %d\n", ret);
@@ -735,7 +733,7 @@ int main(int argc, char *argv[])
 				dump_stats_client(clients[j]);
 				gnutls_bye(clients[j]->tls_session, GNUTLS_SHUT_WR);
 				/* delete client */
-				del_client(clients[j]);
+				del_client(clients[j], &clients_nr, MAX_CLIENTS);
 				clients[j] = NULL;
 			}
 			else if(FD_ISSET(clients[j]->tcp_socket, &rdfs))
@@ -746,14 +744,14 @@ int main(int argc, char *argv[])
 				{
 					if(clients[j]->tunnel.status == IPROHC_TUNNEL_CONNECTED)
 					{
-						trace(LOG_NOTICE, "[%s] client #%d was disconnected, stop its "
-								"thread", inet_ntoa(clients[j]->tunnel.dest_address), j);
+						client_trace(clients[j], LOG_NOTICE, "client #%d was "
+						             "disconnected, stop its thread", j);
 						stop_client_tunnel(clients[j]);
 					}
 					else if(clients[j]->tunnel.status == IPROHC_TUNNEL_CONNECTING)
 					{
-						trace(LOG_NOTICE, "[%s] failed to connect client #%d, aborting",
-						      inet_ntoa(clients[j]->tunnel.dest_address), j);
+						client_trace(clients[j], LOG_NOTICE, "failed to connect "
+						             "client #%d, aborting", j);
 						clients[j]->tunnel.status = IPROHC_TUNNEL_PENDING_DELETE;
 					}
 				}
@@ -771,6 +769,18 @@ int main(int argc, char *argv[])
 		}
 #endif
 
+		/* if SIGUSR1 was received, then dump stats */
+		if(clients_do_dump_stats)
+		{
+			for(j = 0; j < MAX_CLIENTS; j++)
+			{
+				if(clients[j] != NULL)
+				{
+					dump_stats_client(clients[j]);
+				}
+			}
+			clients_do_dump_stats = false;
+		}
 	}
 	trace(LOG_INFO, "someone asked to stop server");
 
@@ -849,7 +859,6 @@ error:
 	{
 		trace(LOG_NOTICE, "server stops with exit code %d", exit_status);
 	}
-	trace(LOG_INFO, "server stops with exit code %d", exit_status);
 	trace(LOG_INFO, "close syslog session");
 	closelog();
 	return exit_status;

@@ -63,7 +63,8 @@ bool handle_message(struct tunnel *const tunnel,
 				                         opts, &tlv_len);
 				if(!is_ok)
 				{
-					trace(LOG_ERR, "failed to decode TCP message, abort");
+					trace(LOG_ERR, "failed to handle CONNECT_OK message from "
+					      "server, abort");
 					goto error;
 				}
 				parsed_len += tlv_len;

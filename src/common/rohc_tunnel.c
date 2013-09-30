@@ -58,6 +58,18 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #define MAX_TRACE_SIZE 2048
 
+
+/** Print in logs a trace related to the given tunnel */
+#define tunnel_trace(tunnel, prio, format, ...) \
+	do \
+	{ \
+		trace((prio), "[client %s] " format, \
+		      (tunnel)->dest_addr_str, ##__VA_ARGS__); \
+	} \
+	while(0)
+
+
+
 /* Prototypes for local functions */
 
 void dump_packet(char *descr, unsigned char *packet, unsigned int length);
@@ -129,7 +141,9 @@ int collect_submit(lcc_connection_t *conn,
 }
 
 
-int collect_stats(struct statitics stats, struct timeval now, struct in_addr addr)
+int collect_stats(struct statitics stats,
+                  struct timeval now,
+                  const char *const addr)
 {
 	lcc_connection_t *conn;
 	lcc_identifier_t id = { "localhost", "iprohc", "", "bytes", "" };
@@ -137,7 +151,7 @@ int collect_stats(struct statitics stats, struct timeval now, struct in_addr add
 
 	trace(LOG_DEBUG, "Sending stats");
 
-	strncpy(id.plugin_instance, inet_ntoa(addr), LCC_NAME_LEN);
+	strncpy(id.plugin_instance, addr, LCC_NAME_LEN);
 
 	if(lcc_connect(COLLECTD_PATH, &conn) < 0)
 	{
@@ -259,6 +273,7 @@ void * new_tunnel(void *arg)
 	/* TODO : Check assumed present attributes
 	   (thread, local_address, dest_address, tun, fake_tun, raw_socket) */
 
+
 	/*
 	 * ROHC
 	 */
@@ -267,7 +282,7 @@ void * new_tunnel(void *arg)
 	comp = rohc_comp_new(ROHC_SMALL_CID, tunnel->params.max_cid);
 	if(comp == NULL)
 	{
-		trace(LOG_ERR, "cannot create the ROHC compressor");
+		tunnel_trace(tunnel, LOG_ERR, "cannot create the ROHC compressor");
 		goto error;
 	}
 
@@ -275,7 +290,7 @@ void * new_tunnel(void *arg)
 	is_ok = rohc_comp_set_traces_cb(comp, print_rohc_traces);
 	if(!is_ok)
 	{
-		trace(LOG_ERR, "cannot set trace callback for compressor");
+		tunnel_trace(tunnel, LOG_ERR, "cannot set trace callback for compressor");
 		goto destroy_comp;
 	}
 
@@ -287,7 +302,7 @@ void * new_tunnel(void *arg)
 	                                  ROHC_PROFILE_RTP, -1);
 	if(!is_ok)
 	{
-		trace(LOG_ERR, "cannot enable profiles for compressor");
+		tunnel_trace(tunnel, LOG_ERR, "cannot enable profiles for compressor");
 		goto destroy_comp;
 	}
 
@@ -295,7 +310,7 @@ void * new_tunnel(void *arg)
 	is_ok = rohc_comp_set_rtp_detection_cb(comp, callback_rtp_detect, NULL);
 	if(!is_ok)
 	{
-		trace(LOG_ERR, "failed to set RTP detection callback");
+		tunnel_trace(tunnel, LOG_ERR, "failed to set RTP detection callback");
 		goto destroy_comp;
 	}
 
@@ -306,7 +321,7 @@ void * new_tunnel(void *arg)
 	                         (is_umode ? NULL : comp));
 	if(decomp == NULL)
 	{
-		trace(LOG_ERR, "cannot create the ROHC decompressor");
+		tunnel_trace(tunnel, LOG_ERR, "cannot create the ROHC decompressor");
 		goto destroy_comp;
 	}
 
@@ -314,7 +329,7 @@ void * new_tunnel(void *arg)
 	is_ok = rohc_decomp_set_traces_cb(decomp, print_rohc_traces);
 	if(!is_ok)
 	{
-		trace(LOG_ERR, "cannot set trace callback for decompressor");
+		tunnel_trace(tunnel, LOG_ERR, "cannot set trace callback for decompressor");
 		goto destroy_decomp;
 	}
 
@@ -327,7 +342,7 @@ void * new_tunnel(void *arg)
 	                                    ROHC_PROFILE_RTP, -1);
 	if(!is_ok)
 	{
-		trace(LOG_ERR, "cannot enable profiles for decompressor");
+		tunnel_trace(tunnel, LOG_ERR, "cannot enable profiles for decompressor");
 		goto destroy_decomp;
 	}
 
@@ -388,7 +403,8 @@ void * new_tunnel(void *arg)
 	packing_frame = malloc(packing_max_len);
 	if(packing_frame == NULL)
 	{
-		trace(LOG_ERR, "failed to allocate memory for the packing frame\n");
+		tunnel_trace(tunnel, LOG_ERR, "failed to allocate memory for the packing "
+		             "frame");
 		goto destroy_decomp;
 	}
 
@@ -405,17 +421,19 @@ void * new_tunnel(void *arg)
 		              &timeout, &sigmask);
 		if(ret < 0)
 		{
-			trace(LOG_ERR, "pselect failed: %s (%d)\n", strerror(errno), errno);
+			tunnel_trace(tunnel, LOG_ERR, "pselect failed: %s (%d)",
+			             strerror(errno), errno);
 			failure = 1;
 			tunnel->status = IPROHC_TUNNEL_PENDING_DELETE;
 		}
 		else if(ret > 0)
 		{
-			trace(LOG_DEBUG, "Packet received...\n");
+			tunnel_trace(tunnel, LOG_DEBUG, "packet received...");
+
 			/* bridge from TUN to RAW */
 			if(FD_ISSET(read_tun, &readfds))
 			{
-				trace(LOG_DEBUG, "...from tun\n");
+				tunnel_trace(tunnel, LOG_DEBUG, "...from tun");
 				failure = tun2raw(comp, read_tun, tunnel->raw_socket,
 				                  tunnel->dest_address, tunnel->basedev_mtu,
 				                  packing_frame,
@@ -426,20 +444,20 @@ void * new_tunnel(void *arg)
 				is_last_init = true;
 				if(failure)
 				{
-					trace(LOG_NOTICE, "tun2raw failed\n");
+					tunnel_trace(tunnel, LOG_NOTICE, "tun2raw failed");
 				}
 			}
 
 			/* bridge from RAW to TUN */
 			if(FD_ISSET(read_raw, &readfds))
 			{
-				trace(LOG_DEBUG, "...from raw\n");
+				tunnel_trace(tunnel, LOG_DEBUG, "...from raw");
 				failure = raw2tun(decomp, tunnel->src_address.s_addr, read_raw,
 				                  tunnel->tun, tunnel->basedev_mtu,
 				                  &(tunnel->stats));
 				if(failure)
 				{
-					trace(LOG_NOTICE, "raw2tun failed\n");
+					tunnel_trace(tunnel, LOG_NOTICE, "raw2tun failed");
 				}
 			}
 		}
@@ -454,7 +472,8 @@ void * new_tunnel(void *arg)
 		{
 			if(packing_cur_len > 0)
 			{
-				trace(LOG_DEBUG, "No packets since a while, sending...");
+				tunnel_trace(tunnel, LOG_DEBUG, "no packets since a while, "
+				             "sending keepalive");
 				send_puree(tunnel->raw_socket, tunnel->dest_address,
 				           tunnel->basedev_mtu,
 				           packing_frame, &packing_cur_len, &packing_cur_pkts,
@@ -465,17 +484,18 @@ void * new_tunnel(void *arg)
 		}
 		if(now.tv_sec > tunnel->last_keepalive.tv_sec + kp_timeout)
 		{
-			trace(LOG_ERR, "Keepalive timeout detected (%ld > %ld + %d), exiting",
-			      now.tv_sec, tunnel->last_keepalive.tv_sec, kp_timeout);
+			tunnel_trace(tunnel, LOG_ERR, "keepalive timeout detected "
+			             "(%ld > %ld + %d), disconnect client", now.tv_sec,
+			             tunnel->last_keepalive.tv_sec, kp_timeout);
 			tunnel->status = IPROHC_TUNNEL_PENDING_DELETE;
 		}
 
 #ifdef STATS_COLLECTD
 		if(now.tv_sec > last_stat.tv_sec + 1)
 		{
-			if(collect_stats(tunnel->stats, now, tunnel->dest_address) < 0)
+			if(collect_stats(tunnel->stats, now, tunnel->dest_addr_str) < 0)
 			{
-				trace(LOG_ERR, "Unable to submit stats");
+				tunnel_trace(tunnel, LOG_ERR, "unable to submit stats");
 			}
 			gettimeofday(&last_stat, NULL);
 		}
@@ -483,7 +503,7 @@ void * new_tunnel(void *arg)
 	}
 	while(tunnel->status == IPROHC_TUNNEL_CONNECTED);
 
-	trace(LOG_INFO, "client thread was asked to stop");
+	tunnel_trace(tunnel, LOG_INFO, "client thread was asked to stop");
 
 	/*
 	 * Cleaning:
@@ -550,7 +570,7 @@ int send_puree(int to,
 		trace(LOG_ERR, "sendto failed: %s (%d)\n", strerror(errno), errno);
 		goto error;
 	}
-	trace(LOG_DEBUG, "%u bytes written on socket %d\n", *total_size, to);
+	trace(LOG_DEBUG, "%zu bytes written on socket %d\n", *total_size, to);
 
 	/* reset packing variables */
 	*total_size = 0;
@@ -845,7 +865,7 @@ int raw2tun(struct rohc_decomp *decomp,
 	ip_payload = packet + (ip_header->ihl * 4);
 	ip_payload_len = packet_len - (ip_header->ihl * 4);
 
-	trace(LOG_DEBUG, "read one %u-byte packed ROHC packet on RAW sock\n",
+	trace(LOG_DEBUG, "read one %zu-byte packed ROHC packet on RAW sock\n",
 	      ip_payload_len);
 
 	/* unpack, then decompress the ROHC packets */
@@ -970,7 +990,7 @@ void dump_packet(char *descr, unsigned char *packet, unsigned int length)
 	{
 		if(i > 0 && (i % 16) == 0)
 		{
-			trace(LOG_DEBUG, line);
+			trace(LOG_DEBUG, "%s", line);
 			line[0] = '\0';
 		}
 		else if(i > 0 && (i % 8) == 0)
@@ -1058,7 +1078,7 @@ static void print_rohc_traces(rohc_trace_level_t level,
 	{
 		trace(LOG_WARNING, "Following trace has been truncated\n");
 	}
-	trace(syslog_level, message);
+	trace(syslog_level, "%s", message);
 }
 
 

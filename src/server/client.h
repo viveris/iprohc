@@ -15,6 +15,9 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef IPROHC_SERVER_CLIENT_H
+#define IPROHC_SERVER_CLIENT_H
+
 #include <time.h>
 
 #include "rohc_tunnel.h"
@@ -40,12 +43,18 @@ int new_client(int socket,
                const size_t tun_itf_mtu,
                const size_t basedev_mtu,
                struct client**clients,
-               int max_clients,
+               size_t *const clients_nr,
+               const size_t max_clients,
                struct server_opts server_opts);
-void del_client(struct client *const client)
-	__attribute__((nonnull(1)));
+
+void del_client(struct client *const client,
+                size_t *const clients_nr,
+                const size_t max_clients)
+	__attribute__((nonnull(1, 2)));
 
 int  start_client_tunnel(struct client*client);
 void stop_client_tunnel(struct client *const client)
 	__attribute__((nonnull(1)));
+
+#endif
 

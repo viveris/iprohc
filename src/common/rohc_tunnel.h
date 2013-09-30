@@ -62,8 +62,10 @@ typedef enum
 
 
 /* Stucture defining a tunnel */
-struct tunnel {
+struct tunnel
+{
 	struct in_addr dest_address;
+	char dest_addr_str[INET_ADDRSTRLEN];
 	struct in_addr src_address;
 
 	int raw_socket /* Real RAW */;
