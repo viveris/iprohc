@@ -443,6 +443,8 @@ int main(int argc, char *argv[])
 	/* Handle SIGTERM */
 	signal(SIGTERM, sigterm);
 	signal(SIGINT, sigterm);
+	/* don't stop if TCP connection was unexpectedly closed */
+	signal(SIGPIPE, SIG_IGN);
 
 	/* Wait for answer and other messages, close when socket is close */
 	trace(LOG_INFO, "wait for connect answer from server");

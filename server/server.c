@@ -372,6 +372,7 @@ int main(int argc, char *argv[])
 	signal(SIGINT,  quit);
 	signal(SIGTERM, quit);
 	signal(SIGHUP, SIG_IGN); /* used to stop client threads */
+	signal(SIGPIPE, SIG_IGN); /* don't stop if TCP connection was unexpectedly closed */
 	signal(SIGUSR1, dump_stats);
 	signal(SIGUSR2, switch_log_max);
 
