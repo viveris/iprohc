@@ -10,6 +10,7 @@ option(STATS_COLLECTD "Collect stats with collectd" OFF)
 # Version number
 set (IPROHC_VERSION_MAJOR 0)
 set (IPROHC_VERSION_MINOR 7)
+set (IPROHC_VERSION_BUGFIX 1)
 if( EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.bzr" )
     message("Building from VCS sources")
     execute_process(COMMAND bzr revno

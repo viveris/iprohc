@@ -60,8 +60,8 @@ int log_max_priority = LOG_INFO;
 void usage(char*arg0)
 {
 	printf("\n");
-	printf("IP/ROHC client, version %d.%d",
-	       IPROHC_VERSION_MAJOR, IPROHC_VERSION_MINOR);
+	printf("IP/ROHC client, version %d.%d.%d",
+	       IPROHC_VERSION_MAJOR, IPROHC_VERSION_MINOR, IPROHC_VERSION_BUGFIX);
 	if(IPROHC_VERSION_REVNO != 0)
 	{
 		printf(", revision %d", IPROHC_VERSION_REVNO);

@@ -248,8 +248,8 @@ void switch_log_max(int sig)
 void usage(char*arg0)
 {
 	printf("\n");
-	printf("IP/ROHC server, version %d.%d",
-	       IPROHC_VERSION_MAJOR, IPROHC_VERSION_MINOR);
+	printf("IP/ROHC server, version %d.%d.%d",
+	       IPROHC_VERSION_MAJOR, IPROHC_VERSION_MINOR, IPROHC_VERSION_BUGFIX);
 	if(IPROHC_VERSION_REVNO != 0)
 	{
 		printf(", revision %d", IPROHC_VERSION_REVNO);
