@@ -127,12 +127,14 @@ bool load_p12(gnutls_certificate_credentials_t xcred,
 	ret = gnutls_pkcs12_init(&p12);
 	if(ret < 0)
 	{
+		trace(LOG_ERR, "failed to init PKCS#12 object (%d)", ret);
 		goto free_blob;
 	}
 
 	ret = gnutls_pkcs12_import(p12, &p12blob, GNUTLS_X509_FMT_DER, 0);
 	if(ret < 0)
 	{
+		trace(LOG_ERR, "failed to import PKCS#12 data (%d)", ret);
 		goto deinit_pkcs12;
 	}
 
@@ -141,6 +143,7 @@ bool load_p12(gnutls_certificate_credentials_t xcred,
 		ret = gnutls_pkcs12_verify_mac(p12, password);
 		if(ret < 0)
 		{
+			trace(LOG_ERR, "failed to verify PKCS#12 MAC (%d)", ret);
 			goto deinit_pkcs12;
 		}
 	}
@@ -176,6 +179,7 @@ bool load_p12(gnutls_certificate_credentials_t xcred,
 		ret = gnutls_x509_crt_get_key_id(certs[i], 0, cert_id, &cert_id_size);
 		if(ret < 0)
 		{
+			trace(LOG_ERR, "failed to get key ID for certificate #%d (%d)", i, ret);
 			goto free_certs_key;
 		}
 
