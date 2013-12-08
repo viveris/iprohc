@@ -29,29 +29,29 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /* Global structures */
 enum commands
 {
-	C_CONNECT       = 1,
-	C_CONNECT_OK    = 2,
-	C_CONNECT_KO    = 3,
-	C_CONNECT_DONE  = 4,
-	C_DISCONNECT    = 5,
-	C_KEEPALIVE     = 6,
+	C_CONNECT       = 0,
+	C_CONNECT_OK    = 1,
+	C_CONNECT_KO    = 2,
+	C_CONNECT_DONE  = 3,
+	C_DISCONNECT    = 4,
+	C_KEEPALIVE     = 5,
 };
 
 enum types
 {
-	END            =  1,
+	END            =  0,
 	/* connect types */
-	IP_ADDR        =  2,
-	PACKING        =  3,
-	MAXCID         =  4,
-	UNID           =  5,
-	WINDOWSIZE     =  6,
-	REFRESH        =  7,
-	KEEPALIVE      =  8,
-	ROHC_COMPAT    =  9,
+	IP_ADDR        =  1,
+	PACKING        =  2,
+	MAXCID         =  3,
+	UNID           =  4,
+	WINDOWSIZE     =  5,
+	REFRESH        =  6,
+	KEEPALIVE      =  7,
+	ROHC_COMPAT    =  8,
 	/* connrequest types */
-	CPACKING       = 10,
-	CPROTO_VERSION = 11,
+	CPACKING       =  9,
+	CPROTO_VERSION = 10,
 };
 
 #define N_CONNECT_FIELD 8
