@@ -271,7 +271,7 @@ bool set_ip4(int iface_index, uint32_t address, uint8_t network)
 	ret = rtnl_open(&rth, 0);
 	if(ret < 0)
 	{
-		trace(LOG_ERR, "failed to open RTNL socket");
+		trace(LOG_ERR, "failed to open RTNL socket (code %d)", ret);
 		goto error;
 	}
 
@@ -307,7 +307,10 @@ bool set_ip4(int iface_index, uint32_t address, uint8_t network)
 #endif
 	if(ret < 0)
 	{
-		trace(LOG_ERR, "failed to set IPv4 address");
+		trace(LOG_ERR, "failed to set IPv4 address %u.%u.%u.%u/%u (code %d)",
+		      (ntohl(address) >> 24) & 0xff, (ntohl(address) >> 16) & 0xff,
+		      (ntohl(address) >>  8) & 0xff, (ntohl(address) >>  0) & 0xff,
+		      network, ret);
 		goto free_ip_data;
 	}
 
