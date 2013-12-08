@@ -539,9 +539,12 @@ int main(int argc, char *argv[])
 	gnutls_priority_init(&(server_opts.priority_cache), "NORMAL", NULL);
 	if(!load_p12(server_opts.xcred, server_opts.pkcs12_f, ""))
 	{
-		trace(LOG_ERR, "failed load server certificate from file '%s'",
-				server_opts.pkcs12_f);
-		goto remove_pidfile;
+		if(!load_p12(server_opts.xcred, server_opts.pkcs12_f, NULL))
+		{
+			trace(LOG_ERR, "failed to load server certificate from file '%s'",
+					server_opts.pkcs12_f);
+			goto remove_pidfile;
+		}
 	}
 
 	trace(LOG_INFO, "generate Diffie–Hellman parameters (it takes a few seconds)");
