@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
 
 	do
 	{
-		c = getopt_long(argc, argv, "d", options, NULL);
+		c = getopt_long(argc, argv, "i:b:r:p:u:P:hvk:d", options, NULL);
 		switch(c)
 		{
 			case 'd':
@@ -185,7 +185,7 @@ int main(int argc, char *argv[])
 	optind = 1;
 	do
 	{
-		c = getopt_long(argc, argv, "i:b:r:p:u:P:hvk:", options, NULL);
+		c = getopt_long(argc, argv, "i:b:r:p:u:P:hvk:d", options, NULL);
 		switch(c)
 		{
 			case 'i':
