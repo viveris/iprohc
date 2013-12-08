@@ -19,8 +19,7 @@ iprohc_server_CPPFLAGS = \
 	-I$(top_srcdir)/src/common
 
 iprohc_server_LDFLAGS = \
-	$(configure_ldflags) \
-	-L$(top_builddir)/src/common/.libs
+	$(configure_ldflags)
 
 iprohc_server_SOURCES = \
 	client.c \
@@ -30,7 +29,7 @@ iprohc_server_SOURCES = \
 	tls.c
 
 iprohc_server_LDADD = \
-	-liprohc_common \
+	$(top_builddir)/src/common/libiprohc_common.la \
 	-lyaml \
 	-lm
 

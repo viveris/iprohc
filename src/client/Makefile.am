@@ -19,8 +19,7 @@ iprohc_client_CPPFLAGS = \
 	-I$(top_srcdir)/src/common
 
 iprohc_client_LDFLAGS = \
-	$(configure_ldflags) \
-	-L$(top_builddir)/src/common/.libs
+	$(configure_ldflags)
 
 iprohc_client_SOURCES = \
 	client.c \
@@ -28,7 +27,7 @@ iprohc_client_SOURCES = \
 	tls.c
 
 iprohc_client_LDADD = \
-	-liprohc_common
+	$(top_builddir)/src/common/libiprohc_common.la
 
 noinst_HEADERS = \
 	messages.h \
