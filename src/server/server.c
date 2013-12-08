@@ -278,7 +278,7 @@ static void usage(void)
 	       "  -b, --basedev ITF   Name of the underlying interface\n"
 	       "\n"
 	       "Other options:\n"
-	       "  -c --conf PATH      Path to configuration file\n"
+	       "  -c, --conf PATH     Path to configuration file\n"
 	       "                      (default: /etc/iprohc_server.conf)\n"
 	       "  -d, --debug         Enable debuging\n"
 	       "  -h, --help          Print this help message\n"
