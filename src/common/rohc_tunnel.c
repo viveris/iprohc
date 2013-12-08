@@ -63,8 +63,15 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #define tunnel_trace(tunnel, prio, format, ...) \
 	do \
 	{ \
-		trace((prio), "[client %s] " format, \
-		      (tunnel)->dest_addr_str, ##__VA_ARGS__); \
+		if((tunnel)->dest_addr_str[0] == '\0') \
+		{ \
+			trace((prio), "[client %s] " format, \
+			      (tunnel)->dest_addr_str, ##__VA_ARGS__); \
+		} \
+		else \
+		{ \
+			trace((prio), format, ##__VA_ARGS__); \
+		} \
 	} \
 	while(0)
 

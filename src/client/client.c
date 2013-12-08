@@ -458,6 +458,7 @@ int main(int argc, char *argv[])
 
 	/* Set destination tunnel parameter */
 	tunnel.dest_address = ((struct sockaddr_in*) rp->ai_addr)->sin_addr;
+	memset(&(tunnel.dest_addr_str), 0, INET_ADDRSTRLEN);
 
 	/* Ask for connection */
 	unsigned char command[1024];
