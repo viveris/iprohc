@@ -1061,7 +1061,7 @@ static void * route(void *arg)
 				      errno);
 				goto close_pollfd;
 			}
-			else if(ret != 0)
+			else if(ret == 0)
 			{
 				trace(LOG_ERR, "[route] nothing read on socket");
 				goto close_pollfd;
