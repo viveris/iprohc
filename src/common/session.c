@@ -249,6 +249,7 @@ error:
  */
 bool iprohc_session_start(struct iprohc_session *const session)
 {
+	const size_t stack_size = 100 * 1024;
 	int ret;
 
 	ret = pipe(session->p2c);
@@ -261,6 +262,32 @@ bool iprohc_session_start(struct iprohc_session *const session)
 
 	AO_store_release_write(&(session->is_thread_running), 1);
 
+	/* reduce stack of client threads to avoid using too much memory:
+	 *  - allocate stack
+	 *  - assign it to the new thread */
+	ret = posix_memalign(&session->thread_stack, sysconf(_SC_PAGESIZE), stack_size);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to create the client tunnel thread: failed to "
+		      "allocate stack memory: %s (%d)", strerror(ret), ret);
+		goto release_lock;
+	}
+	ret = pthread_attr_init(&session->thread_attr);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to create the client tunnel thread: failed to "
+		      "init thread attributes: %s (%d)", strerror(ret), ret);
+		goto free_stack;
+	}
+	ret = pthread_attr_setstack(&session->thread_attr, session->thread_stack,
+	                            stack_size);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to create the client tunnel thread: failed to "
+		      "assign stack memory to thread: %s (%d)", strerror(ret), ret);
+		goto destroy_thread_attrs;
+	}
+
 	/* Go threads, go ! */
 	ret = pthread_create(&(session->thread_tunnel), NULL,
 	                     iprohc_tunnel_run, session);
@@ -268,13 +295,23 @@ bool iprohc_session_start(struct iprohc_session *const session)
 	{
 		trace(LOG_ERR, "failed to create the client tunnel thread: %s (%d)",
 		      strerror(ret), ret);
-		AO_store_release_write(&(session->is_thread_running), 0);
-		goto close_pipe;
+		goto free_stack;
 	}
 
 	return true;
 
-close_pipe:
+destroy_thread_attrs:
+	ret = pthread_attr_destroy(&session->thread_attr);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to destroy thread attributes: %s (%d)",
+		      strerror(ret), ret);
+	}
+free_stack:
+	free(session->thread_stack);
+release_lock:
+	AO_store_release_write(&(session->is_thread_running), 0);
+/*close_pipe:*/
 	close(session->p2c[1]);
 	close(session->p2c[0]);
 error:
@@ -291,6 +328,8 @@ error:
  */
 bool iprohc_session_stop(struct iprohc_session *const session)
 {
+	int ret;
+
 	/* stop thread if running */
 	if(AO_load_acquire_read(&(session->is_thread_running)))
 	{
@@ -306,6 +345,15 @@ bool iprohc_session_stop(struct iprohc_session *const session)
 	/* wait for thread to stop */
 	trace(LOG_ERR, "[main] wait for client %s to stop", session->dst_addr_str);
 	pthread_join(session->thread_tunnel, NULL);
+
+	/* free the thread attributes and the thread stack */
+	ret = pthread_attr_destroy(&session->thread_attr);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to destroy thread attributes: %s (%d)",
+		      strerror(ret), ret);
+	}
+	free(session->thread_stack);
 
 	/* close the remaining read side of the pipe */
 	close(session->p2c[0]);

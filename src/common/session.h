@@ -81,6 +81,8 @@ struct iprohc_session
 	int p2c[2];                      /**< The communication pipe between parent
 	                                      and child threads */
 	pthread_t thread_tunnel;         /**< The thread that handle the session */
+	pthread_attr_t thread_attr;      /**< The attributes for the thread */
+	void *thread_stack;              /**< The stack for the thread */
 	volatile AO_t is_thread_running; /**< Whether the thread is running or not */
 
 	iprohc_session_status_t status;  /**< The session status */
