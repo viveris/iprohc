@@ -96,8 +96,6 @@ bool iprohc_session_new(struct iprohc_session *const session,
 	session->src_addr.s_addr = INADDR_ANY;
 	session->dst_addr = remote_addr.sin_addr;
 	session->status = IPROHC_SESSION_CONNECTING;
-	session->last_activity.tv_sec = -1;
-	session->last_activity.tv_usec = -1;
 	session->thread_tunnel = -1;
 
 	/* Initialize TLS session */
@@ -138,6 +136,7 @@ bool iprohc_session_new(struct iprohc_session *const session,
 		      "%zu seconds", session->dst_addr_str, keepalive_timeout);
 		goto close_keepalive_timer;
 	}
+	session->keepalive_misses = 0;
 
 	AO_store_release_write(&(session->is_thread_running), 0);
 

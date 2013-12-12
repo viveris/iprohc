@@ -87,10 +87,9 @@ struct iprohc_session
 
 	iprohc_session_status_t status;  /**< The session status */
 
-	struct timeval last_activity;  /**< The time at which last control message
-	                                    was received */
-	int keepalive_timer_fd;        /**< The timer to send keepalive messages in
-	                                    case of inactivity on control channel */
+	int keepalive_timer_fd;  /**< The timer to send keepalive messages in
+	                              case of inactivity on control channel */
+	size_t keepalive_misses; /**< The number of missing keepalive answers */
 };
 
 
