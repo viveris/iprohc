@@ -1,3 +1,8 @@
+Release 0.8.0 (XX Xxx 2013)
+	Fix multi-threading model.
+	Handle up to 2000 clients.
+	Support for ROHC library 1.7.0.
+
 Release 0.7 (27 Jun 2013)
 	No detail.
 

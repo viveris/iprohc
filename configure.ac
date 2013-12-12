@@ -19,7 +19,7 @@
 # Authors: Didier Barvaux <didier@barvaux.org>
 #
 
-AC_INIT([IP/ROHC tunnel], 0.8, [http://rohc-lib.org/],
+AC_INIT([IP/ROHC tunnel], 0.8.0, [http://rohc-lib.org/],
         [iprohc], [http://rohc-lib.org/])
 AC_CONFIG_SRCDIR([src])
 AM_CONFIG_HEADER([config.h])
