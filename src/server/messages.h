@@ -24,10 +24,13 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 	do \
 	{ \
 		trace((prio), "[client %s] " format, \
-		      (client)->tunnel.dest_addr_str, ##__VA_ARGS__); \
+		      (client).tunnel.dest_addr_str, ##__VA_ARGS__); \
 	} \
 	while(0)
 
+/** Print in logs a trace related to the given client */
+#define client_tracep(clientp, prio, format, ...) \
+	client_trace(*(clientp), prio, format, ##__VA_ARGS__)
 
-int handle_client_request(struct client*client);
+int handle_client_request(struct client *const client);
 

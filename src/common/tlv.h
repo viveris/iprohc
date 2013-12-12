@@ -57,7 +57,9 @@ enum types
 #define N_CONNECT_FIELD 8
 #define N_CONNREQ_FIELD 2
 
-struct tlv_result {
+struct tlv_result
+{
+	bool used;
 	char type;
 	uint16_t length;
 	unsigned char*value;
@@ -66,7 +68,7 @@ struct tlv_result {
 /* Global parsing and generation functions */
 bool parse_tlv(const unsigned char *const data,
                const size_t data_len,
-					struct tlv_result **results,
+					struct tlv_result *const results,
 					const int max_results,
 					size_t *const parsed_len)
 	__attribute__((nonnull(1, 3, 5), warn_unused_result));

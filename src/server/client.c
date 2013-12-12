@@ -34,13 +34,12 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "tls.h"
 
 
-int new_client(int socket,
-               int tun,
+int new_client(const int sock,
+               const int tun,
                const size_t tun_itf_mtu,
                const size_t basedev_mtu,
-               struct client**clients,
-               size_t *const clients_nr,
-               const size_t max_clients,
+               struct client *const client,
+               const size_t client_id,
                struct server_opts server_opts)
 {
 	char src_addr_str[INET_ADDRSTRLEN];
@@ -48,11 +47,10 @@ int new_client(int socket,
 	struct   sockaddr_in src_addr;
 	socklen_t src_addr_len = sizeof(src_addr);
 	struct in_addr local;
-	int client_id;
 	int raw;
 	int ret;
 	unsigned int verify_status;
-	int status = -3;
+	int status = -1;
 
 	/* New client */
 
@@ -64,18 +62,19 @@ int new_client(int socket,
 	gnutls_certificate_server_set_request(session, GNUTLS_CERT_REQUEST);
 
 	/* accept connection */
-	conn = accept(socket, (struct sockaddr*)&src_addr, &src_addr_len);
+	conn = accept(sock, (struct sockaddr*)&src_addr, &src_addr_len);
 	if(conn < 0)
 	{
-		trace(LOG_ERR, "failed to accept new connection: %s (%d)",
-				strerror(errno), errno);
-		status = -3;
+		trace(LOG_ERR, "failed to accept new connection on socket %d: %s (%d)",
+				sock, strerror(errno), errno);
+		status = -2;
 		goto error;
 	}
 	if(inet_ntop(AF_INET, &(src_addr.sin_addr), src_addr_str, INET_ADDRSTRLEN) == NULL)
 	{
 		trace(LOG_ERR, "failed to convert client address to string: %s (%d)",
 		      strerror(errno), errno);
+		status = -3;
 		goto close_socket;
 	}
 	trace(LOG_INFO, "[client %s] new connection from %s:%d\n", src_addr_str,
@@ -95,7 +94,7 @@ int new_client(int socket,
 	{
 		trace(LOG_ERR, "[client %s] TLS handshake failed: %s (%d)",
 		      src_addr_str, gnutls_strerror(ret), ret);
-		status = -3;
+		status = -4;
 		goto tls_deinit;
 	}
 	trace(LOG_INFO, "[client %s] TLS handshake succeeded", src_addr_str);
@@ -105,7 +104,7 @@ int new_client(int socket,
 	{
 		trace(LOG_ERR, "[client %s] TLS verify failed: %s (%d)", src_addr_str,
 		      gnutls_strerror(ret), ret);
-		status = -3;
+		status = -5;
 		goto tls_deinit;
 	}
 
@@ -138,60 +137,34 @@ int new_client(int socket,
 			trace(LOG_ERR, "[client %s] - the certificate has expired",
 			      src_addr_str);
 		}
-		status = -3;
+		status = -6;
 		goto tls_deinit;
 	}
 
 	/* client creation parameters */
 	trace(LOG_DEBUG, "[client %s] creation of client", src_addr_str);
-
-	for(client_id = 0; client_id < max_clients &&
-		                clients[client_id] != NULL; client_id++)
-	{
-	}
-	if(client_id == max_clients)
-	{
-		trace(LOG_ERR, "[client %s] no more clients accepted, maximum %zu reached",
-		      src_addr_str, max_clients);
-		status = -2;
-		goto tls_deinit;
-	}
-	assert((*clients_nr) < max_clients);
-	(*clients_nr)++;
-	trace(LOG_INFO, "[client %s] client %zu/%zu stored at index %d", src_addr_str,
-	      *clients_nr, max_clients, client_id);
-
-	clients[client_id] = malloc(sizeof(struct client));
-	if(clients[client_id] == NULL)
-	{
-		trace(LOG_ERR, "[client %s] failed to allocate memory for new client",
-		      src_addr_str);
-		status = -2;
-		goto dec_clients_nr;
-	}
-	trace(LOG_DEBUG, "[client %s] Allocating %p", src_addr_str, clients[client_id]);
-	memset(&clients[client_id]->tunnel.stats, 0, sizeof(struct statitics));
-	clients[client_id]->tcp_socket = conn;
-	clients[client_id]->tls_session = session;
+	memset(&(client->tunnel.stats), 0, sizeof(struct statitics));
+	client->tcp_socket = conn;
+	client->tls_session = session;
 
 	/* dest_addr */
-	clients[client_id]->tunnel.src_address.s_addr = INADDR_ANY;
-	clients[client_id]->tunnel.dest_address  = src_addr.sin_addr;
-	memcpy(clients[client_id]->tunnel.dest_addr_str, src_addr_str, INET_ADDRSTRLEN);
+	client->tunnel.src_address.s_addr = INADDR_ANY;
+	client->tunnel.dest_address  = src_addr.sin_addr;
+	memcpy(client->tunnel.dest_addr_str, src_addr_str, INET_ADDRSTRLEN);
 
 	/* local_addr */
 	local.s_addr = htonl(ntohl(server_opts.local_address) + client_id + 10);
-	clients[client_id]->local_address = local;
+	client->local_address = local;
 
 	/* set tun */
-	clients[client_id]->tunnel.tun = tun;  /* real tun device */
-	clients[client_id]->tunnel.tun_itf_mtu = tun_itf_mtu;
-	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[client_id]->tunnel.fake_tun) < 0)
+	client->tunnel.tun = tun;  /* real tun device */
+	client->tunnel.tun_itf_mtu = tun_itf_mtu;
+	if(socketpair(AF_UNIX, SOCK_RAW, 0, client->tunnel.fake_tun) < 0)
 	{
 		trace(LOG_ERR, "[client %s] failed to create a socket pair for TUN: "
 		      "%s (%d)", src_addr_str, strerror(errno), errno);
 		/* TODO  : Flush */
-		status = -1;
+		status = -8;
 		goto reset_tun;
 	}
 
@@ -200,45 +173,66 @@ int new_client(int socket,
 	if(raw < 0)
 	{
 		trace(LOG_ERR, "[client %s] unable to create raw socket", src_addr_str);
-		status = -1;
+		status = -9;
 		goto close_tun_pair;
 	}
-	clients[client_id]->tunnel.raw_socket = raw;
-	clients[client_id]->tunnel.basedev_mtu = basedev_mtu;
-	if(socketpair(AF_UNIX, SOCK_RAW, 0, clients[client_id]->tunnel.fake_raw) < 0)
+	client->tunnel.raw_socket = raw;
+	client->tunnel.basedev_mtu = basedev_mtu;
+	if(socketpair(AF_UNIX, SOCK_RAW, 0, client->tunnel.fake_raw) < 0)
 	{
 		trace(LOG_ERR, "[client %s] failed to create a socket pair for the raw "
 		      "socket: %s (%d)", src_addr_str, strerror(errno), errno);
 		/* TODO  : Flush */
-		status = -1;
+		status = -10;
 		goto close_raw;
 	}
 
-	memcpy(&(clients[client_id]->tunnel.params),  &(server_opts.params),
+	memcpy(&(client->tunnel.params),  &(server_opts.params),
 			 sizeof(struct tunnel_params));
-	clients[client_id]->tunnel.params.local_address = local.s_addr;
-	clients[client_id]->tunnel.status = IPROHC_TUNNEL_CONNECTING;
-	clients[client_id]->last_keepalive.tv_sec = -1;
+	client->tunnel.params.local_address = local.s_addr;
+	client->tunnel.status = IPROHC_TUNNEL_CONNECTING;
+	client->last_keepalive.tv_sec = -1;
+
+	ret = pthread_mutex_init(&(client->tunnel.status_lock), NULL);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[client %s] failed to init lock: %s (%d)",
+		      src_addr_str, strerror(ret), ret);
+		status = -11;
+		goto close_raw_pair;
+	}
+	ret = pthread_mutex_init(&(client->tunnel.client_lock), NULL);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[client %s] failed to init client_lock: %s (%d)",
+		      src_addr_str, strerror(ret), ret);
+		status = -12;
+		goto destroy_lock;
+	}
 
 	trace(LOG_DEBUG, "[client %s] client context created", src_addr_str);
 
+	client->is_init = true;
 	return client_id;
 
+destroy_lock:
+	pthread_mutex_destroy(&(client->tunnel.status_lock));
+close_raw_pair:
+	close(client->tunnel.fake_raw[0]);
+	client->tunnel.fake_raw[0] = -1;
+	close(client->tunnel.fake_raw[1]);
+	client->tunnel.fake_raw[1] = -1;
 close_raw:
-	clients[client_id]->tunnel.raw_socket = -1;
+	client->tunnel.raw_socket = -1;
 	close(raw);
 close_tun_pair:
-	close(clients[client_id]->tunnel.fake_tun[0]);
-	clients[client_id]->tunnel.fake_tun[0] = -1;
-	close(clients[client_id]->tunnel.fake_tun[1]);
-	clients[client_id]->tunnel.fake_tun[1] = -1;
+	close(client->tunnel.fake_tun[0]);
+	client->tunnel.fake_tun[0] = -1;
+	close(client->tunnel.fake_tun[1]);
+	client->tunnel.fake_tun[1] = -1;
 reset_tun:
-	clients[client_id]->tunnel.tun = -1;
-	free(clients[client_id]);
-	clients[client_id] = NULL;
-dec_clients_nr:
-	assert((*clients_nr) > 0);
-	(*clients_nr)--;
+	client->tunnel.tun = -1;
+	client->is_init = false;
 tls_deinit:
 	gnutls_deinit(session);
 close_socket:
@@ -248,17 +242,11 @@ error:
 }
 
 
-void del_client(struct client *const client,
-                size_t *const clients_nr,
-                const size_t max_clients)
+void del_client(struct client *const client)
 {
 	assert(client != NULL);
-	assert(clients_nr != NULL);
-	assert((*clients_nr) > 0);
-	assert((*clients_nr) <= max_clients);
 
-	trace(LOG_INFO, "[client %s] remove client, only %zu/%zu clients remaining",
-	      client->tunnel.dest_addr_str, (*clients_nr) - 1, max_clients);
+	trace(LOG_INFO, "[client %s] remove client", client->tunnel.dest_addr_str);
 
 	free(client->tunnel.stats.stats_packing);
 
@@ -266,6 +254,9 @@ void del_client(struct client *const client,
 	memset(&(client->tunnel.dest_address), 0, sizeof(struct in_addr));
 	memset(&(client->tunnel.dest_addr_str), 0, INET_ADDRSTRLEN);
 	memset(&(client->tunnel.src_address), 0, sizeof(struct in_addr));
+
+	pthread_mutex_destroy(&client->tunnel.client_lock);
+	pthread_mutex_destroy(&client->tunnel.status_lock);
 
 	/* close RAW socket pair */
 	close(client->tunnel.fake_raw[0]);
@@ -294,9 +285,7 @@ void del_client(struct client *const client,
 	gnutls_deinit(client->tls_session);
 	
 	/* free client context */
-	free(client);
-
-	(*clients_nr)--;
+	client->is_init = false;
 }
 
 
@@ -319,13 +308,34 @@ int start_client_tunnel(struct client*client)
 
 void stop_client_tunnel(struct client *const client)
 {
+	int ret;
+
 	assert(client != NULL);
 	assert(client->tunnel.raw_socket != -1);
 
+	ret = pthread_mutex_lock(&client->tunnel.status_lock);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "stop_client_tunnel: failed to acquire lock for client");
+		assert(0);
+		goto error;
+	}
+
 	client->tunnel.status = IPROHC_TUNNEL_PENDING_DELETE;  /* Mark to be deleted */
+
+	ret = pthread_mutex_unlock(&client->tunnel.status_lock);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "stop_client_tunnel: failed to release lock for client");
+		assert(0);
+		goto error;
+	}
 
 	trace(LOG_INFO, "wait for client thread to stop");
 	pthread_kill(client->thread_tunnel, SIGHUP);
 	pthread_join(client->thread_tunnel, NULL);
+
+error:
+	;
 }
 

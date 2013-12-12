@@ -31,6 +31,9 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "tlv.h"
 
+/// The maximal size of data that can be received on the virtual interface
+#define TUNTAP_BUFSIZE 1518
+
 
 struct statitics {
 	int decomp_failed;
@@ -68,13 +71,32 @@ struct tunnel
 	char dest_addr_str[INET_ADDRSTRLEN];
 	struct in_addr src_address;
 
-	int raw_socket /* Real RAW */;
+	int raw_socket;      /**< Real RAW */
 	size_t basedev_mtu;  /**< The MTU (in bytes) of the base interface */
-	int fake_raw[2];   /* Fake RAW device for server side */
+	int fake_raw[2];     /**< Fake RAW device for server side */
 
-	int tun;   /* Real TUN device */
+	int tun;             /**< Real TUN device */
 	size_t tun_itf_mtu;  /**< The MTU (in bytes) of the TUN interface */
-	int fake_tun[2];   /* Fake TUN device for server side */
+	int fake_tun[2];     /**< Fake TUN device for server side */
+
+	/** The frame being packed, stored in context until completion or timeout */
+	unsigned char packing_frame[TUNTAP_BUFSIZE];
+
+	/**
+	 * @brief The client lock
+	 *
+	 * Protect the client context against deletion by main thread when used by
+	 * client thread
+	 */
+	pthread_mutex_t client_lock;
+
+	/**
+	 * @brief The status lock
+	 *
+	 * Protect the client status and keepalive timestamp against concurrent
+	 * accesses by main thread and client thread.
+	 */
+	pthread_mutex_t status_lock;
 
 	iprohc_tunnel_status_t status;
 	struct timeval last_keepalive;

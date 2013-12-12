@@ -25,7 +25,10 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 
-struct client {
+struct client
+{
+	bool is_init;
+
 	int tcp_socket;
 	gnutls_session_t tls_session;
 	struct in_addr local_address;
@@ -38,21 +41,19 @@ struct client {
 	int packing;
 };
 
-int new_client(int socket,
-               int tun,
+int new_client(const int sock,
+               const int tun,
                const size_t tun_itf_mtu,
                const size_t basedev_mtu,
-               struct client**clients,
-               size_t *const clients_nr,
-               const size_t max_clients,
+               struct client *const client,
+               const size_t client_id,
                struct server_opts server_opts);
 
-void del_client(struct client *const client,
-                size_t *const clients_nr,
-                const size_t max_clients)
-	__attribute__((nonnull(1, 2)));
+void del_client(struct client *const client)
+	__attribute__((nonnull(1)));
 
 int  start_client_tunnel(struct client*client);
+
 void stop_client_tunnel(struct client *const client)
 	__attribute__((nonnull(1)));
 

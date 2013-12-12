@@ -38,11 +38,10 @@ communications between server and client
 /* Generic function to parse tlv string */
 bool parse_tlv(const unsigned char *const data,
                const size_t data_len,
-					struct tlv_result **results,
+					struct tlv_result *const results,
 					const int max_results,
 					size_t *const parsed_len)
 {
-	struct tlv_result*result;
 	bool end_found = false;
 	size_t len = 0;
 	size_t i;
@@ -69,10 +68,9 @@ bool parse_tlv(const unsigned char *const data,
 		}
 
 		/* parse type */
-		result = malloc(sizeof(struct tlv_result));
-		result->type = data[*parsed_len];
+		results[i].type = data[*parsed_len];
 		trace(LOG_DEBUG, "TLV: Type = 0x%02x", data[*parsed_len]);
-		if(result->type == END)
+		if(results[i].type == END)
 		{
 			end_found = true;
 			(*parsed_len)++;
@@ -83,7 +81,7 @@ bool parse_tlv(const unsigned char *const data,
 		if(((*parsed_len) + 3) > data_len)
 		{
 			trace(LOG_WARNING, "malformed TLV (type = 0x%02x): %zu bytes "
-			      "required while only %zu bytes available", result->type,
+			      "required while only %zu bytes available", results[i].type,
 			      (*parsed_len) + 3, data_len);
 			goto error;
 		}
@@ -98,17 +96,17 @@ bool parse_tlv(const unsigned char *const data,
 			/* not enough data for value field */
 			trace(LOG_WARNING, "malformed TLV (type = 0x%02x, length = %zu): "
 			      "%zu bytes required while only %zu bytes available",
-			      result->type, len, (*parsed_len) + 3 + len, data_len);
+			      results[i].type, len, (*parsed_len) + 3 + len, data_len);
 			goto error;
 		}
-		result->value = (unsigned char *) (data + (*parsed_len) + 3);
+		results[i].value = (unsigned char *) (data + (*parsed_len) + 3);
 		for(j = 0; j < len; j++)
 		{
 			trace(LOG_DEBUG, "TLV: Value = 0x%02x", data[(*parsed_len) + 3 + j]);
 		}
 
-		/* record the option in context */
-		results[i] = result;
+		/* option is complete */
+		results[i].used = true;
 	}
 
 	if(!end_found)
@@ -266,7 +264,7 @@ bool parse_connect(const unsigned char *const data,
 		IP_ADDR, PACKING, MAXCID, UNID, WINDOWSIZE, REFRESH,
 		KEEPALIVE, ROHC_COMPAT
 	};
-	struct tlv_result**results;
+	struct tlv_result results[N_TUNNEL_PARAMS];
 	bool is_success = false;
 	bool is_ok;
 	int i;
@@ -275,63 +273,55 @@ bool parse_connect(const unsigned char *const data,
 	assert(params != NULL);
 	assert(parsed_len != NULL);
 
+	memset(results, 0, N_TUNNEL_PARAMS * sizeof(struct tlv_result));
 	*parsed_len = 0;
-
-	/* At most n parameters can be retrieved */
-	results = calloc(N_TUNNEL_PARAMS, sizeof(struct tlv_result*));
-	if(results == NULL)
-	{
-		trace(LOG_ERR, "failed to allocate memory for TLV parameters");
-		goto error;
-	}
 
 	is_ok = parse_tlv(data, data_len, results, N_TUNNEL_PARAMS, parsed_len);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "parse_connect: failed to parse TLV parameters");
-		goto free_results;
+		goto error;
 	}
 	trace(LOG_DEBUG, "Parsing ok");
 
 	for(i = 0; i < N_TUNNEL_PARAMS; i++)
 	{
-		if(results[i] == NULL)
+		if(!results[i].used)
 		{
 			continue;
 		}
 
-		mark_received(required, N_TUNNEL_PARAMS, results[i]->type);
-		switch(results[i]->type)
+		mark_received(required, N_TUNNEL_PARAMS, results[i].type);
+		switch(results[i].type)
 		{
 			case IP_ADDR:
-				params->local_address       = ntohl(*((uint32_t*) results[i]->value));
+				params->local_address       = ntohl(*((uint32_t*) results[i].value));
 				break;
 			case PACKING:
-				params->packing             = *((char*) results[i]->value);
+				params->packing             = *((char*) results[i].value);
 				break;
 			case MAXCID:
-				params->max_cid             = ntohl(*((uint32_t*) results[i]->value));
+				params->max_cid             = ntohl(*((uint32_t*) results[i].value));
 				break;
 			case UNID:
-				params->is_unidirectional   = *((char*) results[i]->value);
+				params->is_unidirectional   = *((char*) results[i].value);
 				break;
 			case WINDOWSIZE:
-				params->wlsb_window_width   = ntohl(*((uint32_t*) results[i]->value));
+				params->wlsb_window_width   = ntohl(*((uint32_t*) results[i].value));
 				break;
 			case REFRESH:
-				params->refresh             = ntohl(*((uint32_t*) results[i]->value));
+				params->refresh             = ntohl(*((uint32_t*) results[i].value));
 				break;
 			case KEEPALIVE:
-				params->keepalive_timeout   = ntohl(*((uint32_t*) results[i]->value));
+				params->keepalive_timeout   = ntohl(*((uint32_t*) results[i].value));
 				break;
 			case ROHC_COMPAT:
-				params->rohc_compat_version = (*((char*) results[i]->value));
+				params->rohc_compat_version = (*((char*) results[i].value));
 				break;
 			default:
-				trace(LOG_ERR, "Unexpected field 0x%02x in connect", results[i]->type);
-				goto free_results;
+				trace(LOG_ERR, "Unexpected field 0x%02x in connect", results[i].type);
+				goto error;
 		}
-		free(results[i]);
 	}
 
 	for(i = 0; i < N_TUNNEL_PARAMS; i++)
@@ -339,14 +329,12 @@ bool parse_connect(const unsigned char *const data,
 		if(required[i] != -1)
 		{
 			trace(LOG_ERR, "Missing field in connect : %d\n", required[i]);
-			goto free_results;
+			goto error;
 		}
 	}
 
 	is_success = true;
 
-free_results:
-	free(results);
 error:
 	return is_success;
 }
@@ -421,7 +409,7 @@ bool parse_connrequest(const unsigned char *const data,
 							  int *const packing,
 							  int *const proto_version)
 {
-	struct tlv_result **results;
+	struct tlv_result results[N_CONNREQ_FIELD];
 	bool is_success = false;
 	bool is_ok;
 	size_t err_nr;
@@ -432,50 +420,41 @@ bool parse_connrequest(const unsigned char *const data,
 	assert(packing != NULL);
 	assert(proto_version != NULL);
 
+	memset(results, 0, N_CONNREQ_FIELD * sizeof(struct tlv_result));
 	*parsed_len = 0;
-
-	results = calloc(N_CONNREQ_FIELD, sizeof(struct tlv_result*));
-	if(results == NULL)
-	{
-		trace(LOG_ERR, "failed to allocate memory for TLV parameters");
-		goto error;
-	}
 
 	is_ok = parse_tlv(data, data_len, results, N_CONNREQ_FIELD, parsed_len);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "parse_connrequest: failed to parse TLV parameters");
-		goto free_results;
+		goto error;
 	}
 
 	err_nr = 0;
-	for(i = 0; i < N_CONNREQ_FIELD && results[i] != NULL; i++)
+	for(i = 0; i < N_CONNREQ_FIELD && results[i].used; i++)
 	{
-		if(results[i]->type == CPACKING)
+		if(results[i].type == CPACKING)
 		{
 			trace(LOG_DEBUG, "connection request: parameter PACKING (%u) found",
-			      results[i]->type);
-			*packing = *((char*) results[i]->value);
+			      results[i].type);
+			*packing = *((char*) results[i].value);
 		}
-		else if(results[i]->type == CPROTO_VERSION)
+		else if(results[i].type == CPROTO_VERSION)
 		{
 			trace(LOG_DEBUG, "connection request: parameter PROTO_VERSION (%u) "
-			      "found", results[i]->type);
-			*proto_version = *((char*) results[i]->value);
+			      "found", results[i].type);
+			*proto_version = *((char*) results[i].value);
 		}
 		else
 		{
 			trace(LOG_WARNING, "connection request: unexpected parameter %u",
-			      results[i]->type);
+			      results[i].type);
 			err_nr++;
 		}
-		free(results[i]);
 	}
 
 	is_success = (err_nr == 0);
 
-free_results:
-	free(results);
 error:
 	return is_success;
 }

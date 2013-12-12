@@ -51,14 +51,14 @@ bool handle_connect(struct client *const client,
 	*parsed_len = 0;
 	tlv_len = 0;
 
-	client_trace(client, LOG_INFO, "connection asked, negotating parameters");
+	client_tracep(client, LOG_INFO, "connection asked, negotating parameters");
 
 	/* parse connect message received from client */
 	is_ok = parse_connrequest(message, message_len, parsed_len, &packing,
 	                          &client_proto_version);
 	if(!is_ok)
 	{
-		client_trace(client, LOG_ERR, "unable to parse connection request");
+		client_tracep(client, LOG_ERR, "unable to parse connection request");
 
 		/* create failure answer for client */
 		tlv[0] = C_CONNECT_KO;
@@ -68,9 +68,9 @@ bool handle_connect(struct client *const client,
 	else if(client_proto_version != CURRENT_PROTO_VERSION)
 	{
 		/* Current behaviour as for proto version = 1 : refuse any other version */
-		client_trace(client, LOG_WARNING, "connection refused because of wrong "
-		             "protocol version: %d received from client but %d expected",
-		             client_proto_version, CURRENT_PROTO_VERSION);
+		client_tracep(client, LOG_WARNING, "connection refused because of wrong "
+		              "protocol version: %d received from client but %d expected",
+		              client_proto_version, CURRENT_PROTO_VERSION);
 
 		/* create failure answer for client */
 		tlv[0] = C_CONNECT_KO;
@@ -81,9 +81,9 @@ bool handle_connect(struct client *const client,
 	{
 		size_t len;
 
-		client_trace(client, LOG_INFO, "connection asked, negotating parameters "
-		             "(proto version = %d, asked packing = %d)",
-		             client_proto_version, packing);
+		client_tracep(client, LOG_INFO, "connection asked, negotating parameters "
+		              "(proto version = %d, asked packing = %d)",
+		              client_proto_version, packing);
 		client->packing = packing;
 
 		/* create successful answer for client */
@@ -94,8 +94,8 @@ bool handle_connect(struct client *const client,
 		is_ok = gen_connect(client->tunnel.params, tlv + 1, &len);
 		if(!is_ok)
 		{
-			client_trace(client, LOG_ERR, "failed to generate the connect "
-			             "message for client");
+			client_tracep(client, LOG_ERR, "failed to generate the connect "
+			              "message for client");
 			goto error;
 		}
 		tlv_len += len;
@@ -112,7 +112,7 @@ error:
 }
 
 
-int handle_client_request(struct client*client)
+int handle_client_request(struct client *const client)
 {
 	unsigned char buf[1024];
 	int length;
@@ -129,8 +129,8 @@ int handle_client_request(struct client*client)
 	{
 		return -1;
 	}
-	client_trace(client, LOG_DEBUG, "received %d bytes on TCP socket",
-	             length);
+	client_tracep(client, LOG_DEBUG, "received %d bytes on TCP socket",
+	              length);
 
 	remain_data = buf;
 	remain_len = length;
@@ -148,7 +148,7 @@ int handle_client_request(struct client*client)
 			{
 				size_t parsed_len;
 
-				client_trace(client, LOG_INFO, "connection request from client");
+				client_tracep(client, LOG_INFO, "connection request from client");
 				is_ok = handle_connect(client, remain_data, remain_len, &parsed_len);
 				if(!is_ok)
 				{
@@ -159,23 +159,22 @@ int handle_client_request(struct client*client)
 				break;
 			}
 			case C_CONNECT_DONE:
-				client_trace(client, LOG_INFO, "connection started by client");
+				client_tracep(client, LOG_INFO, "connection started by client");
 				if(start_client_tunnel(client) < 0)
 				{
 					return -1;
 				}
 				break;
 			case C_KEEPALIVE:
-				client_trace(client, LOG_DEBUG, "received keepalive from client");
-				gettimeofday(&(client->tunnel.last_keepalive), NULL);
+				client_tracep(client, LOG_DEBUG, "received keepalive from client");
 				break;
 			case C_DISCONNECT:
-				client_trace(client, LOG_INFO, "disconnection asked by client");
+				client_tracep(client, LOG_INFO, "disconnection asked by client");
 				stop_client_tunnel(client);
 				break;
 			default:
-				client_trace(client, LOG_WARNING, "unexpected command 0x%02x "
-				             "received from client", req_type);
+				client_tracep(client, LOG_WARNING, "unexpected command 0x%02x "
+				              "received from client", req_type);
 				return -1;
 		}
 	}

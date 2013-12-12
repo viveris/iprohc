@@ -28,8 +28,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "messages.h"
 
-#define TUNTAP_BUFSIZE 1518
-
 #include "log.h"
 
 /* Generic functions for handling messages */

@@ -50,9 +50,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /// Return the greater value from the two
 #define max(x, y)  (((x) > (y)) ? (x) : (y))
 
-/// The maximal size of data that can be received on the virtual interface
-#define TUNTAP_BUFSIZE 1518
-
 /// The maximal size of a ROHC packet
 #define MAX_ROHC_SIZE   (5 * 1024)
 
@@ -251,6 +248,7 @@ void * new_tunnel(void *arg)
 
 	int failure = 0;
 	int is_umode = tunnel->params.is_unidirectional;
+	iprohc_tunnel_status_t tunnel_status;
 
 	fd_set readfds;
 	struct timespec timeout;
@@ -267,11 +265,11 @@ void * new_tunnel(void *arg)
 
 	int read_tun, read_raw;
 	bool is_ok;
+	int ret;
 
 	struct rohc_comp *comp;
 	struct rohc_decomp *decomp;
 
-	unsigned char *packing_frame;
 	const size_t packing_max_len = tunnel->basedev_mtu - sizeof(struct iphdr);
 	size_t packing_cur_len = 0;  /* number of packed bytes */
 	const size_t packing_max_pkts = tunnel->params.packing;
@@ -280,6 +278,13 @@ void * new_tunnel(void *arg)
 	/* TODO : Check assumed present attributes
 	   (thread, local_address, dest_address, tun, fake_tun, raw_socket) */
 
+	ret = pthread_mutex_lock(&tunnel->client_lock);
+	if(ret != 0)
+	{
+		tunnel_trace(tunnel, LOG_ERR, "failed to acquire client_lock for client");
+		assert(0);
+		goto error;
+	}
 
 	/*
 	 * ROHC
@@ -290,7 +295,7 @@ void * new_tunnel(void *arg)
 	if(comp == NULL)
 	{
 		tunnel_trace(tunnel, LOG_ERR, "cannot create the ROHC compressor");
-		goto error;
+		goto unlock;
 	}
 
 	/* handle compressor traces */
@@ -364,8 +369,23 @@ void * new_tunnel(void *arg)
 	sigaddset(&sigmask, SIGINT);
 
 	/* initialize the last time we sent a packet */
+	ret = pthread_mutex_lock(&tunnel->status_lock);
+	if(ret != 0)
+	{
+		tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
+		assert(0);
+		goto destroy_decomp;
+	}
 	gettimeofday(&(tunnel->last_keepalive), NULL);
 	tunnel->status = IPROHC_TUNNEL_CONNECTED;
+	tunnel_status = tunnel->status;
+	ret = pthread_mutex_unlock(&tunnel->status_lock);
+	if(ret != 0)
+	{
+		tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
+		assert(0);
+		goto destroy_decomp;
+	}
 
 	/* We read the fake TUN device if we are on a server */
 	if(tunnel->fake_tun[0] == -1 && tunnel->fake_tun[1] == -1)
@@ -406,15 +426,6 @@ void * new_tunnel(void *arg)
 	gettimeofday(&last_stat, NULL);
 #endif
 
-	/* Initalize packing frame */
-	packing_frame = malloc(packing_max_len);
-	if(packing_frame == NULL)
-	{
-		tunnel_trace(tunnel, LOG_ERR, "failed to allocate memory for the packing "
-		             "frame");
-		goto destroy_decomp;
-	}
-
 	do
 	{
 		int ret;
@@ -431,7 +442,22 @@ void * new_tunnel(void *arg)
 			tunnel_trace(tunnel, LOG_ERR, "pselect failed: %s (%d)",
 			             strerror(errno), errno);
 			failure = 1;
+
+			ret = pthread_mutex_lock(&tunnel->status_lock);
+			if(ret != 0)
+			{
+				tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
+				assert(0);
+				goto destroy_decomp;
+			}
 			tunnel->status = IPROHC_TUNNEL_PENDING_DELETE;
+			ret = pthread_mutex_unlock(&tunnel->status_lock);
+			if(ret != 0)
+			{
+				tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
+				assert(0);
+				goto destroy_decomp;
+			}
 		}
 		else if(ret > 0)
 		{
@@ -443,7 +469,7 @@ void * new_tunnel(void *arg)
 				tunnel_trace(tunnel, LOG_DEBUG, "...from tun");
 				failure = tun2raw(comp, read_tun, tunnel->raw_socket,
 				                  tunnel->dest_address, tunnel->basedev_mtu,
-				                  packing_frame,
+				                  tunnel->packing_frame,
 				                  packing_max_len, &packing_cur_len,
 				                  packing_max_pkts, &packing_cur_pkts,
 				                  &(tunnel->stats));
@@ -483,11 +509,19 @@ void * new_tunnel(void *arg)
 				             "sending keepalive");
 				send_puree(tunnel->raw_socket, tunnel->dest_address,
 				           tunnel->basedev_mtu,
-				           packing_frame, &packing_cur_len, &packing_cur_pkts,
+				           tunnel->packing_frame, &packing_cur_len, &packing_cur_pkts,
 				           &(tunnel->stats));
 				assert(packing_cur_len == 0);
 				assert(packing_cur_pkts == 0);
 			}
+		}
+
+		ret = pthread_mutex_lock(&tunnel->status_lock);
+		if(ret != 0)
+		{
+			tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
+			assert(0);
+			goto destroy_decomp;
 		}
 		if(now.tv_sec > tunnel->last_keepalive.tv_sec + kp_timeout)
 		{
@@ -495,6 +529,13 @@ void * new_tunnel(void *arg)
 			             "(%ld > %ld + %d), disconnect client", now.tv_sec,
 			             tunnel->last_keepalive.tv_sec, kp_timeout);
 			tunnel->status = IPROHC_TUNNEL_PENDING_DELETE;
+		}
+		ret = pthread_mutex_unlock(&tunnel->status_lock);
+		if(ret != 0)
+		{
+			tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
+			assert(0);
+			goto destroy_decomp;
 		}
 
 #ifdef STATS_COLLECTD
@@ -507,19 +548,41 @@ void * new_tunnel(void *arg)
 			gettimeofday(&last_stat, NULL);
 		}
 #endif
+
+		ret = pthread_mutex_lock(&tunnel->status_lock);
+		if(ret != 0)
+		{
+			tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
+			assert(0);
+			goto destroy_decomp;
+		}
+		tunnel_status = tunnel->status;
+		ret = pthread_mutex_unlock(&tunnel->status_lock);
+		if(ret != 0)
+		{
+			tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
+			assert(0);
+			goto destroy_decomp;
+		}
 	}
-	while(tunnel->status == IPROHC_TUNNEL_CONNECTED);
+	while(tunnel_status == IPROHC_TUNNEL_CONNECTED);
 
 	tunnel_trace(tunnel, LOG_INFO, "client thread was asked to stop");
 
 	/*
 	 * Cleaning:
 	 */
-	free(packing_frame);
 destroy_decomp:
 	rohc_decomp_free(decomp);
 destroy_comp:
 	rohc_comp_free(comp);
+unlock:
+	ret = pthread_mutex_unlock(&tunnel->client_lock);
+	if(ret != 0)
+	{
+		tunnel_trace(tunnel, LOG_ERR, "failed to release client_lock for client");
+		assert(0);
+	}
 error:
 	return NULL;
 }
@@ -632,7 +695,7 @@ int tun2raw(struct rohc_comp *comp,
 	unsigned char buffer[TUNTAP_BUFSIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
 
-	unsigned char*rohc_packet_temp = malloc(MAX_ROHC_SIZE * sizeof(char));
+	unsigned char rohc_packet_temp[TUNTAP_BUFSIZE];
 	unsigned char *rohc_packet_p;
 	size_t rohc_size;
 
@@ -771,11 +834,9 @@ int tun2raw(struct rohc_comp *comp,
 	}
 
 quit:
-	free(rohc_packet_temp);
 	return 0;
 error:
 	stats->comp_failed++;
-	free(rohc_packet_temp);
 	return 1;
 }
 
@@ -804,7 +865,7 @@ int raw2tun(struct rohc_decomp *decomp,
 	const struct rohc_timestamp arrival_time = { .sec = 0, .nsec = 0 };
 
 	unsigned int packet_len = mtu;
-	unsigned char *packet = malloc(packet_len * sizeof(unsigned char));
+	unsigned char packet[TUNTAP_BUFSIZE];
 	struct iphdr *ip_header;
 
 	unsigned char *ip_payload;
@@ -813,7 +874,7 @@ int raw2tun(struct rohc_decomp *decomp,
 	uint16_t csum;
 
 	/* We add the 4 bytes of TUN headers */
-	unsigned char*decomp_packet = malloc((4 + MAX_ROHC_SIZE) * sizeof(unsigned char));
+	unsigned char decomp_packet[4 + MAX_ROHC_SIZE];
 
 	int ret;
 	int i = 0;
@@ -957,17 +1018,11 @@ int raw2tun(struct rohc_decomp *decomp,
 	}
 
 ignore:
-	free(packet);
-	free(decomp_packet);
 	return 0;
 error:
-	free(packet);
-	free(decomp_packet);
 	stats->decomp_failed++;
 	return -1;
 error_unpack:
-	free(packet);
-	free(decomp_packet);
 	stats->unpack_failed++;
 	return -2;
 }
