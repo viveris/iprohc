@@ -579,11 +579,13 @@ int main(int argc, char *argv[])
 	exit_status = 0;
 
 close_tls:
+	trace(LOG_INFO, "close TLS session");
 	gnutls_bye(session, GNUTLS_SHUT_RDWR);
 	gnutls_deinit(session);
 	gnutls_certificate_free_credentials(xcred);
 	gnutls_global_deinit();
 close_tcp:
+	trace(LOG_INFO, "close TCP connection");
 	close(sock);
 error:
 	return exit_status;
