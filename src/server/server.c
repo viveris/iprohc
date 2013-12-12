@@ -49,10 +49,6 @@ int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
 
 
-static size_t iprohc_get_ipv4_range_width(const uint32_t addr,
-                                          const size_t netmasklen)
-	__attribute__((warn_unused_result));
-
 
 /*
  * Route function that will be threaded twice to route
@@ -167,24 +163,6 @@ void * route(void*arg)
 	}
 
 	return NULL;
-}
-
-
-void dump_opts(struct server_opts opts)
-{
-	struct in_addr addr;
-	addr.s_addr = opts.local_address;
-
-	trace(LOG_INFO, "Max clients : %zu", opts.clients_max_nr);
-	trace(LOG_INFO, "Port        : %d", opts.port);
-	trace(LOG_INFO, "P12 file    : %s", opts.pkcs12_f);
-	trace(LOG_INFO, "Pidfile     : %s", opts.pidfile_path);
-	trace(LOG_INFO, "Tunnel params :");
-	trace(LOG_INFO, " . Local IP  : %s/%zu", inet_ntoa(addr), opts.netmask);
-	trace(LOG_INFO, " . Packing   : %d", opts.params.packing);
-	trace(LOG_INFO, " . Max cid   : %zu", opts.params.max_cid);
-	trace(LOG_INFO, " . Unid      : %d", opts.params.is_unidirectional);
-	trace(LOG_INFO, " . Keepalive : %zu", opts.params.keepalive_timeout);
 }
 
 
@@ -389,7 +367,6 @@ int main(int argc, char *argv[])
 
 	struct client *clients = NULL;
 	size_t clients_nr = 0;
-	size_t range_len;
 
 	size_t client_id;
 	int serv_socket;
@@ -508,52 +485,15 @@ int main(int argc, char *argv[])
 	}
 	while(c != -1);
 
-	if(parse_config(conf_file, &server_opts) < 0)
+	/* load configuration from file, and check its coherency */
+	if(!iprohc_server_load_config(conf_file, &server_opts))
 	{
-		trace(LOG_ERR, "Unable to parse configuration file '%s', exiting...",
-		      conf_file);
+		trace(LOG_ERR, "failed to load configuration file '%s'", conf_file);
 		exit_status = 2;
 		goto error;
 	}
 
-	range_len = iprohc_get_ipv4_range_width(ntohl(server_opts.local_address),
-	                                        server_opts.netmask);
-	if(server_opts.clients_max_nr > range_len)
-	{
-		trace(LOG_ERR, "invalid configuration: not enough IP addresses for %zu "
-		      "clients: only %zu IP addresses available in %u.%u.%u.%u/%zu",
-		      server_opts.clients_max_nr, range_len,
-		      (ntohl(server_opts.local_address) >> 24) & 0xff,
-		      (ntohl(server_opts.local_address) >> 16) & 0xff,
-		      (ntohl(server_opts.local_address) >>  8) & 0xff,
-		      (ntohl(server_opts.local_address) >>  0) & 0xff,
-		      server_opts.netmask);
-		goto error;
-	}
-	trace(LOG_INFO, "%zu IP addresses available for %zu clients in IP range "
-	      "%u.%u.%u.%u/%zu", range_len, server_opts.clients_max_nr,
-	      (ntohl(server_opts.local_address) >> 24) & 0xff,
-	      (ntohl(server_opts.local_address) >> 16) & 0xff,
-	      (ntohl(server_opts.local_address) >>  8) & 0xff,
-	      (ntohl(server_opts.local_address) >>  0) & 0xff,
-	      server_opts.netmask);
-
-	if(strcmp(server_opts.basedev, "") == 0)
-	{
-		trace(LOG_ERR, "wrong usage: underlying interface name is mandatory, "
-		      "use the --basedev or -b option to specify it");
-		goto error;
-	}
-
-	if(strcmp(server_opts.pkcs12_f, "") == 0)
-	{
-		trace(LOG_ERR, "PKCS12 file required");
-		exit_status = 2;
-		goto error;
-	}
-
-	dump_opts(server_opts);
-
+	/* create PID file */
 	if(strcmp(server_opts.pidfile_path, "") == 0)
 	{
 		trace(LOG_WARNING, "No pidfile specified");
@@ -1060,28 +1000,5 @@ error:
 	trace(LOG_INFO, "close syslog session");
 	closelog();
 	return exit_status;
-}
-
-
-/**
- * @brief Compute the width of the given IP range
- *
- * @param addr        The local IP address of the server (in host byte order)
- * @param netmasklen  The length (in bits) of the network mask
- * @return            The number of IP addresses available in the IP range
- */
-static size_t iprohc_get_ipv4_range_width(const uint32_t addr,
-                                          const size_t netmasklen)
-{
-	size_t range_len = (1 << (32 - netmasklen));
-	const uint32_t netmask = (0xffffffff << (32 - netmasklen));
-
-	/* if a.b.c.0 is in IP range, it cannot be used */
-	if(((addr & netmask) & 0xff) == 0)
-	{
-		range_len--;
-	}
-
-	return range_len;
 }
 

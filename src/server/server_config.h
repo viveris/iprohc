@@ -15,7 +15,14 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "tlv.h"
+#ifndef IPROHC_SERVER_SERVER_CONFIG_H
+#define IPROHC_SERVER_SERVER_CONFIG_H
 
-int parse_config(const char*path, struct server_opts*server_opts);
+#include "server.h"
+
+bool iprohc_server_load_config(const char *const conf_file,
+                               struct server_opts *const server_opts)
+	__attribute__((warn_unused_result, nonnull(1, 2)));
+
+#endif
 
