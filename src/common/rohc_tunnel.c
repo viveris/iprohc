@@ -32,15 +32,10 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <netinet/udp.h>
 
 #include "rohc_tunnel.h"
-
 #include "ip_chksum.h"
-
-/* Initialize logger */
 #include "log.h"
-
 #include "config.h"
 
-#include "stats.h"
 
 
 /*
@@ -111,118 +106,6 @@ int tun2raw(struct rohc_comp *comp,
             const size_t packing_max_pkts,
             size_t *const packing_cur_pkts,
             struct statitics *stats);
-#ifdef STATS_COLLECTD
-#include <collectd/client.h>
-
-int collect_submit(lcc_connection_t *conn,
-                   lcc_identifier_t _id,
-                   struct timeval now,
-                   char *type,
-                   char *type_instance,
-                   int value)
-{
-	lcc_identifier_t id = _id;
-	lcc_value_list_t vals;
-
-	/* All types are gauge (for the moment) */
-	value_t values[1];
-	values[0].gauge = value;
-	vals.values = values;
-	int types[] = { LCC_TYPE_GAUGE };
-	vals.values_types = types;
-	vals.values_len = 1;
-
-	/* Set time and interval */
-	vals.time     = now.tv_sec;
-	vals.interval = 1;
-
-	/* Set strings type */
-	strncpy(id.type, type, strlen(type));
-	strncpy(id.type_instance, type_instance, strlen(type_instance));
-	vals.identifier = id;
-
-	return lcc_putval(conn, &vals);
-}
-
-
-int collect_stats(struct statitics stats,
-                  struct timeval now,
-                  const char *const addr)
-{
-	lcc_connection_t *conn;
-	lcc_identifier_t id = { "localhost", "iprohc", "", "bytes", "" };
-	int i;
-
-	trace(LOG_DEBUG, "Sending stats");
-
-	strncpy(id.plugin_instance, addr, LCC_NAME_LEN);
-
-	if(lcc_connect(COLLECTD_PATH, &conn) < 0)
-	{
-		return -1;
-	}
-
-	if(collect_submit(conn, id, now, "bytes", "decomp-failed",     stats.decomp_failed)     < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "decomp-total",      stats.decomp_total)      < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "comp_failed",       stats.comp_failed)       < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "comp_total",        stats.comp_total)        < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "head_comp_size",    stats.head_comp_size)    < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "head_uncomp_size",  stats.head_uncomp_size)  < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "total_comp_size",   stats.total_comp_size)   < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "total_uncomp_size", stats.total_uncomp_size) < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "unpack_failed",     stats.unpack_failed)     < 0)
-	{
-		goto error;
-	}
-	if(collect_submit(conn, id, now, "bytes", "total_received",    stats.total_received)    < 0)
-	{
-		goto error;
-	}
-
-	for(i = 0; i < stats.n_stats_packing; i++)
-	{
-		char name[LCC_NAME_LEN];
-		snprintf(name, LCC_NAME_LEN, "packing-%d", i);
-		if(collect_submit(conn, id, now, "gauge", name,  stats.stats_packing[i]) < 0)
-		{
-			goto error;
-		}
-	}
-
-	LCC_DESTROY(conn);
-
-	return 0;
-
-error:
-	LCC_DESTROY(conn);
-	return -1;
-}
-
-#endif
 
 
 /*
@@ -257,9 +140,6 @@ void * new_tunnel(void *arg)
 	struct timeval now;
 	struct timeval last;
 	bool is_last_init = false;
-#ifdef STATS_COLLECTD
-	struct timeval last_stat;
-#endif
 
 	int kp_timeout   = tunnel->params.keepalive_timeout;
 
@@ -422,9 +302,6 @@ void * new_tunnel(void *arg)
 	tunnel->stats.total_received    = 0;
 	tunnel->stats.n_stats_packing   = packing_max_pkts + 1;
 	tunnel->stats.stats_packing     = calloc(tunnel->stats.n_stats_packing, sizeof(int));
-#ifdef STATS_COLLECTD
-	gettimeofday(&last_stat, NULL);
-#endif
 
 	do
 	{
@@ -537,17 +414,6 @@ void * new_tunnel(void *arg)
 			assert(0);
 			goto destroy_decomp;
 		}
-
-#ifdef STATS_COLLECTD
-		if(now.tv_sec > last_stat.tv_sec + 1)
-		{
-			if(collect_stats(tunnel->stats, now, tunnel->dest_addr_str) < 0)
-			{
-				tunnel_trace(tunnel, LOG_ERR, "unable to submit stats");
-			}
-			gettimeofday(&last_stat, NULL);
-		}
-#endif
 
 		ret = pthread_mutex_lock(&tunnel->status_lock);
 		if(ret != 0)

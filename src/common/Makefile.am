@@ -29,7 +29,6 @@ noinst_HEADERS = \
 	ip_chksum.h \
 	log.h \
 	rohc_tunnel.h \
-	stats.h \
 	tlv.h \
 	tun_helpers.h
 

@@ -319,47 +319,6 @@ void quit(int sig)
 }
 
 
-#ifdef STATS_COLLECTD
-#include "stats.h"
-
-int collect_server_stats(struct timeval now)
-{
-	lcc_connection_t *conn;
-	lcc_identifier_t id = { "localhost", "iprohc", "server", "", "" };
-	int nb_clients = 0;
-	int j;
-
-	if(lcc_connect(COLLECTD_PATH, &conn) < 0)
-	{
-		trace(LOG_ERR, "Unable to connect to collectd");
-		return -1;
-	}
-
-
-	for(j = 0; j < server_opts.clients_max_nr; j++)
-	{
-		if(clients[j] != NULL && clients[j].tunnel.alive >= 0)
-		{
-			nb_clients++;
-		}
-	}
-
-	if(collect_submit(conn, id, now, "gauge", "nb_clients", nb_clients)     < 0)
-	{
-		goto error;
-	}
-
-	LCC_DESTROY(conn);
-	return 0;
-
-error:
-	trace(LOG_ERR, "Unable to submit to collectd");
-	LCC_DESTROY(conn);
-	return -1;
-}
-
-
-#endif
 
 int main(int argc, char *argv[])
 {
@@ -392,12 +351,6 @@ int main(int argc, char *argv[])
 
 	struct server_opts server_opts;
 	FILE*pid;
-
-#ifdef STATS_COLLECTD
-	struct timeval last_stats;
-	struct timeval stats_timeout;
-	stats_timeout.tv_sec = 10;
-#endif
 
 	bool is_ok;
 	int c;
@@ -667,9 +620,6 @@ int main(int argc, char *argv[])
 
 	/* Start listening and looping on TCP socket */
 	trace(LOG_INFO, "server is now ready to accept requests from clients");
-#ifdef STATS_COLLECTD
-	gettimeofday(&last_stats, NULL);
-#endif
 	alive = 1;
 	while(alive)
 	{
@@ -896,17 +846,6 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
-
-#ifdef STATS_COLLECTD
-		if(now.tv_sec > last_stats.tv_sec + stats_timeout.tv_sec)
-		{
-			if(collect_server_stats(now) < 0)
-			{
-				trace(LOG_ERR, "Unable to commit server stats");
-			}
-			gettimeofday(&last_stats, NULL);
-		}
-#endif
 
 		/* if SIGUSR1 was received, then dump stats */
 		if(clients_do_dump_stats)
