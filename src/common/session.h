@@ -90,6 +90,8 @@ struct iprohc_session
 	int keepalive_timer_fd;  /**< The timer to send keepalive messages in
 	                              case of inactivity on control channel */
 	size_t keepalive_misses; /**< The number of missing keepalive answers */
+
+	int packing_timer_fd;    /**< The timer to flush the packing frame */
 };
 
 

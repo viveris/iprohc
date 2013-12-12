@@ -342,7 +342,7 @@ int main(int argc, char *argv[])
 	if(!nofdlimit)
 	{
 		const size_t fds_nr_base = 20U;
-		const size_t fds_nr_per_client = 9U;
+		const size_t fds_nr_per_client = 10U;
 		const size_t fds_max_nr =
 			fds_nr_base + server_opts.clients_max_nr * fds_nr_per_client;
 		const struct rlimit fd_limits = {

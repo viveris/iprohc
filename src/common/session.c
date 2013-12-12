@@ -129,12 +129,21 @@ bool iprohc_session_new(struct iprohc_session *const session,
 		goto tls_deinit;
 	}
 
+	/* create packing timer */
+	session->packing_timer_fd = timerfd_create(CLOCK_REALTIME, 0);
+	if(session->packing_timer_fd < 0)
+	{
+		trace(LOG_ERR, "[client %s] failed to create packing timer: %s (%d)",
+		      session->dst_addr_str, strerror(errno), errno);
+		goto close_keepalive_timer;
+	}
+
 	/* arm keepalive timer */
 	if(!iprohc_session_update_keepalive(session, keepalive_timeout))
 	{
 		trace(LOG_ERR, "[client %s] failed to update the keepalive timeout to "
 		      "%zu seconds", session->dst_addr_str, keepalive_timeout);
-		goto close_keepalive_timer;
+		goto close_packing_timer;
 	}
 	session->keepalive_misses = 0;
 
@@ -142,6 +151,8 @@ bool iprohc_session_new(struct iprohc_session *const session,
 
 	return true;
 
+close_packing_timer:
+	close(session->packing_timer_fd);
 close_keepalive_timer:
 	close(session->keepalive_timer_fd);
 tls_deinit:
@@ -160,6 +171,10 @@ error:
  */
 bool iprohc_session_free(struct iprohc_session *const session)
 {
+	/* stop and destroy the packing timer */
+	close(session->packing_timer_fd);
+	session->packing_timer_fd = -1;
+
 	/* stop and destroy keepalive timer */
 	close(session->keepalive_timer_fd);
 	session->keepalive_timer_fd = -1;

@@ -81,8 +81,6 @@ struct iprohc_tunnel
 
 	/** The frame being packed, stored in context until completion or timeout */
 	unsigned char packing_frame[TUNTAP_BUFSIZE];
-	/** The timer to flush the packing frame */
-	int packing_timer_fd;
 
 	struct tunnel_params params;
 

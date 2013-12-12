@@ -253,15 +253,6 @@ bool iprohc_tunnel_new(struct iprohc_tunnel *const tunnel,
 		goto destroy_decomp;
 	}
 
-	/* create packing timer */
-	tunnel->packing_timer_fd = timerfd_create(CLOCK_REALTIME, 0);
-	if(tunnel->packing_timer_fd < 0)
-	{
-		trace(LOG_ERR, "failed to create packing timer: %s (%d)",
-		      strerror(errno), errno);
-		goto destroy_decomp;
-	}
-
 	tunnel->is_init = true;
 	return true;
 
@@ -287,10 +278,6 @@ bool iprohc_tunnel_free(struct iprohc_tunnel *const tunnel)
 {
 	if(tunnel->is_init)
 	{
-		/* destroy the packing timer */
-		close(tunnel->packing_timer_fd);
-		tunnel->packing_timer_fd = -1;
-
 		/* free the ROHC compressor and decompressor */
 		rohc_decomp_free(tunnel->decomp);
 		rohc_comp_free(tunnel->comp);
@@ -425,7 +412,7 @@ void * iprohc_tunnel_run(void *arg)
 	if(pollfd < 0)
 	{
 		tunnel_trace(session, LOG_ERR, "failed to create epoll context: %s (%d)",
-		      strerror(errno), errno);
+		             strerror(errno), errno);
 		goto tls_bye;
 	}
 
@@ -436,8 +423,8 @@ void * iprohc_tunnel_run(void *arg)
 	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, session->p2c[0], &poll_pipe);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "[main] failed to add pipe to epoll context: %s (%d)",
-		      strerror(errno), errno);
+		tunnel_trace(session, LOG_ERR, "failed to add pipe to epoll context: "
+		             "%s (%d)", strerror(errno), errno);
 		goto close_pollfd;
 	}
 
@@ -448,8 +435,8 @@ void * iprohc_tunnel_run(void *arg)
 	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, session->tcp_socket, &poll_tcp);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "[main] failed to add TCP socket to epoll context: %s (%d)",
-		      strerror(errno), errno);
+		tunnel_trace(session, LOG_ERR, "failed to add TCP socket to epoll "
+		             "context: %s (%d)", strerror(errno), errno);
 		goto close_pollfd;
 	}
 
@@ -460,21 +447,21 @@ void * iprohc_tunnel_run(void *arg)
 	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, session->keepalive_timer_fd, &poll_ka);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "[main] failed to add keepalive timer to epoll context: "
-		      "%s (%d)", strerror(errno), errno);
+		tunnel_trace(session, LOG_ERR, "failed to add keepalive timer to epoll "
+		             "context: %s (%d)", strerror(errno), errno);
 		goto close_pollfd;
 	}
 
 	/* will monitor the packing timer */
 	poll_packing.events = EPOLLIN;
 	memset(&poll_packing.data, 0, sizeof(poll_packing.data));
-	poll_packing.data.fd = tunnel->packing_timer_fd;
-	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, tunnel->packing_timer_fd,
+	poll_packing.data.fd = session->packing_timer_fd;
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, session->packing_timer_fd,
 	                &poll_packing);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "[main] failed to add packing timer to epoll context: "
-		      "%s (%d)", strerror(errno), errno);
+		tunnel_trace(session, LOG_ERR, "failed to add packing timer to epoll "
+		             "context: %s (%d)", strerror(errno), errno);
 		goto close_pollfd;
 	}
 
@@ -522,6 +509,7 @@ void * iprohc_tunnel_run(void *arg)
 			tunnel_trace(session, LOG_DEBUG, "epoll: no event occurred");
 			continue;
 		}
+		tunnel_trace(session, LOG_DEBUG, "epoll: %d events detected", ret);
 
 		/* stop thread if main thread closed the write side of the pipe */
 		if(events[0].data.fd == session->p2c[0])
@@ -636,6 +624,7 @@ void * iprohc_tunnel_run(void *arg)
 			const char command[1] = { C_KEEPALIVE };
 			uint64_t keepalive_timer_nr;
 
+			tunnel_trace(session, LOG_DEBUG, "keepalive timer expired");
 			ret = read(session->keepalive_timer_fd, &keepalive_timer_nr,
 			           sizeof(uint64_t));
 			if(ret < 0)
@@ -665,19 +654,20 @@ void * iprohc_tunnel_run(void *arg)
 			else
 			{
 				session->keepalive_misses++;
-				trace(LOG_DEBUG, "send a keepalive command %zu/3",
-				      session->keepalive_misses);
+				tunnel_trace(session, LOG_DEBUG, "send a keepalive command %zu/3",
+				             session->keepalive_misses);
 				gnutls_record_send(session->tls_session, command, 1);
 			}
 		}
 
 		/* flush the incomplete packing frame being built if too few activity
 		 * on data channel */
-		if(events[0].data.fd == tunnel->packing_timer_fd)
+		if(events[0].data.fd == session->packing_timer_fd)
 		{
 			uint64_t timer_nr;
 
-			ret = read(tunnel->packing_timer_fd, &timer_nr, sizeof(uint64_t));
+			tunnel_trace(session, LOG_DEBUG, "packing timer expired");
+			ret = read(session->packing_timer_fd, &timer_nr, sizeof(uint64_t));
 			if(ret < 0)
 			{
 				tunnel_trace(session, LOG_ERR, "failed to read packing timer: "
@@ -730,11 +720,12 @@ void * iprohc_tunnel_run(void *arg)
 			if(packing_cur_pkts == 0)
 			{
 				/* disarm packing timer */
+				tunnel_trace(session, LOG_DEBUG, "reset packing timer");
 				packing_timeout.it_value.tv_sec = 0;
 				packing_timeout.it_value.tv_nsec = 0;
 				packing_timeout.it_interval.tv_sec = 0;
 				packing_timeout.it_interval.tv_nsec = 0;
-				ret = timerfd_settime(tunnel->packing_timer_fd, 0, &packing_timeout, NULL);
+				ret = timerfd_settime(session->packing_timer_fd, 0, &packing_timeout, NULL);
 				if(ret != 0)
 				{
 					tunnel_trace(session, LOG_ERR, "failed to disarm packing timer: "
@@ -745,10 +736,13 @@ void * iprohc_tunnel_run(void *arg)
 			else if(packing_cur_pkts != packing_pkts_old)
 			{
 				/* re-arm packing timer */
+				tunnel_trace(session, LOG_DEBUG, "re-arm packing timer for "
+				             "incomplete frame with %zu packets", packing_cur_pkts);
 				packing_timeout.it_value.tv_sec = 0;
-				packing_timeout.it_value.tv_nsec = 100 * 1e6;
+				packing_timeout.it_value.tv_nsec = 100 * 1e6; /* 100ms */
 				packing_timeout.it_interval.tv_sec = 0;
-				ret = timerfd_settime(tunnel->packing_timer_fd, 0, &packing_timeout, NULL);
+				packing_timeout.it_interval.tv_nsec = 0;
+				ret = timerfd_settime(session->packing_timer_fd, 0, &packing_timeout, NULL);
 				if(ret != 0)
 				{
 					tunnel_trace(session, LOG_ERR, "failed to re-arm packing timer: "
