@@ -152,7 +152,6 @@ int main(int argc, char *argv[])
 	pthread_t raw_route_thread;
 
 	fd_set rdfs;
-	int max_fd;
 	int j;
 
 	int ret;
@@ -460,7 +459,7 @@ int main(int argc, char *argv[])
 	is_server_alive = true;
 	while(is_server_alive)
 	{
-		max_fd = 0;
+		int max_fd = 0;
 
 		gettimeofday(&now, NULL);
 
