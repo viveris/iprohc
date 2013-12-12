@@ -161,6 +161,7 @@ int main(int argc, char *argv[])
 	size_t client_id;
 	int serv_socket;
 
+	const int fwmark = 0; /* no netfilter firewall mark */
 	int tun, raw;
 	int tun_itf_id;
 	size_t tun_itf_mtu;
@@ -493,7 +494,7 @@ int main(int argc, char *argv[])
 
 	/* RAW create */
 	trace(LOG_INFO, "[main] create RAW socket");
-	raw = create_raw();
+	raw = create_raw(fwmark);
 	if(raw < 0)
 	{
 		trace(LOG_ERR, "[main] failed to create RAW socket");

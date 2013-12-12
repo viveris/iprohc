@@ -30,7 +30,8 @@ int create_tun(const char *const name,
 	__attribute__((warn_unused_result));
 
 bool set_ip4(int iface_index, uint32_t address, uint8_t network);
-int create_raw(void);
+
+int create_raw(const int fwmark);
 
 #endif
 

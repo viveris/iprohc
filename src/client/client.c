@@ -89,6 +89,7 @@ static void usage(void)
 	       "Other options:\n"
 	       "  -d, --debug         Enable debuging\n"
 	       "  -h, --help          Print this help message\n"
+	       "  -m, --mark NUM      Set the netfilter fwmark for outgoing traffic\n"
 	       "  -k, --packing NUM   Override packing level sent by server\n"
 	       "  -p, --port NUM      The port of the remote server\n"
 	       "  -u, --up PATH       Path to a shell script that will be run\n"
@@ -148,6 +149,7 @@ int main(int argc, char *argv[])
 	memset(client.tun_name, 0, IFNAMSIZ);
 	memset(client.basedev, 0, IFNAMSIZ);
 	memset(client.up_script_path, 0, PATH_MAX + 1);
+	client.fwmark = 0; /* no netfilter fwmark by default */
 	client.packing = 0;
 	serv_addr[0] = '\0';
 	pkcs12_f[0] = '\0';
@@ -163,6 +165,7 @@ int main(int argc, char *argv[])
 	struct option options[] = {
 		{ "dev",     required_argument, NULL, 'i' },
 		{ "basedev", required_argument, NULL, 'b' },
+		{ "mark",    required_argument, NULL, 'm' },
 		{ "remote",  required_argument, NULL, 'r' },
 		{ "port",    required_argument, NULL, 'p' },
 		{ "p12",     required_argument, NULL, 'P' },
@@ -176,7 +179,7 @@ int main(int argc, char *argv[])
 
 	do
 	{
-		c = getopt_long(argc, argv, "i:b:r:p:u:P:hvk:d", options, NULL);
+		c = getopt_long(argc, argv, "i:b:r:m:p:u:P:hvk:d", options, NULL);
 		switch(c)
 		{
 			case 'd':
@@ -190,7 +193,7 @@ int main(int argc, char *argv[])
 	optind = 1;
 	do
 	{
-		c = getopt_long(argc, argv, "i:b:r:p:u:P:hvk:d", options, NULL);
+		c = getopt_long(argc, argv, "i:b:r:m:p:u:P:hvk:d", options, NULL);
 		switch(c)
 		{
 			case 'i':
@@ -217,6 +220,18 @@ int main(int argc, char *argv[])
 				}
 				strncpy(client.basedev, optarg, IFNAMSIZ);
 				break;
+			case 'm':
+			{
+				const int num = atoi(optarg);
+				if(num < 0 || num > 0xffff)
+				{
+					trace(LOG_ERR, "packing level must be in range [0;0xffff]");
+					goto error;
+				}
+				client.fwmark = num;
+				trace(LOG_DEBUG, "using netfilter fwmark: %d", client.fwmark);
+				break;
+			}
 			case 'r':
 				if(strlen(optarg) > PATH_MAX)
 				{
@@ -363,7 +378,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* set RAW  */
-	client.raw = create_raw();
+	client.raw = create_raw(client.fwmark);
 	if(client.raw < 0)
 	{
 		trace(LOG_ERR, "Unable to create RAW socket");
@@ -422,6 +437,18 @@ int main(int argc, char *argv[])
 			      "IPv4 address " IPV4_ADDR_FMT ": %s (%d)", IPV4_ADDR(raddr),
 			      strerror(errno), errno);
 			continue;
+		}
+
+		if(client.fwmark > 0)
+		{
+			ret = setsockopt(ctrl_sock, SOL_SOCKET, SO_MARK, &client.fwmark,
+			                 sizeof(int));
+			if(ret != 0)
+			{
+				trace(LOG_DEBUG, "failed to set netfilter firewall mark %d on "
+				      "socket to connect to server with " IPV4_ADDR_FMT ": %s (%d)",
+				      client.fwmark, IPV4_ADDR(raddr), strerror(errno), errno);
+			}
 		}
 
 		if(connect(ctrl_sock, rp->ai_addr, rp->ai_addrlen) != -1)
@@ -534,6 +561,24 @@ int main(int argc, char *argv[])
 		}
 		else if(ret == 0)
 		{
+			/* check that client thread is still running */
+			if(AO_load_acquire_read(&(client.session.is_thread_running)))
+			{
+				/* still running */
+				continue;
+			}
+
+			/* client is not running any more, we can check its status */
+			if(client.session.status == IPROHC_SESSION_PENDING_DELETE)
+			{
+				/* stop client session */
+				trace(LOG_INFO, "[main] stop session");
+				if(!iprohc_session_stop(&(client.session)))
+				{
+					trace(LOG_ERR, "[main] failed to stop session");
+				}
+			}
+
 			continue;
 		}
 

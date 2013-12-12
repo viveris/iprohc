@@ -39,6 +39,9 @@ struct iprohc_client_session
 	/** The packing level that client wishes to enforce */
 	size_t packing;
 
+	/** The netfilter firewall mark (no mark if 0) */
+	int fwmark;
+
 	char tun_name[IFNAMSIZ];       /**< The name of the TUN interface */
 	int tun;
 	int tun_itf_id;

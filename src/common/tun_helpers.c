@@ -325,9 +325,10 @@ error:
 }
 
 
-int create_raw(void)
+int create_raw(const int fwmark)
 {
 	int sock;
+	int ret;
 
 	/* create socket */
 	sock = socket(AF_INET, SOCK_RAW, 142);
@@ -335,12 +336,25 @@ int create_raw(void)
 	{
 		trace(LOG_ERR, "failed to create a raw socket: %s (%d)",
 				strerror(errno), errno);
-		goto quit;
+		goto error;
+	}
+
+	if(fwmark > 0)
+	{
+		ret = setsockopt(sock, SOL_SOCKET, SO_MARK, &fwmark, sizeof(int));
+		if(ret != 0)
+		{
+			trace(LOG_DEBUG, "failed to set netfilter firewall mark %d on "
+			      "raw socket: %s (%d)", fwmark, strerror(errno), errno);
+			goto close_socket;
+		}
 	}
 
 	return sock;
 
-quit:
+close_socket:
+	close(sock);
+error:
 	return -1;
 }
 
