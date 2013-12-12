@@ -19,7 +19,8 @@ iprohc_server_CPPFLAGS = \
 	-I$(top_srcdir)/src/common
 
 iprohc_server_LDFLAGS = \
-	$(configure_ldflags)
+	$(configure_ldflags) \
+	-lpthread
 
 iprohc_server_SOURCES = \
 	client.c \
@@ -37,6 +38,7 @@ noinst_HEADERS = \
 	client.h \
 	messages.h \
 	server_config.h \
+	server_session.h \
 	server.h \
 	tls.h
 
