@@ -51,10 +51,10 @@ bool parse_tlv(const unsigned char *const data,
 	assert(parsed_len != NULL);
 
 	trace(LOG_DEBUG, "parse a maximum of %d parameters in TLV format on %zu "
-	      "bytes", max_results + 1, data_len);
+	      "bytes", max_results, data_len);
 
 	for((*parsed_len) = 0, i = 0;
-	    (*parsed_len) < data_len && i < (max_results + 1);
+	    (*parsed_len) < data_len && i < max_results;
 	    (*parsed_len) += (3 + len), i++)
 	{
 		size_t j;
@@ -264,7 +264,7 @@ bool parse_connect(const unsigned char *const data,
 		IP_ADDR, PACKING, MAXCID, UNID, WINDOWSIZE, REFRESH,
 		KEEPALIVE, ROHC_COMPAT
 	};
-	struct tlv_result results[N_TUNNEL_PARAMS];
+	struct tlv_result results[N_TUNNEL_PARAMS + 1];
 	bool is_success = false;
 	bool is_ok;
 	int i;
@@ -273,10 +273,10 @@ bool parse_connect(const unsigned char *const data,
 	assert(params != NULL);
 	assert(parsed_len != NULL);
 
-	memset(results, 0, N_TUNNEL_PARAMS * sizeof(struct tlv_result));
+	memset(results, 0, (N_TUNNEL_PARAMS + 1) * sizeof(struct tlv_result));
 	*parsed_len = 0;
 
-	is_ok = parse_tlv(data, data_len, results, N_TUNNEL_PARAMS, parsed_len);
+	is_ok = parse_tlv(data, data_len, results, N_TUNNEL_PARAMS + 1, parsed_len);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "parse_connect: failed to parse TLV parameters");
@@ -409,7 +409,7 @@ bool parse_connrequest(const unsigned char *const data,
 							  int *const packing,
 							  int *const proto_version)
 {
-	struct tlv_result results[N_CONNREQ_FIELD];
+	struct tlv_result results[N_CONNREQ_FIELD + 1];
 	bool is_success = false;
 	bool is_ok;
 	size_t err_nr;
@@ -420,10 +420,10 @@ bool parse_connrequest(const unsigned char *const data,
 	assert(packing != NULL);
 	assert(proto_version != NULL);
 
-	memset(results, 0, N_CONNREQ_FIELD * sizeof(struct tlv_result));
+	memset(results, 0, (N_CONNREQ_FIELD + 1) * sizeof(struct tlv_result));
 	*parsed_len = 0;
 
-	is_ok = parse_tlv(data, data_len, results, N_CONNREQ_FIELD, parsed_len);
+	is_ok = parse_tlv(data, data_len, results, N_CONNREQ_FIELD + 1, parsed_len);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "parse_connrequest: failed to parse TLV parameters");
