@@ -112,8 +112,9 @@ static void usage(void)
 
 
 int alive;
-void sigterm(int signal)
+static void iprohc_sigterm(int signal)
 {
+	trace(LOG_INFO, "received signal %d", signal);
 	alive = 0;
 }
 
@@ -493,8 +494,24 @@ int main(int argc, char *argv[])
 	while(emitted_len < command_len);
 
 	/* Handle SIGTERM */
-	signal(SIGTERM, sigterm);
-	signal(SIGINT, sigterm);
+	if(signal(SIGTERM, iprohc_sigterm) == SIG_ERR)
+	{
+		trace(LOG_ERR, "failed to install handler for signal TERM: %s (%d)",
+		      strerror(errno), errno);
+		goto close_tls;
+	}
+	if(signal(SIGINT, iprohc_sigterm) == SIG_ERR)
+	{
+		trace(LOG_ERR, "failed to install handler for signal INT: %s (%d)",
+		      strerror(errno), errno);
+		goto close_tls;
+	}
+	if(signal(SIGQUIT, iprohc_sigterm) == SIG_ERR)
+	{
+		trace(LOG_ERR, "failed to install handler for signal QUIT: %s (%d)",
+		      strerror(errno), errno);
+		goto close_tls;
+	}
 
 	/* Wait for answer and other messages, close when socket is close */
 	trace(LOG_INFO, "wait for connect answer from server");
