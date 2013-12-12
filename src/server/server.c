@@ -41,6 +41,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <sys/signalfd.h>
 #include <sys/timerfd.h>
+#include <sys/epoll.h>
 
 #include <gnutls/gnutls.h>
 #include <gnutls/pkcs12.h>
@@ -164,14 +165,19 @@ int main(int argc, char *argv[])
 	pthread_t tun_route_thread;
 	pthread_t raw_route_thread;
 
-	fd_set rdfs;
 	int j;
-
 	int ret;
 
 	int signal_fd;
 	sigset_t mask;
 	bool is_server_alive;
+	struct timeval now;
+
+	struct epoll_event poll_signal;
+	struct epoll_event poll_serv;
+	const size_t max_events_nr = 1;
+	struct epoll_event events[max_events_nr];
+	int pollfd;
 
 	gnutls_dh_params_t dh_params;
 
@@ -479,42 +485,64 @@ int main(int argc, char *argv[])
 	/* stop writing logs on stderr */
 	iprohc_log_stderr = false;
 
-	struct timeval timeout;
-	struct timeval now;
+	/* we want to monitor some fds */
+	pollfd = epoll_create(1);
+	if(pollfd < 0)
+	{
+		trace(LOG_ERR, "[main] failed to create epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto stop_raw_thread;
+	}
+
+	/* will monitor the signal fd */
+	poll_signal.events = EPOLLIN;
+	memset(&poll_signal.data, 0, sizeof(poll_signal.data));
+	poll_signal.data.fd = signal_fd;
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, signal_fd, &poll_signal);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[main] failed to add signal to epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto close_pollfd;
+	}
+
+	/* will monitor the server socket */
+	poll_serv.events = EPOLLIN;
+	memset(&poll_serv.data, 0, sizeof(poll_serv.data));
+	poll_serv.data.fd = serv_socket;
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, serv_socket, &poll_serv);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[main] failed to add server socket to epoll context: "
+		      "%s (%d)", strerror(errno), errno);
+		goto close_pollfd;
+	}
 
 	/* Start listening and looping on TCP socket */
 	trace(LOG_INFO, "[main] server is now ready to accept requests from clients");
 	is_server_alive = true;
 	while(is_server_alive)
 	{
-		int max_fd = 0;
+		const int timeout = 10 * 1000; /* in milliseconds */
 
 		gettimeofday(&now, NULL);
 
-		FD_ZERO(&rdfs);
-		FD_SET(serv_socket, &rdfs);
-		max_fd = max(serv_socket, max_fd);
-		FD_SET(signal_fd, &rdfs);
-		max_fd = max(signal_fd, max_fd);
-
-		/* Reset timeout */
-		timeout.tv_sec = 60;
-		timeout.tv_usec = 0;
-
-		ret = select(max_fd + 1, &rdfs, NULL, NULL, &timeout);
+		/* wait for events */
+		ret = epoll_wait(pollfd, events, max_events_nr, timeout);
 		if(ret < 0)
 		{
-			trace(LOG_ERR, "[main] select failed: %s (%d)", strerror(errno), errno);
+			trace(LOG_ERR, "[main] epoll_wait failed: %s (%d)", strerror(errno), errno);
 			continue;
 		}
 		else if(ret == 0)
 		{
-			trace(LOG_DEBUG, "[main] select: timeout expired without any event");
+			trace(LOG_DEBUG, "[main] epoll_wait: timeout expired without any event");
 			continue;
 		}
+		trace(LOG_DEBUG, "[main] epoll_wait: %d event(s)", ret);
 
 		/* UNIX signal received? */
-		if(FD_ISSET(signal_fd, &rdfs))
+		if(events[0].data.fd == signal_fd)
 		{
 			struct signalfd_siginfo signal_infos;
 
@@ -592,8 +620,9 @@ int main(int argc, char *argv[])
 		}
 
 		/* Read on serv_socket : new client */
-		if(FD_ISSET(serv_socket, &rdfs))
+		if(events[0].data.fd == serv_socket)
 		{
+			trace(LOG_INFO, "[main] new connection from client");
 			if(!iprohc_server_handle_new_client(serv_socket, clients, &clients_nr,
 			                                    server_opts.clients_max_nr,
 			                                    raw, tun, tun_itf_mtu, basedev_mtu,
@@ -666,6 +695,9 @@ int main(int argc, char *argv[])
 	/* everything went fine */
 	exit_status = 0;
 
+close_pollfd:
+	close(pollfd);
+stop_raw_thread:
 	trace(LOG_INFO, "[main] stop RAW routing thread...");
 	close(route_args_raw.p2c[1]);
 	route_args_raw.p2c[1] = -1;
@@ -908,8 +940,15 @@ static void * route(void *arg)
 	enum type_route type = _arg->type;
 
 	bool is_route_thread_alive = true;
-	int i;
 	size_t len;
+	int ret;
+	int i;
+
+	struct epoll_event poll_pipe;
+	struct epoll_event poll_sock;
+	const size_t max_events_nr = 2;
+	struct epoll_event events[max_events_nr];
+	int pollfd;
 
 	unsigned char buffer[TUNTAP_BUFSIZE];
 	unsigned int buffer_len = TUNTAP_BUFSIZE;
@@ -921,29 +960,47 @@ static void * route(void *arg)
 
 	trace(LOG_INFO, "[route] Initializing routing thread");
 
+	/* we want to monitor some fds */
+	pollfd = epoll_create(1);
+	if(pollfd < 0)
+	{
+		trace(LOG_ERR, "[route] failed to create epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto error;
+	}
+
+	/* will monitor the read side of the pipe */
+	poll_pipe.events = EPOLLIN;
+	memset(&poll_pipe.data, 0, sizeof(poll_pipe.data));
+	poll_pipe.data.fd = _arg->p2c[0];
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, _arg->p2c[0], &poll_pipe);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[route] failed to add pipe to epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto close_pollfd;
+	}
+
+	/* will monitor the read side of the pipe */
+	poll_sock.events = EPOLLIN;
+	memset(&poll_sock.data, 0, sizeof(poll_sock.data));
+	poll_sock.data.fd = fd;
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, fd, &poll_sock);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[route] failed to add socket to epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto close_pollfd;
+	}
+
 	while(is_route_thread_alive)
 	{
-		fd_set readfds;
-		struct timeval timeout;
-		int max_fd = 0;
-		int ret;
-
-		FD_ZERO(&readfds);
-		/* read side of the pipe */
-		FD_SET(_arg->p2c[0], &readfds);
-		max_fd = max(_arg->p2c[0], max_fd);
-		/* socket to route traffic for */
-		FD_SET(fd, &readfds);
-		max_fd = max(fd, max_fd);
-
-		timeout.tv_sec = 60;
-		timeout.tv_usec = 0;
-
-		ret = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
+		/* wait for events */
+		ret = epoll_wait(pollfd, events, max_events_nr, -1);
 		if(ret < 0)
 		{
-			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
-			goto error;
+			trace(LOG_ERR, "epoll_wait failed: %s (%d)", strerror(errno), errno);
+			goto close_pollfd;
 		}
 		else if(ret == 0)
 		{
@@ -951,24 +1008,24 @@ static void * route(void *arg)
 		}
 
 		/* stop thread if main thread closed the write side of the pipe */
-		if(FD_ISSET(_arg->p2c[0], &readfds))
+		if(events[0].data.fd == _arg->p2c[0])
 		{
 			goto quit;
 		}
 
-		if(FD_ISSET(fd, &readfds))
+		if(events[0].data.fd == fd)
 		{
 			ret = read(fd, buffer, buffer_len);
 			if(ret < 0)
 			{
 				trace(LOG_ERR, "[route] read failed: %s (%d)", strerror(errno),
 				      errno);
-				goto error;
+				goto close_pollfd;
 			}
 			else if(ret != 0)
 			{
 				trace(LOG_ERR, "[route] nothing read on socket");
-				goto error;
+				goto close_pollfd;
 			}
 			len = ret;
 			trace(LOG_DEBUG, "[route] read %zu bytes", len);
@@ -1041,6 +1098,8 @@ static void * route(void *arg)
 
 quit:
 	trace(LOG_INFO, "[route] end of thread");
+close_pollfd:
+	close(pollfd);
 error:
 	return NULL;
 }

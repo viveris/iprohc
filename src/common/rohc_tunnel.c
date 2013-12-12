@@ -30,7 +30,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/select.h>
 #include <sys/time.h>
 #include <signal.h>
 #include <errno.h>
@@ -38,6 +37,8 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 #include <linux/if_tun.h>
+
+#include <sys/epoll.h>
 
 
 /*
@@ -328,6 +329,15 @@ void * iprohc_tunnel_run(void *arg)
 	int failure = 0;
 	int ret;
 
+	struct epoll_event poll_pipe;
+	struct epoll_event poll_tcp;
+	struct epoll_event poll_ka;
+	struct epoll_event poll_tun;
+	struct epoll_event poll_raw;
+	const size_t max_events_nr = 1;
+	struct epoll_event events[max_events_nr];
+	int pollfd;
+
 	struct timeval now;
 	struct timeval last;
 	bool is_last_init = false;
@@ -402,6 +412,55 @@ void * iprohc_tunnel_run(void *arg)
 	}
 	trace(LOG_INFO, "remote certificate accepted");
 
+	/* we want to monitor some fds */
+	pollfd = epoll_create(1);
+	if(pollfd < 0)
+	{
+		tunnel_trace(session, LOG_ERR, "failed to create epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto tls_bye;
+	}
+
+	/* will monitor the read side of the pipe */
+	poll_pipe.events = EPOLLIN;
+	memset(&poll_pipe.data, 0, sizeof(poll_pipe.data));
+	poll_pipe.data.fd = session->p2c[0];
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, session->p2c[0], &poll_pipe);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[main] failed to add pipe to epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto close_pollfd;
+	}
+
+	/* will monitor the TCP socket */
+	poll_tcp.events = EPOLLIN;
+	memset(&poll_tcp.data, 0, sizeof(poll_tcp.data));
+	poll_tcp.data.fd = session->tcp_socket;
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, session->tcp_socket, &poll_tcp);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[main] failed to add TCP socket to epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto close_pollfd;
+	}
+
+	/* will monitor the keepalive timer */
+	poll_ka.events = EPOLLIN;
+	memset(&poll_ka.data, 0, sizeof(poll_ka.data));
+	poll_ka.data.fd = session->keepalive_timer_fd;
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, session->keepalive_timer_fd, &poll_ka);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[main] failed to add keepalive timer to epoll context: "
+		      "%s (%d)", strerror(errno), errno);
+		goto close_pollfd;
+	}
+
+	/* don't monitor TUN and RAW socket now */
+	poll_tun.data.fd = -1;
+	poll_raw.data.fd = -1;
+
 	/* send initial control message to remote peer if asked to do so */
 	if(session->start_ctrl != NULL)
 	{
@@ -409,74 +468,49 @@ void * iprohc_tunnel_run(void *arg)
 		{
 			tunnel_trace(session, LOG_ERR, "failed to send initial control "
 			             "message to remote peer");
-			goto tls_bye;
+			goto close_pollfd;
 		}
 	}
 
 	/* main loop of client */
 	do
 	{
-		fd_set readfds;
-		size_t timeout_orig;
-		struct timeval timeout;
-		int max_fd = 0;
+		int timeout;
 		int ret;
 
 		/* wait at most twice the keepalive timeout */
-		timeout_orig = 80;
+		timeout = 80;
 		if(session->status == IPROHC_SESSION_CONNECTED)
 		{
-			timeout_orig = session->tunnel.params.keepalive_timeout * 2;
-		}
-		timeout.tv_sec = timeout_orig;
-		timeout.tv_usec = 0;
-
-		/* sockets and file descriptors to monitor */
-		FD_ZERO(&readfds);
-		/* read side of the pipe */
-		FD_SET(session->p2c[0], &readfds);
-		max_fd = max(session->p2c[0], max_fd);
-		/* TCP socket */
-		FD_SET(session->tcp_socket, &readfds);
-		max_fd = max(session->tcp_socket, max_fd);
-		/* keepalive timer */
-		FD_SET(session->keepalive_timer_fd, &readfds);
-		max_fd = max(session->keepalive_timer_fd, max_fd);
-		if(session->status == IPROHC_SESSION_CONNECTED)
-		{
-			/* TUN interface */
-			FD_SET(tunnel->tun_fd_in, &readfds);
-			max_fd = max(tunnel->tun_fd_in, max_fd);
-			/* RAW socket */
-			FD_SET(tunnel->raw_socket_in, &readfds);
-			max_fd = max(tunnel->raw_socket_in, max_fd);
+			timeout = session->tunnel.params.keepalive_timeout * 2;
 		}
 
-		ret = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
+		/* wait for events */
+		ret = epoll_wait(pollfd, events, max_events_nr, timeout * 1000);
 		if(ret < 0)
 		{
-			tunnel_trace(session, LOG_ERR, "select failed: %s (%d)",
+			tunnel_trace(session, LOG_ERR, "epoll failed: %s (%d)",
 			             strerror(errno), errno);
 			failure = 1;
 			session->status = IPROHC_SESSION_PENDING_DELETE;
-			goto tls_bye;
+			goto close_pollfd;
 		}
 		else if(ret == 0)
 		{
 			/* no event occurred */
-			tunnel_trace(session, LOG_DEBUG, "select: no event occurred");
+			tunnel_trace(session, LOG_DEBUG, "epoll: no event occurred");
 			continue;
 		}
 
 		/* stop thread if main thread closed the write side of the pipe */
-		if(FD_ISSET(session->p2c[0], &readfds))
+		if(events[0].data.fd == session->p2c[0])
 		{
 			session->status = IPROHC_SESSION_PENDING_DELETE;
-			goto tls_bye;
+			goto close_pollfd;
 		}
 
 		/* event on control channel? */
-		if(FD_ISSET(session->tcp_socket, &readfds))
+		if(events[0].data.fd == session->tcp_socket)
 		{
 			const size_t max_msg_len = 1024;
 			unsigned char msg[max_msg_len];
@@ -490,14 +524,14 @@ void * iprohc_tunnel_run(void *arg)
 				tunnel_trace(session, LOG_ERR, "failed to receive data from remote "
 				             "peer on TLS session: %s (%d)", gnutls_strerror(ret), ret);
 				session->status = IPROHC_SESSION_PENDING_DELETE;
-				goto tls_bye;
+				goto close_pollfd;
 			}
 			else if(ret == 0)
 			{
 				tunnel_trace(session, LOG_ERR, "TLS session was interrupted by "
 				             "remote peer");
 				session->status = IPROHC_SESSION_PENDING_DELETE;
-				goto tls_bye;
+				goto close_pollfd;
 			}
 			msg_len = ret;
 			tunnel_trace(session, LOG_DEBUG, "[thread] received %zu byte(s) on TCP socket",
@@ -510,13 +544,13 @@ void * iprohc_tunnel_run(void *arg)
 				{
 					tunnel_trace(session, LOG_NOTICE, "client was disconnected");
 					session->status = IPROHC_SESSION_PENDING_DELETE;
-					goto tls_bye;
+					goto close_pollfd;
 				}
 				else if(session->status == IPROHC_SESSION_CONNECTING)
 				{
 					tunnel_trace(session, LOG_NOTICE, "client failed to connect");
 					session->status = IPROHC_SESSION_PENDING_DELETE;
-					goto tls_bye;
+					goto close_pollfd;
 				}
 				assert(0); /* should not happen */
 			}
@@ -527,6 +561,40 @@ void * iprohc_tunnel_run(void *arg)
 			}
 			else
 			{
+				if(session->status == IPROHC_SESSION_CONNECTED)
+				{
+					if(poll_tun.data.fd < 0)
+					{
+						/* will monitor the TUN fd */
+						poll_tun.events = EPOLLIN;
+						memset(&poll_tun.data, 0, sizeof(poll_tun.data));
+						poll_tun.data.fd = tunnel->tun_fd_in;
+						ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, tunnel->tun_fd_in,
+						                &poll_tun);
+						if(ret != 0)
+						{
+							trace(LOG_ERR, "[main] failed to add TUN to epoll context: "
+							      "%s (%d)", strerror(errno), errno);
+							goto close_pollfd;
+						}
+					}
+					if(poll_raw.data.fd < 0)
+					{
+						/* will monitor the TUN fd */
+						poll_raw.events = EPOLLIN;
+						memset(&poll_raw.data, 0, sizeof(poll_raw.data));
+						poll_raw.data.fd = tunnel->raw_socket_in;
+						ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, tunnel->raw_socket_in,
+						                &poll_raw);
+						if(ret != 0)
+						{
+							trace(LOG_ERR, "[main] failed to add RAW socket to epoll "
+							      "context: %s (%d)", strerror(errno), errno);
+							goto close_pollfd;
+						}
+					}
+				}
+
 				/* refresh last activity timestamp */
 				gettimeofday(&(session->last_activity), NULL);
 
@@ -535,15 +603,16 @@ void * iprohc_tunnel_run(void *arg)
 				                                    tunnel->params.keepalive_timeout))
 				{
 					tunnel_trace(session, LOG_ERR, "failed to update the keepalive "
-					      "timeout to %zu seconds", tunnel->params.keepalive_timeout);
+					             "timeout to %zu seconds",
+					             tunnel->params.keepalive_timeout);
 					session->status = IPROHC_SESSION_PENDING_DELETE;
-					goto tls_bye;
+					goto close_pollfd;
 				}
 			}
 		}
 
 		/* send keepalive in case there is too few activity on control channel */
-		if(FD_ISSET(session->keepalive_timer_fd, &readfds))
+		if(events[0].data.fd == session->keepalive_timer_fd)
 		{
 			const char command[1] = { C_KEEPALIVE };
 			uint64_t keepalive_timer_nr;
@@ -555,7 +624,7 @@ void * iprohc_tunnel_run(void *arg)
 				tunnel_trace(session, LOG_ERR, "failed to read keepalive timer: "
 				             "%s (%d)", strerror(errno), errno);
 				session->status = IPROHC_SESSION_PENDING_DELETE;
-				goto tls_bye;
+				goto close_pollfd;
 			}
 			else if(ret != sizeof(uint64_t))
 			{
@@ -563,7 +632,7 @@ void * iprohc_tunnel_run(void *arg)
 				             "received %d bytes while expecting %zu bytes",
 				             ret, sizeof(uint64_t));
 				session->status = IPROHC_SESSION_PENDING_DELETE;
-				goto tls_bye;
+				goto close_pollfd;
 			}
 
 			trace(LOG_DEBUG, "send a keepalive command");
@@ -572,7 +641,7 @@ void * iprohc_tunnel_run(void *arg)
 
 		/* bridge from TUN to RAW */
 		if(session->status == IPROHC_SESSION_CONNECTED &&
-		   FD_ISSET(tunnel->tun_fd_in, &readfds))
+		   events[0].data.fd == tunnel->tun_fd_in)
 		{
 			const size_t packing_max_len = tunnel->basedev_mtu - sizeof(struct iphdr);
 
@@ -593,7 +662,7 @@ void * iprohc_tunnel_run(void *arg)
 
 		/* bridge from RAW to TUN */
 		if(session->status == IPROHC_SESSION_CONNECTED &&
-		   FD_ISSET(tunnel->raw_socket_in, &readfds))
+		   events[0].data.fd == tunnel->raw_socket_in)
 		{
 			tunnel_trace(session, LOG_DEBUG, "received data from raw");
 			failure = raw2tun(tunnel->decomp, session->src_addr.s_addr,
@@ -611,7 +680,7 @@ void * iprohc_tunnel_run(void *arg)
 			last = now;
 			is_last_init = true;
 		}
-		if(now.tv_sec > last.tv_sec + timeout.tv_sec)
+		if(now.tv_sec > last.tv_sec + timeout)
 		{
 			if(packing_cur_len > 0)
 			{
@@ -645,10 +714,12 @@ void * iprohc_tunnel_run(void *arg)
 		{
 			tunnel_trace(session, LOG_ERR, "failed to send final control "
 			             "message to remote peer");
-			goto tls_bye;
+			goto close_pollfd;
 		}
 	}
 
+close_pollfd:
+	close(pollfd);
 tls_bye:
 	/* close TLS session */
 	tunnel_trace(session, LOG_INFO, "close TLS session");

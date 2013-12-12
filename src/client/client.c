@@ -61,6 +61,8 @@ Returns :
 #include <sys/signalfd.h>
 #include <unistd.h>
 
+#include <sys/epoll.h>
+
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
 
@@ -129,6 +131,11 @@ int main(int argc, char *argv[])
 	socklen_t local_addr_len;
 	struct sockaddr_in remote_addr;
 	int ctrl_sock = -1;
+
+	struct epoll_event poll_signal;
+	const size_t max_events_nr = 1;
+	struct epoll_event events[max_events_nr];
+	int pollfd;
 
 	int ret;
 
@@ -472,22 +479,33 @@ int main(int argc, char *argv[])
 	 * Main loop
 	 */
 
-	/* Wait for answer and other messages, close when socket is close */
+	/* we want to monitor some fds */
+	pollfd = epoll_create(1);
+	if(pollfd < 0)
+	{
+		trace(LOG_ERR, "[main] failed to create epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto stop_session;
+	}
+
+	/* will monitor the signal fd */
+	poll_signal.events = EPOLLIN;
+	memset(&poll_signal.data, 0, sizeof(poll_signal.data));
+	poll_signal.data.fd = signal_fd;
+	ret = epoll_ctl(pollfd, EPOLL_CTL_ADD, signal_fd, &poll_signal);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[main] failed to add signal to epoll context: %s (%d)",
+		      strerror(errno), errno);
+		goto close_pollfd;
+	}
+
+	/* wait for the client to be stopped */
 	is_client_alive = true;
 	while(is_client_alive)
 	{
-		struct timeval timeout;
-		int max_fd = 0;
-		fd_set rdfs;
-
-		timeout.tv_sec = 600;
-		timeout.tv_usec = 0;
-
-		FD_ZERO(&rdfs);
-		FD_SET(signal_fd, &rdfs);
-		max_fd = max(signal_fd, max_fd);
-
-		ret = select(max_fd + 1, &rdfs, NULL, NULL, &timeout);
+		/* wait for events */
+		ret = epoll_wait(pollfd, events, max_events_nr, -1);
 		if(ret < 0)
 		{
 			if(errno == EINTR)
@@ -495,7 +513,7 @@ int main(int argc, char *argv[])
 				/* interrupted by a signal */
 				continue;
 			}
-			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
+			trace(LOG_ERR, "epoll_wait failed: %s (%d)", strerror(errno), errno);
 			goto stop_session;
 		}
 		else if(ret == 0)
@@ -504,7 +522,7 @@ int main(int argc, char *argv[])
 		}
 
 		/* UNIX signal received? */
-		if(FD_ISSET(signal_fd, &rdfs))
+		if(events[0].data.fd == signal_fd)
 		{
 	   	struct signalfd_siginfo signal_infos;
 
@@ -559,6 +577,8 @@ int main(int argc, char *argv[])
 
 	exit_status = 0;
 
+close_pollfd:
+	close(pollfd);
 stop_session:
 	trace(LOG_INFO, "stop session");
 	if(!iprohc_session_stop(&(client.session)))
