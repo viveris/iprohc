@@ -60,8 +60,7 @@ int new_client(const int conn,
 	/* init the generic session part */
 	if(!iprohc_session_new(&(client->session), GNUTLS_SERVER, server_opts.tls_cred,
 	                       server_opts.priority_cache, conn, client_local_addr,
-	                       remote_addr, raw, tun, basedev_mtu, tun_itf_mtu,
-	                       server_opts.params.keepalive_timeout))
+	                       remote_addr, raw, tun, server_opts.params.keepalive_timeout))
 	{
 		trace(LOG_ERR, "failed to init session for client #%zu", client_id);
 		status = -1;
@@ -77,8 +76,6 @@ int new_client(const int conn,
 		status = -2;
 		goto free_session;
 	}
-	/* for local input, don't use the real TUN fd, but the socket pair */
-	client->session.tunnel.tun_fd_in = client->fake_tun[0];
 
 	/* create a socket pair for the RAW socket between the route thread and
 	 * the client thread */
@@ -90,14 +87,17 @@ int new_client(const int conn,
 		status = -3;
 		goto close_tun_pair;
 	}
-	/* for remote input, don't use the real RAW fd, but the socket pair */
-	client->session.tunnel.raw_socket_in = client->fake_raw[0];
 
-	/* set tunnel paramaters with the ones retrieved in configuration */
-	memcpy(&(client->session.tunnel.params), &server_opts.params,
-	       sizeof(struct tunnel_params));
-	client->session.tunnel.params.local_address =
-		client->session.local_address.s_addr;
+	/* init tunnel context */
+	if(!iprohc_tunnel_new(&(client->session.tunnel), server_opts.params,
+	                      client->session.local_address.s_addr,
+	                      client->fake_raw[0], client->fake_tun[0],
+	                      basedev_mtu, tun_itf_mtu))
+	{
+		trace(LOG_ERR, "[client %s] failed to init tunnel context",
+		      client->session.dst_addr_str);
+		goto close_raw_pair;
+	}
 
 	/* Get rid of warning, it's a "bug" of GnuTLS
 	 * (see http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
@@ -114,7 +114,7 @@ int new_client(const int conn,
 		trace(LOG_ERR, "[client %s] TLS handshake failed: %s (%d)",
 		      client->session.dst_addr_str, gnutls_strerror(ret), ret);
 		status = -4;
-		goto close_raw_pair;
+		goto free_tunnel;
 	}
 	trace(LOG_INFO, "[client %s] TLS handshake succeeded",
 	      client->session.dst_addr_str);
@@ -126,7 +126,7 @@ int new_client(const int conn,
 		trace(LOG_ERR, "[client %s] TLS verify failed: %s (%d)",
 		      client->session.dst_addr_str, gnutls_strerror(ret), ret);
 		status = -5;
-		goto close_raw_pair;
+		goto free_tunnel;
 	}
 
 	if((verify_status & GNUTLS_CERT_INVALID) &&
@@ -160,7 +160,7 @@ int new_client(const int conn,
 			      client->session.dst_addr_str);
 		}
 		status = -6;
-		goto close_raw_pair;
+		goto free_tunnel;
 	}
 
 	trace(LOG_DEBUG, "[client %s] client context created",
@@ -169,6 +169,12 @@ int new_client(const int conn,
 	client->is_init = true;
 	return client_id;
 
+free_tunnel:
+	if(!iprohc_tunnel_free(&(client->session.tunnel)))
+	{
+		trace(LOG_ERR, "[client %s] failed to reset tunnel context",
+		      client->session.dst_addr_str);
+	}
 close_raw_pair:
 	close(client->fake_raw[0]);
 	client->fake_raw[0] = -1;

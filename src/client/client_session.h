@@ -39,10 +39,12 @@ struct iprohc_client_session
 	char tun_name[IFNAMSIZ];       /**< The name of the TUN interface */
 	int tun;
 	int tun_itf_id;
+	size_t tun_itf_mtu;            /**< The MTU of the TUN interface */
 
 	int raw;
 
 	char basedev[IFNAMSIZ];            /**< The name of the base interface */
+	size_t basedev_mtu;                /** The MTU of the base interface */
 
 	char up_script_path[PATH_MAX + 1]; /**< The path to the UP script */
 	int packing;                       /**< The packing level that client wishes to enforce */

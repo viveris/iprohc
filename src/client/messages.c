@@ -145,13 +145,21 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 	debug_addr.s_addr = tp.local_address;
 	trace(LOG_DEBUG, "Creation of tunnel, local address : %s\n", inet_ntoa(debug_addr));
 
-	/* set params */
-	client->session.tunnel.params = tp;
-
 	/* set forced packing */
 	if(client->packing != 0)
 	{
-		client->session.tunnel.params.packing = client->packing;
+		tp.packing = client->packing;
+	}
+
+	/* init tunnel context */
+	if(!iprohc_tunnel_new(&(client->session.tunnel), tp,
+	                      client->session.local_address.s_addr,
+	                      client->raw, client->tun,
+	                      client->basedev_mtu, client->tun_itf_mtu))
+	{
+		trace(LOG_ERR, "[client %s] failed to init tunnel context",
+		      client->session.dst_addr_str);
+		goto error;
 	}
 
 	/* update the period of the keepalive timer */
@@ -161,7 +169,7 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 		trace(LOG_ERR, "[client %s] failed to update the keepalive period to %zu "
 		      "seconds", client->session.dst_addr_str,
 		      client->session.tunnel.params.keepalive_timeout);
-		goto error;
+		goto free_tunnel;
 	}
 
 	/* set the IPv4 address on the TUN interface */
@@ -169,7 +177,7 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "failed to set IP address on TUN interface");
-		goto error;
+		goto free_tunnel;
 	}
 
 	/* Go thread, go ! */
@@ -180,7 +188,7 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 	{
 		trace(LOG_ERR, "failed to run tunnel thread for new client: %s (%d)",
 				strerror(ret), ret);
-		goto error;
+		goto free_tunnel;
 	}
 
 	gnutls_record_send(client->session.tls_session, message, 1);
@@ -219,6 +227,11 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 
 	return true;
 
+free_tunnel:
+	if(!iprohc_tunnel_free(&(client->session.tunnel)))
+	{
+		trace(LOG_ERR, "failed to reset tunnel context");
+	}
 error:
 	return false;
 }

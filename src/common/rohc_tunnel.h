@@ -73,6 +73,10 @@ struct iprohc_tunnel
 	size_t basedev_mtu;  /**< The MTU (in bytes) of the base interface */
 	size_t tun_itf_mtu;  /**< The MTU (in bytes) of the TUN interface */
 
+	/* ROHC */
+	struct rohc_comp *comp;      /**< The ROHC compressor */
+	struct rohc_decomp *decomp;  /**< The ROHC decompressor */
+
 	/** The frame being packed, stored in context until completion or timeout */
 	unsigned char packing_frame[TUNTAP_BUFSIZE];
 
@@ -83,6 +87,8 @@ struct iprohc_tunnel
 
 
 bool iprohc_tunnel_new(struct iprohc_tunnel *const tunnel,
+                       const struct tunnel_params params,
+                       const uint32_t local_addr,
                        const int raw_socket,
                        const int tun_fd,
                        const size_t base_dev_mtu,

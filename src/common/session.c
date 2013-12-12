@@ -45,9 +45,6 @@
  * @param remote_addr       The IP address of the remote endpoint
  * @param raw_socket        The RAW socket to use to send packets to remote endpoint
  * @param tun_fd            The file descriptor of the local TUN interface
- * @param base_dev_mtu      The MTU of the base device used to send packets to the
- *                          remote endpoint
- * @param tun_dev_mtu       The MTU of the local TUN interface
  * @param keepalive_timeout The timeout (in seconds) for keepalive packets
  * @return                  true if session was successfully initialized,
  *                          false if a problem occurred
@@ -61,8 +58,6 @@ bool iprohc_session_new(struct iprohc_session *const session,
                         const struct sockaddr_in remote_addr,
                         const int raw_socket,
                         const int tun_fd,
-                        const size_t base_dev_mtu,
-                        const size_t tun_dev_mtu,
                         const size_t keepalive_timeout)
 {
 	int ret;
@@ -149,15 +144,6 @@ bool iprohc_session_new(struct iprohc_session *const session,
 		goto close_keepalive_timer;
 	}
 
-	/* init tunnel context */
-	if(!iprohc_tunnel_new(&(session->tunnel), raw_socket, tun_fd,
-	                      base_dev_mtu, tun_dev_mtu))
-	{
-		trace(LOG_ERR, "[client %s] failed to init tunnel context",
-		      session->dst_addr_str);
-		goto close_keepalive_timer;
-	}
-
 	return true;
 
 close_keepalive_timer:
@@ -192,13 +178,6 @@ bool iprohc_session_free(struct iprohc_session *const session)
 
 	/* free TLS resources */
 	gnutls_deinit(session->tls_session);
-
-	/* reset tunnel context */
-	if(!iprohc_tunnel_free(&(session->tunnel)))
-	{
-		trace(LOG_ERR, "[client %s] failed to reset tunnel context",
-		      session->dst_addr_str);
-	}
 
 	/* reset source and destination addresses */
 	memset(&(session->dst_addr), 0, sizeof(struct in_addr));

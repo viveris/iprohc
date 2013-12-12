@@ -116,6 +116,8 @@ int tun2raw(struct rohc_comp *comp,
  * @brief Initialize the given tunnel context
  *
  * @param tunnel        The tunnel context to initialize
+ * @param params        The configuration parameters of the tunnel
+ * @param local_addr    The local address for tunnel traffic
  * @param raw_socket    The RAW socket to use to send packets to remote endpoint
  * @param tun_fd        The file descriptor of the local TUN interface
  * @param base_dev_mtu  The MTU of the base device used to send packets to the
@@ -125,11 +127,17 @@ int tun2raw(struct rohc_comp *comp,
  *                      false if a problem occurred
  */
 bool iprohc_tunnel_new(struct iprohc_tunnel *const tunnel,
+                       const struct tunnel_params params,
+                       const uint32_t local_addr,
                        const int raw_socket,
                        const int tun_fd,
                        const size_t base_dev_mtu,
                        const size_t tun_dev_mtu)
 {
+	rohc_mode_t rohc_mode;
+	struct rohc_comp *asso_comp;
+	bool is_ok;
+
 	assert(tunnel != NULL);
 	assert(raw_socket >= 0);
 	assert(tun_fd >= 0);
@@ -146,13 +154,111 @@ bool iprohc_tunnel_new(struct iprohc_tunnel *const tunnel,
 	tunnel->tun_itf_mtu = tun_dev_mtu;
 	tunnel->basedev_mtu = base_dev_mtu;
 
-	/* no parameter yet */
-	memset(&tunnel->params, 0, sizeof(struct tunnel_params));
+	/* record tunnel parameters */
+	memcpy(&tunnel->params, &params, sizeof(struct tunnel_params));
+
+	/* record the local address */
+	tunnel->params.local_address = local_addr;
 
 	/* reset stats */
 	memset(&tunnel->stats, 0, sizeof(struct statitics));
+	tunnel->stats.n_stats_packing = tunnel->params.packing + 1;
+	tunnel->stats.stats_packing = calloc(tunnel->stats.n_stats_packing, sizeof(int));
+	if(tunnel->stats.stats_packing == NULL)
+	{
+		trace(LOG_ERR, "failed to allocate memory for packing stats");
+		goto error;
+	}
+
+	/* create the compressor and activate profiles */
+	tunnel->comp = rohc_comp_new(ROHC_SMALL_CID, tunnel->params.max_cid);
+	if(tunnel->comp == NULL)
+	{
+		trace(LOG_ERR, "failed to create the ROHC compressor");
+		goto free_packing_stats;
+	}
+
+	/* handle compressor traces */
+	is_ok = rohc_comp_set_traces_cb(tunnel->comp, print_rohc_traces);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "faield to set trace callback for compressor");
+		goto destroy_comp;
+	}
+
+	/* enable all safe compression profiles */
+	is_ok = rohc_comp_enable_profiles(tunnel->comp,
+	                                  ROHC_PROFILE_UNCOMPRESSED,
+	                                  ROHC_PROFILE_IP,
+	                                  ROHC_PROFILE_UDP,
+	                                  ROHC_PROFILE_RTP,
+	                                  -1);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "failed to enable profiles for compressor");
+		goto destroy_comp;
+	}
+
+	/* set RTP callback for detecting RTP packets */
+	is_ok = rohc_comp_set_rtp_detection_cb(tunnel->comp, callback_rtp_detect, NULL);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "failed to set RTP detection callback");
+		goto destroy_comp;
+	}
+
+	/* decompressor parameters that depend on operation mode */
+	if(tunnel->params.is_unidirectional)
+	{
+		rohc_mode = ROHC_U_MODE;
+		asso_comp = NULL;
+	}
+	else
+	{
+		rohc_mode = ROHC_O_MODE;
+		asso_comp = tunnel->comp;
+	}
+
+	/* create the decompressor (associate it with the compressor) */
+	tunnel->decomp = rohc_decomp_new(ROHC_SMALL_CID, tunnel->params.max_cid,
+	                                 rohc_mode, asso_comp);
+	if(tunnel->decomp == NULL)
+	{
+		trace(LOG_ERR, "failed to create the ROHC decompressor");
+		goto destroy_comp;
+	}
+
+	/* handle compressor trace */
+	is_ok = rohc_decomp_set_traces_cb(tunnel->decomp, print_rohc_traces);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "failed to set trace callback for decompressor");
+		goto destroy_decomp;
+	}
+
+	/* enable all safe decompression profiles */
+	is_ok = rohc_decomp_enable_profiles(tunnel->decomp,
+	                                    ROHC_PROFILE_UNCOMPRESSED,
+	                                    ROHC_PROFILE_IP,
+	                                    ROHC_PROFILE_UDP,
+	                                    ROHC_PROFILE_RTP,
+	                                    -1);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "failed to enable profiles for decompressor");
+		goto destroy_decomp;
+	}
 
 	return true;
+
+destroy_decomp:
+	rohc_decomp_free(tunnel->decomp);
+destroy_comp:
+	rohc_comp_free(tunnel->comp);
+free_packing_stats:
+	free(tunnel->stats.stats_packing);
+error:
+	return false;
 }
 
 
@@ -165,6 +271,10 @@ bool iprohc_tunnel_new(struct iprohc_tunnel *const tunnel,
  */
 bool iprohc_tunnel_free(struct iprohc_tunnel *const tunnel)
 {
+	/* free the ROHC compressor and decompressor */
+	rohc_decomp_free(tunnel->decomp);
+	rohc_comp_free(tunnel->comp);
+
 	/* reset RAW sockets and TUN fds */
 	tunnel->tun_fd_in = -1;
 	tunnel->tun_fd_out = -1;
@@ -179,6 +289,7 @@ bool iprohc_tunnel_free(struct iprohc_tunnel *const tunnel)
 	memset(&tunnel->params, 0, sizeof(struct tunnel_params));
 
 	/* reset stats */
+	free(tunnel->stats.stats_packing);
 	memset(&tunnel->stats, 0, sizeof(struct statitics));
 
 	return true;
@@ -204,7 +315,6 @@ void * iprohc_tunnel_run(void *arg)
 	struct iprohc_tunnel *const tunnel = &(session->tunnel);
 
 	int failure = 0;
-	int is_umode = tunnel->params.is_unidirectional;
 	iprohc_session_status_t session_status;
 
 	fd_set readfds;
@@ -217,11 +327,7 @@ void * iprohc_tunnel_run(void *arg)
 
 	int kp_timeout   = tunnel->params.keepalive_timeout;
 
-	bool is_ok;
 	int ret;
-
-	struct rohc_comp *comp;
-	struct rohc_decomp *decomp;
 
 	const size_t packing_max_len = tunnel->basedev_mtu - sizeof(struct iphdr);
 	size_t packing_cur_len = 0;  /* number of packed bytes */
@@ -237,78 +343,6 @@ void * iprohc_tunnel_run(void *arg)
 		tunnel_trace(session, LOG_ERR, "failed to acquire client_lock for client");
 		assert(0);
 		goto error;
-	}
-
-	/*
-	 * ROHC
-	 */
-
-	/* create the compressor and activate profiles */
-	comp = rohc_comp_new(ROHC_SMALL_CID, tunnel->params.max_cid);
-	if(comp == NULL)
-	{
-		tunnel_trace(session, LOG_ERR, "cannot create the ROHC compressor");
-		goto unlock;
-	}
-
-	/* handle compressor traces */
-	is_ok = rohc_comp_set_traces_cb(comp, print_rohc_traces);
-	if(!is_ok)
-	{
-		tunnel_trace(session, LOG_ERR, "cannot set trace callback for compressor");
-		goto destroy_comp;
-	}
-
-	/* enable all safe compression profiles */
-	is_ok = rohc_comp_enable_profiles(comp, ROHC_PROFILE_UNCOMPRESSED,
-	                                  ROHC_PROFILE_IP,
-	                                  ROHC_PROFILE_UDP,
-	                                  ROHC_PROFILE_UDPLITE,
-	                                  ROHC_PROFILE_RTP, -1);
-	if(!is_ok)
-	{
-		tunnel_trace(session, LOG_ERR, "cannot enable profiles for compressor");
-		goto destroy_comp;
-	}
-
-	/* set RTP callback for detecting RTP packets */
-	is_ok = rohc_comp_set_rtp_detection_cb(comp, callback_rtp_detect, NULL);
-	if(!is_ok)
-	{
-		tunnel_trace(session, LOG_ERR, "failed to set RTP detection callback");
-		goto destroy_comp;
-	}
-
-
-	/* create the decompressor (associate it with the compressor) */
-	decomp = rohc_decomp_new(ROHC_SMALL_CID, tunnel->params.max_cid,
-	                         (is_umode ? ROHC_U_MODE : ROHC_O_MODE),
-	                         (is_umode ? NULL : comp));
-	if(decomp == NULL)
-	{
-		tunnel_trace(session, LOG_ERR, "cannot create the ROHC decompressor");
-		goto destroy_comp;
-	}
-
-	/* handle compressor trace */
-	is_ok = rohc_decomp_set_traces_cb(decomp, print_rohc_traces);
-	if(!is_ok)
-	{
-		tunnel_trace(session, LOG_ERR, "cannot set trace callback for decompressor");
-		goto destroy_decomp;
-	}
-
-	/* enable all safe decompression profiles */
-	is_ok = rohc_decomp_enable_profiles(decomp,
-	                                    ROHC_PROFILE_UNCOMPRESSED,
-	                                    ROHC_PROFILE_IP,
-	                                    ROHC_PROFILE_UDP,
-	                                    ROHC_PROFILE_UDPLITE,
-	                                    ROHC_PROFILE_RTP, -1);
-	if(!is_ok)
-	{
-		tunnel_trace(session, LOG_ERR, "cannot enable profiles for decompressor");
-		goto destroy_decomp;
 	}
 
 	/* poll network interfaces each 200 ms */
@@ -327,7 +361,7 @@ void * iprohc_tunnel_run(void *arg)
 	{
 		tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
 		assert(0);
-		goto destroy_decomp;
+		goto unlock;
 	}
 	gettimeofday(&(session->last_activity), NULL);
 	session->status = IPROHC_SESSION_CONNECTED;
@@ -337,22 +371,8 @@ void * iprohc_tunnel_run(void *arg)
 	{
 		tunnel_trace(session, LOG_ERR, "failed to release lock for client");
 		assert(0);
-		goto destroy_decomp;
+		goto unlock;
 	}
-
-	/* Initialize stats */
-	tunnel->stats.decomp_failed     = 0;
-	tunnel->stats.decomp_total      = 0;
-	tunnel->stats.comp_failed       = 0;
-	tunnel->stats.comp_total        = 0;
-	tunnel->stats.head_comp_size    = 0;
-	tunnel->stats.head_uncomp_size  = 0;
-	tunnel->stats.total_comp_size   = 0;
-	tunnel->stats.total_uncomp_size = 0;
-	tunnel->stats.unpack_failed     = 0;
-	tunnel->stats.total_received    = 0;
-	tunnel->stats.n_stats_packing   = packing_max_pkts + 1;
-	tunnel->stats.stats_packing     = calloc(tunnel->stats.n_stats_packing, sizeof(int));
 
 	do
 	{
@@ -376,7 +396,7 @@ void * iprohc_tunnel_run(void *arg)
 			{
 				tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
 				assert(0);
-				goto destroy_decomp;
+				goto unlock;
 			}
 			session->status = IPROHC_SESSION_PENDING_DELETE;
 			ret = pthread_mutex_unlock(&session->status_lock);
@@ -384,7 +404,7 @@ void * iprohc_tunnel_run(void *arg)
 			{
 				tunnel_trace(session, LOG_ERR, "failed to release lock for client");
 				assert(0);
-				goto destroy_decomp;
+				goto unlock;
 			}
 		}
 		else if(ret > 0)
@@ -395,9 +415,9 @@ void * iprohc_tunnel_run(void *arg)
 			if(FD_ISSET(tunnel->tun_fd_in, &readfds))
 			{
 				tunnel_trace(session, LOG_DEBUG, "...from tun");
-				failure = tun2raw(comp, tunnel->tun_fd_in, tunnel->raw_socket_out,
-				                  session->dst_addr, tunnel->basedev_mtu,
-				                  tunnel->packing_frame,
+				failure = tun2raw(tunnel->comp, tunnel->tun_fd_in,
+				                  tunnel->raw_socket_out, session->dst_addr,
+				                  tunnel->basedev_mtu, tunnel->packing_frame,
 				                  packing_max_len, &packing_cur_len,
 				                  packing_max_pkts, &packing_cur_pkts,
 				                  &(tunnel->stats));
@@ -413,7 +433,7 @@ void * iprohc_tunnel_run(void *arg)
 			if(FD_ISSET(tunnel->raw_socket_in, &readfds))
 			{
 				tunnel_trace(session, LOG_DEBUG, "...from raw");
-				failure = raw2tun(decomp, session->src_addr.s_addr,
+				failure = raw2tun(tunnel->decomp, session->src_addr.s_addr,
 				                  tunnel->raw_socket_in, tunnel->tun_fd_out,
 				                  tunnel->basedev_mtu, &(tunnel->stats));
 				if(failure)
@@ -448,7 +468,7 @@ void * iprohc_tunnel_run(void *arg)
 		{
 			tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
 			assert(0);
-			goto destroy_decomp;
+			goto unlock;
 		}
 		if(now.tv_sec > session->last_activity.tv_sec + kp_timeout)
 		{
@@ -462,7 +482,7 @@ void * iprohc_tunnel_run(void *arg)
 		{
 			tunnel_trace(session, LOG_ERR, "failed to release lock for client");
 			assert(0);
-			goto destroy_decomp;
+			goto unlock;
 		}
 
 		ret = pthread_mutex_lock(&session->status_lock);
@@ -470,7 +490,7 @@ void * iprohc_tunnel_run(void *arg)
 		{
 			tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
 			assert(0);
-			goto destroy_decomp;
+			goto unlock;
 		}
 		session_status = session->status;
 		ret = pthread_mutex_unlock(&session->status_lock);
@@ -478,20 +498,13 @@ void * iprohc_tunnel_run(void *arg)
 		{
 			tunnel_trace(session, LOG_ERR, "failed to release lock for client");
 			assert(0);
-			goto destroy_decomp;
+			goto unlock;
 		}
 	}
 	while(session_status == IPROHC_SESSION_CONNECTED);
 
 	tunnel_trace(session, LOG_INFO, "client thread was asked to stop");
 
-	/*
-	 * Cleaning:
-	 */
-destroy_decomp:
-	rohc_decomp_free(decomp);
-destroy_comp:
-	rohc_comp_free(comp);
 unlock:
 	ret = pthread_mutex_unlock(&(session->client_lock));
 	if(ret != 0)

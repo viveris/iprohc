@@ -135,8 +135,6 @@ int main(int argc, char *argv[])
 	int ret;
 	bool is_ok;
 
-	size_t basedev_mtu;
-	size_t tun_itf_mtu;
 
 	struct iprohc_client_session client;
 
@@ -342,8 +340,8 @@ int main(int argc, char *argv[])
 	}
 
 	/* create the TUN interface */
-	client.tun = create_tun(client.tun_name, client.basedev,
-	                         &client.tun_itf_id, &basedev_mtu, &tun_itf_mtu);
+	client.tun = create_tun(client.tun_name, client.basedev, &client.tun_itf_id,
+	                        &client.basedev_mtu, &client.tun_itf_mtu);
 	if(client.tun < 0)
 	{
 		trace(LOG_ERR, "Unable to create TUN device");
@@ -438,7 +436,7 @@ int main(int argc, char *argv[])
 
 	if(!iprohc_session_new(&(client.session), GNUTLS_CLIENT, client.tls_cred,
 	                       NULL, ctrl_sock, local_addr.sin_addr, remote_addr,
-	                       client.raw, client.tun, basedev_mtu, tun_itf_mtu, 0))
+	                       client.raw, client.tun, 0))
 	{
 		trace(LOG_ERR, "failed to init session context");
 		goto close_tcp;

@@ -86,8 +86,6 @@ bool iprohc_session_new(struct iprohc_session *const session,
                         const struct sockaddr_in remote_addr,
                         const int raw_socket,
                         const int tun_fd,
-                        const size_t base_dev_mtu,
-                        const size_t tun_dev_mtu,
                         const size_t keepalive_timeout)
 	__attribute__((warn_unused_result, nonnull(1)));
 
