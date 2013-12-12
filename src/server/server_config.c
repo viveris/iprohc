@@ -55,6 +55,19 @@ int handle_line(char*section, char*key, char*value, struct server_opts*server_op
 	/* Section general */
 	if(strcmp(section, "general") == 0)
 	{
+		if(strcmp(key, "max_clients") == 0)
+		{
+			const int num = atoi(value);
+			if(num <= 0)
+			{
+				trace(LOG_ERR, "invalid configuration: value for attribute "
+				      "'max_clients' shall be strictly greater than zero, but %d "
+				      "found", num);
+				return 1;
+			}
+			server_opts->clients_max_nr = num;
+			return 0;
+		}
 		if(strcmp(key, "port") == 0)
 		{
 			server_opts->port = atoi(value);
@@ -76,7 +89,29 @@ int handle_line(char*section, char*key, char*value, struct server_opts*server_op
 	{
 		if(strcmp(key, "ipaddr") == 0)
 		{
-			server_opts->local_address = inet_addr(value);
+			/* handle a.b.c.d or a.b.c.d/e (if /e is missing, use /24) */
+			char *slash = strchr(value, '/');
+			if(slash == NULL)
+			{
+				/* format is a.b.c.d */
+				server_opts->local_address = inet_addr(value);
+				server_opts->netmask = 24;
+			}
+			else
+			{
+				/* format is a.b.c.d/e */
+				int num;
+				slash[0] = '\0';
+				server_opts->local_address = inet_addr(value);
+				num = atoi(slash + 1);
+				if(num <= 0 || num >= 32)
+				{
+					trace(LOG_ERR, "invalid configuration: netmask shall be in range "
+					      "]0,32[ but %d found", num);
+					return 1;
+				}
+				server_opts->netmask = num;
+			}
 			return 0;
 		}
 		if(strcmp(key, "packing") == 0)

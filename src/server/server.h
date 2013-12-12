@@ -30,12 +30,14 @@ struct server_opts
 	gnutls_certificate_credentials_t xcred;
 	gnutls_priority_t priority_cache;
 
+	size_t clients_max_nr;    /**< The maximum number of simultaneous clients */
 	int port;
 	char pkcs12_f[1024];
 	char pidfile_path[1024];
 	char basedev[IFNAMSIZ];
 
 	uint32_t local_address;
+	size_t netmask;           /**< The length (in bits) of the network mask */
 
 	struct tunnel_params params;
 };

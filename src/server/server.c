@@ -41,8 +41,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "rohc_tunnel.h"
 #include "log.h"
 
-// XXX : Config ?
-#define MAX_CLIENTS 50
 
 /** Toggle to true to print clients stats at next event loop */
 static bool clients_do_dump_stats = false;
@@ -50,6 +48,10 @@ static bool clients_do_dump_stats = false;
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
 
+
+static size_t iprohc_get_ipv4_range_width(const uint32_t addr,
+                                          const size_t netmasklen)
+	__attribute__((warn_unused_result));
 
 
 /*
@@ -62,6 +64,7 @@ struct route_args
 {
 	int fd;
 	struct client *clients;
+	size_t clients_max_nr;   /**< The maximum number of simultaneous clients */
 	enum type_route type;
 };
 
@@ -69,9 +72,11 @@ struct route_args
 void * route(void*arg)
 {
 	/* Getting args */
-	int fd = ((struct route_args *)arg)->fd;
-	struct client *clients = ((struct route_args *)arg)->clients;
-	enum type_route type = ((struct route_args *)arg)->type;
+	const struct route_args *const _arg = (struct route_args *) arg;
+	int fd = _arg->fd;
+	struct client *clients = _arg->clients;
+	size_t clients_max_nr = _arg->clients_max_nr;
+	enum type_route type = _arg->type;
 
 	int i;
 	int ret;
@@ -111,7 +116,7 @@ void * route(void*arg)
 			trace(LOG_DEBUG, "Packet source : %s\n", inet_ntoa(addr));
 		}
 
-		for(i = 0; i < MAX_CLIENTS; i++)
+		for(i = 0; i < clients_max_nr; i++)
 		{
 			/* Find associated client */
 			if(clients[i].is_init)
@@ -170,15 +175,16 @@ void dump_opts(struct server_opts opts)
 	struct in_addr addr;
 	addr.s_addr = opts.local_address;
 
-	trace(LOG_DEBUG, "Port     : %d", opts.port);
-	trace(LOG_DEBUG, "P12 file : %s", opts.pkcs12_f);
-	trace(LOG_DEBUG, "Pidfile  : %s", opts.pidfile_path);
-	trace(LOG_DEBUG, "Tunnel params :");
-	trace(LOG_DEBUG, " . Local IP  : %s", inet_ntoa(addr));
-	trace(LOG_DEBUG, " . Packing   : %d", opts.params.packing);
-	trace(LOG_DEBUG, " . Max cid   : %zu", opts.params.max_cid);
-	trace(LOG_DEBUG, " . Unid      : %d", opts.params.is_unidirectional);
-	trace(LOG_DEBUG, " . Keepalive : %zu", opts.params.keepalive_timeout);
+	trace(LOG_INFO, "Max clients : %zu", opts.clients_max_nr);
+	trace(LOG_INFO, "Port        : %d", opts.port);
+	trace(LOG_INFO, "P12 file    : %s", opts.pkcs12_f);
+	trace(LOG_INFO, "Pidfile     : %s", opts.pidfile_path);
+	trace(LOG_INFO, "Tunnel params :");
+	trace(LOG_INFO, " . Local IP  : %s/%zu", inet_ntoa(addr), opts.netmask);
+	trace(LOG_INFO, " . Packing   : %d", opts.params.packing);
+	trace(LOG_INFO, " . Max cid   : %zu", opts.params.max_cid);
+	trace(LOG_INFO, " . Unid      : %d", opts.params.is_unidirectional);
+	trace(LOG_INFO, " . Keepalive : %zu", opts.params.keepalive_timeout);
 }
 
 
@@ -352,7 +358,7 @@ int collect_server_stats(struct timeval now)
 	}
 
 
-	for(j = 0; j < MAX_CLIENTS; j++)
+	for(j = 0; j < server_opts.clients_max_nr; j++)
 	{
 		if(clients[j] != NULL && clients[j].tunnel.alive >= 0)
 		{
@@ -383,6 +389,7 @@ int main(int argc, char *argv[])
 
 	struct client *clients = NULL;
 	size_t clients_nr = 0;
+	size_t range_len;
 
 	size_t client_id;
 	int serv_socket;
@@ -423,16 +430,6 @@ int main(int argc, char *argv[])
 	/* Initialize logger */
 	openlog("iprohc_server", LOG_PID, LOG_DAEMON);
 
-	clients = malloc(MAX_CLIENTS * sizeof(struct client));
-	if(clients == NULL)
-	{
-		trace(LOG_ERR, "failed to allocate memory for the contexts of %d clients",
-				MAX_CLIENTS);
-		goto error;
-	}
-	memset(clients, 0, MAX_CLIENTS * sizeof(struct client));
-	clients_nr = 0;
-
 	/* Signal for stats and log */
 	signal(SIGINT,  quit);
 	signal(SIGTERM, quit);
@@ -446,11 +443,13 @@ int main(int argc, char *argv[])
 	 */
 
 	/* Default values */
+	server_opts.clients_max_nr = 50;
 	server_opts.port = 3126;
 	server_opts.pkcs12_f[0] = '\0';
 	server_opts.pidfile_path[0]  = '\0';
 	memset(server_opts.basedev, 0, IFNAMSIZ);
-	server_opts.local_address       = inet_addr("192.168.99.1");
+	server_opts.local_address = inet_addr("192.168.99.1");
+	server_opts.netmask = 24;
 
 	server_opts.params.packing             = 5;
 	server_opts.params.max_cid             = 14;
@@ -484,13 +483,13 @@ int main(int argc, char *argv[])
 				if(strlen(optarg) >= IFNAMSIZ)
 				{
 					trace(LOG_ERR, "underlying interface name too long");
-					goto free_client_contexts;
+					goto error;
 				}
 				if(if_nametoindex(optarg) <= 0)
 				{
 					trace(LOG_ERR, "underlying interface '%s' does not exist",
 					      optarg);
-					goto free_client_contexts;
+					goto error;
 				}
 				strncpy(server_opts.basedev, optarg, IFNAMSIZ);
 				break;
@@ -514,23 +513,46 @@ int main(int argc, char *argv[])
 		trace(LOG_ERR, "Unable to parse configuration file '%s', exiting...",
 		      conf_file);
 		exit_status = 2;
-		goto free_client_contexts;
+		goto error;
 	}
-	dump_opts(server_opts);
+
+	range_len = iprohc_get_ipv4_range_width(ntohl(server_opts.local_address),
+	                                        server_opts.netmask);
+	if(server_opts.clients_max_nr > range_len)
+	{
+		trace(LOG_ERR, "invalid configuration: not enough IP addresses for %zu "
+		      "clients: only %zu IP addresses available in %u.%u.%u.%u/%zu",
+		      server_opts.clients_max_nr, range_len,
+		      (ntohl(server_opts.local_address) >> 24) & 0xff,
+		      (ntohl(server_opts.local_address) >> 16) & 0xff,
+		      (ntohl(server_opts.local_address) >>  8) & 0xff,
+		      (ntohl(server_opts.local_address) >>  0) & 0xff,
+		      server_opts.netmask);
+		goto error;
+	}
+	trace(LOG_INFO, "%zu IP addresses available for %zu clients in IP range "
+	      "%u.%u.%u.%u/%zu", range_len, server_opts.clients_max_nr,
+	      (ntohl(server_opts.local_address) >> 24) & 0xff,
+	      (ntohl(server_opts.local_address) >> 16) & 0xff,
+	      (ntohl(server_opts.local_address) >>  8) & 0xff,
+	      (ntohl(server_opts.local_address) >>  0) & 0xff,
+	      server_opts.netmask);
 
 	if(strcmp(server_opts.basedev, "") == 0)
 	{
 		trace(LOG_ERR, "wrong usage: underlying interface name is mandatory, "
 		      "use the --basedev or -b option to specify it");
-		goto free_client_contexts;
+		goto error;
 	}
 
 	if(strcmp(server_opts.pkcs12_f, "") == 0)
 	{
 		trace(LOG_ERR, "PKCS12 file required");
 		exit_status = 2;
-		goto free_client_contexts;
+		goto error;
 	}
+
+	dump_opts(server_opts);
 
 	if(strcmp(server_opts.pidfile_path, "") == 0)
 	{
@@ -543,11 +565,25 @@ int main(int argc, char *argv[])
 		{
 			trace(LOG_ERR, "failed to open pidfile '%s': %s (%d)",
 			      server_opts.pidfile_path, strerror(errno), errno);
-			goto free_client_contexts;
+			goto error;
 		}
 		fprintf(pid, "%d\n", getpid());
 		fclose(pid);
 	}
+
+
+	/*
+	 * Initialize contexts for clients
+	 */
+
+	clients = calloc(server_opts.clients_max_nr, sizeof(struct client));
+	if(clients == NULL)
+	{
+		trace(LOG_ERR, "failed to allocate memory for the contexts of %zu "
+		      "clients", server_opts.clients_max_nr);
+		goto remove_pidfile;
+	}
+	clients_nr = 0;
 
 
 	/*
@@ -565,7 +601,7 @@ int main(int argc, char *argv[])
 		{
 			trace(LOG_ERR, "failed to load server certificate from file '%s'",
 					server_opts.pkcs12_f);
-			goto remove_pidfile;
+			goto free_client_contexts;
 		}
 	}
 
@@ -573,7 +609,7 @@ int main(int argc, char *argv[])
 	if(!generate_dh_params(&dh_params))
 	{
 		trace(LOG_ERR, "failed to generate Diffie-Hellman parameters");
-		goto remove_pidfile;
+		goto free_client_contexts;
 	}
 	gnutls_certificate_set_dh_params(server_opts.xcred, dh_params);
 
@@ -642,6 +678,7 @@ int main(int argc, char *argv[])
 	trace(LOG_INFO, "start TUN routing thread");
 	route_args_tun.fd = tun;
 	route_args_tun.clients = clients;
+	route_args_tun.clients_max_nr = server_opts.clients_max_nr;
 	route_args_tun.type = TUN;
 	ret = pthread_create(&tun_route_thread, NULL, route, (void*)&route_args_tun);
 	if(ret != 0)
@@ -664,6 +701,7 @@ int main(int argc, char *argv[])
 	trace(LOG_INFO, "start RAW routing thread");
 	route_args_raw.fd = raw;
 	route_args_raw.clients = clients;
+	route_args_tun.clients_max_nr = server_opts.clients_max_nr;
 	route_args_raw.type = RAW;
 	ret = pthread_create(&raw_route_thread, NULL, route, (void*)&route_args_raw);
 	if(ret != 0)
@@ -701,7 +739,7 @@ int main(int argc, char *argv[])
 		max = serv_socket;
 
 		/* Add client to select readfds */
-		for(j = 0; j < MAX_CLIENTS; j++)
+		for(j = 0; j < server_opts.clients_max_nr; j++)
 		{
 			if(clients[j].is_init)
 			{
@@ -742,13 +780,14 @@ int main(int argc, char *argv[])
 		/* Read on serv_socket : new client */
 		if(FD_ISSET(serv_socket, &rdfs))
 		{
-			if(clients_nr >= MAX_CLIENTS)
+			if(clients_nr >= server_opts.clients_max_nr)
 			{
 				int conn;
 				struct sockaddr_in src_addr;
 				socklen_t src_addr_len = sizeof(src_addr);
 
-				trace(LOG_ERR, "no more clients accepted, maximum %d reached", MAX_CLIENTS);
+				trace(LOG_ERR, "no more clients accepted, maximum %zu reached",
+				      server_opts.clients_max_nr);
 
 				/* reject connection */
 				conn = accept(serv_socket, (struct sockaddr*)&src_addr, &src_addr_len);
@@ -764,15 +803,15 @@ int main(int argc, char *argv[])
 			}
 			else
 			{
-				int client_id;
+				size_t client_id;
 
-				for(client_id = 0; client_id < MAX_CLIENTS &&
+				for(client_id = 0; client_id < server_opts.clients_max_nr &&
 				    clients[client_id].is_init; client_id++)
 				{
 				}
-				assert(client_id < MAX_CLIENTS);
-				trace(LOG_INFO, "will store client %zu/%d at index %d", clients_nr + 1,
-				      MAX_CLIENTS, client_id);
+				assert(client_id < server_opts.clients_max_nr);
+				trace(LOG_INFO, "will store client %zu/%zu at index %zu",
+				      clients_nr + 1, server_opts.clients_max_nr, client_id);
 
 				ret = new_client(serv_socket, tun, tun_itf_mtu, basedev_mtu,
 				                 &clients[client_id], client_id, server_opts);
@@ -784,14 +823,14 @@ int main(int argc, char *argv[])
 				else
 				{
 					assert(clients_nr >= 0);
-					assert(clients_nr < MAX_CLIENTS);
+					assert(clients_nr < server_opts.clients_max_nr);
 					clients_nr++;
 				}
 			}
 		}
 
 		/* Test read on each client socket */
-		for(j = 0; j < MAX_CLIENTS; j++)
+		for(j = 0; j < server_opts.clients_max_nr; j++)
 		{
 			iprohc_tunnel_status_t client_status;
 
@@ -855,11 +894,12 @@ int main(int argc, char *argv[])
 					del_client(&(clients[j]));
 
 					assert(clients_nr > 0);
-					assert(clients_nr <= MAX_CLIENTS);
+					assert(clients_nr <= server_opts.clients_max_nr);
 					clients_nr--;
-					trace(LOG_INFO, "only %zu/%d clients remaining", clients_nr, MAX_CLIENTS);
+					trace(LOG_INFO, "only %zu/%zu clients remaining", clients_nr,
+					      server_opts.clients_max_nr);
 					assert(clients_nr >= 0);
-					assert(clients_nr < MAX_CLIENTS);
+					assert(clients_nr < server_opts.clients_max_nr);
 				}
 			}
 			else if(FD_ISSET(clients[j].tcp_socket, &rdfs))
@@ -931,7 +971,7 @@ int main(int argc, char *argv[])
 		/* if SIGUSR1 was received, then dump stats */
 		if(clients_do_dump_stats)
 		{
-			for(j = 0; j < MAX_CLIENTS; j++)
+			for(j = 0; j < server_opts.clients_max_nr; j++)
 			{
 				if(clients[j].is_init)
 				{
@@ -945,7 +985,7 @@ int main(int argc, char *argv[])
 
 	/* release all clients */
 	trace(LOG_INFO, "release resources of connected clients...");
-	for(client_id = 0; client_id < MAX_CLIENTS; client_id++)
+	for(client_id = 0; client_id < server_opts.clients_max_nr; client_id++)
 	{
 		if(clients[client_id].is_init)
 		{
@@ -1000,14 +1040,14 @@ close_tcp:
 	close(serv_socket);
 free_dh:
 	gnutls_dh_params_deinit(dh_params);
+free_client_contexts:
+	free(clients);
 remove_pidfile:
 	if(strcmp(server_opts.pidfile_path, "") != 0)
 	{
 		trace(LOG_INFO, "remove pidfile '%s'", server_opts.pidfile_path);
 		unlink(server_opts.pidfile_path);
 	}
-free_client_contexts:
-	free(clients);
 error:
 	if(exit_status == 0)
 	{
@@ -1020,5 +1060,28 @@ error:
 	trace(LOG_INFO, "close syslog session");
 	closelog();
 	return exit_status;
+}
+
+
+/**
+ * @brief Compute the width of the given IP range
+ *
+ * @param addr        The local IP address of the server (in host byte order)
+ * @param netmasklen  The length (in bits) of the network mask
+ * @return            The number of IP addresses available in the IP range
+ */
+static size_t iprohc_get_ipv4_range_width(const uint32_t addr,
+                                          const size_t netmasklen)
+{
+	size_t range_len = (1 << (32 - netmasklen));
+	const uint32_t netmask = (0xffffffff << (32 - netmasklen));
+
+	/* if a.b.c.0 is in IP range, it cannot be used */
+	if(((addr & netmask) & 0xff) == 0)
+	{
+		range_len--;
+	}
+
+	return range_len;
 }
 
