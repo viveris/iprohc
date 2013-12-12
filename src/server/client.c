@@ -15,6 +15,14 @@ You should have received a copy of the GNU General Public License
 along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+
+#include "tun_helpers.h"
+#include "rohc_tunnel.h"
+#include "client.h"
+#include "messages.h"
+#include "tls.h"
+#include "log.h"
+
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <stdlib.h>
@@ -26,12 +34,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <assert.h>
 #include <signal.h>
 
-#include "log.h"
-
-#include "tun_helpers.h"
-#include "rohc_tunnel.h"
-#include "client.h"
-#include "tls.h"
 
 
 int new_client(const int conn,
@@ -45,9 +47,7 @@ int new_client(const int conn,
                const struct server_opts server_opts)
 {
 	struct in_addr client_local_addr;
-	unsigned int verify_status;
 	int status = -1;
-	int ret;
 
 	assert(conn >= 0);
 	assert(raw >= 0);
@@ -58,7 +58,8 @@ int new_client(const int conn,
 		htonl(ntohl(server_opts.local_address) + 1 + client_id);
 
 	/* init the generic session part */
-	if(!iprohc_session_new(&(client->session), GNUTLS_SERVER, server_opts.tls_cred,
+	if(!iprohc_session_new(&(client->session), NULL, handle_client_request, NULL, NULL,
+	                       GNUTLS_SERVER, server_opts.tls_cred,
 	                       server_opts.priority_cache, conn, client_local_addr,
 	                       remote_addr, raw, tun, server_opts.params.keepalive_timeout))
 	{
@@ -99,82 +100,14 @@ int new_client(const int conn,
 		goto close_raw_pair;
 	}
 
-	/* Get rid of warning, it's a "bug" of GnuTLS
-	 * (see http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
-	gnutls_transport_set_ptr_nowarn(client->session.tls_session, conn);
-
-	/* perform TLS handshake */
-	do
-	{
-		ret = gnutls_handshake(client->session.tls_session);
-	}
-	while(ret < 0 && gnutls_error_is_fatal (ret) == 0);
-	if(ret < 0)
-	{
-		trace(LOG_ERR, "[client %s] TLS handshake failed: %s (%d)",
-		      client->session.dst_addr_str, gnutls_strerror(ret), ret);
-		status = -4;
-		goto free_tunnel;
-	}
-	trace(LOG_INFO, "[client %s] TLS handshake succeeded",
-	      client->session.dst_addr_str);
-
-	/* check the peer certificate */
-	ret = gnutls_certificate_verify_peers2(client->session.tls_session, &verify_status);
-	if(ret < 0)
-	{
-		trace(LOG_ERR, "[client %s] TLS verify failed: %s (%d)",
-		      client->session.dst_addr_str, gnutls_strerror(ret), ret);
-		status = -5;
-		goto free_tunnel;
-	}
-
-	if((verify_status & GNUTLS_CERT_INVALID) &&
-	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
-	{
-		trace(LOG_ERR, "[client %s] certificate cannot be verified (status %u)",
-		      client->session.dst_addr_str, verify_status);
-		if(verify_status & GNUTLS_CERT_REVOKED)
-		{
-			trace(LOG_ERR, "[client %s] - revoked certificate",
-			      client->session.dst_addr_str);
-		}
-		if(verify_status & GNUTLS_CERT_SIGNER_NOT_FOUND)
-		{
-			trace(LOG_ERR, "[client %s] - unable to trust certificate issuer",
-			      client->session.dst_addr_str);
-		}
-		if(verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
-		{
-			trace(LOG_ERR, "[client %s] - certificate issuer is not a CA",
-			      client->session.dst_addr_str);
-		}
-		if(verify_status & GNUTLS_CERT_NOT_ACTIVATED)
-		{
-			trace(LOG_ERR, "[client %s] - the certificate is not activated",
-			      client->session.dst_addr_str);
-		}
-		if(verify_status & GNUTLS_CERT_EXPIRED)
-		{
-			trace(LOG_ERR, "[client %s] - the certificate has expired",
-			      client->session.dst_addr_str);
-		}
-		status = -6;
-		goto free_tunnel;
-	}
-
 	trace(LOG_DEBUG, "[client %s] client context created",
 	      client->session.dst_addr_str);
 
-	client->is_init = true;
+	/* tell everybody that this client is now initialized */
+	AO_store_release_write(&(client->is_init), 1);
+
 	return client_id;
 
-free_tunnel:
-	if(!iprohc_tunnel_free(&(client->session.tunnel)))
-	{
-		trace(LOG_ERR, "[client %s] failed to reset tunnel context",
-		      client->session.dst_addr_str);
-	}
 close_raw_pair:
 	close(client->fake_raw[0]);
 	client->fake_raw[0] = -1;
@@ -202,7 +135,11 @@ void del_client(struct iprohc_server_session *const client)
 
 	trace(LOG_INFO, "[client %s] remove client", client->session.dst_addr_str);
 
-	free(client->session.tunnel.stats.stats_packing);
+	if(!iprohc_tunnel_free(&(client->session.tunnel)))
+	{
+		trace(LOG_ERR, "[client %s] failed to reset tunnel context",
+		      client->session.dst_addr_str);
+	}
 
 	/* close RAW socket pair */
 	close(client->fake_raw[0]);
@@ -210,19 +147,11 @@ void del_client(struct iprohc_server_session *const client)
 	close(client->fake_raw[1]);
 	client->fake_raw[1] = -1;
 
-	/* reset RAW socket (do not close it, it is shared with other clients) */
-	client->session.tunnel.raw_socket_in = -1;
-	client->session.tunnel.raw_socket_out = -1;
-
 	/* close TUN socket pair */
 	close(client->fake_tun[0]);
 	client->fake_tun[0] = -1;
 	close(client->fake_tun[1]);
 	client->fake_tun[1] = -1;
-
-	/* reset TUN fd (do not close it, it is shared with other clients) */
-	client->session.tunnel.tun_fd_in = -1;
-	client->session.tunnel.tun_fd_out = -1;
 
 	if(!iprohc_session_free(&(client->session)))
 	{
@@ -230,55 +159,5 @@ void del_client(struct iprohc_server_session *const client)
 	}
 
 	client->is_init = false;
-}
-
-
-int start_client_tunnel(struct iprohc_server_session *const client)
-{
-	int ret;
-
-	/* Go threads, go ! */
-	ret = pthread_create(&(client->session.thread_tunnel), NULL,
-	                     iprohc_tunnel_run, &(client->session));
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "failed to create the client tunnel thread: %s (%d)",
-		      strerror(ret), ret);
-		return -1;
-	}
-
-	return 0;
-}
-
-void stop_client_tunnel(struct iprohc_server_session *const client)
-{
-	int ret;
-
-	assert(client != NULL);
-
-	ret = pthread_mutex_lock(&client->session.status_lock);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "stop_client_tunnel: failed to acquire lock for client");
-		assert(0);
-		goto error;
-	}
-
-	client->session.status = IPROHC_SESSION_PENDING_DELETE;  /* Mark to be deleted */
-
-	ret = pthread_mutex_unlock(&client->session.status_lock);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "stop_client_tunnel: failed to release lock for client");
-		assert(0);
-		goto error;
-	}
-
-	trace(LOG_INFO, "wait for client thread to stop");
-	pthread_kill(client->session.thread_tunnel, SIGHUP);
-	pthread_join(client->session.thread_tunnel, NULL);
-
-error:
-	;
 }
 

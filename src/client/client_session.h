@@ -36,6 +36,9 @@ struct iprohc_client_session
 
 	struct iprohc_session session; /**< The generic session context */
 
+	/** The packing level that client wishes to enforce */
+	size_t packing;
+
 	char tun_name[IFNAMSIZ];       /**< The name of the TUN interface */
 	int tun;
 	int tun_itf_id;
@@ -47,7 +50,6 @@ struct iprohc_client_session
 	size_t basedev_mtu;                /** The MTU of the base interface */
 
 	char up_script_path[PATH_MAX + 1]; /**< The path to the UP script */
-	int packing;                       /**< The packing level that client wishes to enforce */
 };
 
 #endif

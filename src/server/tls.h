@@ -28,5 +28,3 @@ bool load_p12(gnutls_certificate_credentials_t xcred,
 				  const char *const password)
 	__attribute__((nonnull(2), warn_unused_result));
 
-void gnutls_transport_set_ptr_nowarn(gnutls_session_t session, int ptr);
-

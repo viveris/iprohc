@@ -36,20 +36,28 @@
 /**
  * @brief Initialize the given generic session
  *
- * @param session           The session to initialize
- * @param tls_type          The type of TLS endpoint: GNUTLS_CLIENT or GNUTLS_SERVER
- * @param tls_cred          The credentials to use for the TLS session
- * @param priority_cache    The TLS priority cache
- * @param ctrl_socket       The TCP socket used for the control channel
- * @param local_addr        The IP address of the local endpoint
- * @param remote_addr       The IP address of the remote endpoint
- * @param raw_socket        The RAW socket to use to send packets to remote endpoint
- * @param tun_fd            The file descriptor of the local TUN interface
- * @param keepalive_timeout The timeout (in seconds) for keepalive packets
- * @return                  true if session was successfully initialized,
- *                          false if a problem occurred
+ * @param session             The session to initialize
+ * @param start_ctrl          The function that sends initial control message
+ * @param handle_ctrl_msg     The function that handles received control messages
+ * @param stop_ctrl           The function that sends final control message
+ * @param handle_ctrl_opaque  The private data for the control message handler
+ * @param tls_type            The type of TLS endpoint: GNUTLS_CLIENT or GNUTLS_SERVER
+ * @param tls_cred            The credentials to use for the TLS session
+ * @param priority_cache      The TLS priority cache
+ * @param ctrl_socket         The TCP socket used for the control channel
+ * @param local_addr          The IP address of the local endpoint
+ * @param remote_addr         The IP address of the remote endpoint
+ * @param raw_socket          The RAW socket to use to send packets to remote endpoint
+ * @param tun_fd              The file descriptor of the local TUN interface
+ * @param keepalive_timeout   The timeout (in seconds) for keepalive packets
+ * @return                    true if session was successfully initialized,
+ *                            false if a problem occurred
  */
 bool iprohc_session_new(struct iprohc_session *const session,
+                        iprohc_session_start_t start_ctrl,
+                        iprohc_session_handler_t handle_ctrl_msg,
+                        iprohc_session_start_t stop_ctrl,
+                        void *const handle_ctrl_opaque,
                         const gnutls_connection_end_t tls_type,
                         gnutls_certificate_credentials_t tls_cred,
                         gnutls_priority_t priority_cache,
@@ -60,8 +68,6 @@ bool iprohc_session_new(struct iprohc_session *const session,
                         const int tun_fd,
                         const size_t keepalive_timeout)
 {
-	int ret;
-
 	assert(session >= 0);
 	assert(ctrl_socket >= 0);
 	assert(raw_socket >= 0);
@@ -82,12 +88,17 @@ bool iprohc_session_new(struct iprohc_session *const session,
 	/* init session attributes */
 	trace(LOG_DEBUG, "[%s] new session", session->dst_addr_str);
 	session->tcp_socket = ctrl_socket;
+	session->start_ctrl = start_ctrl;
+	session->handle_ctrl_msg = handle_ctrl_msg;
+	session->stop_ctrl = stop_ctrl;
+	session->handle_ctrl_opaque = handle_ctrl_opaque;
 	session->local_address = local_addr;
 	session->src_addr.s_addr = INADDR_ANY;
 	session->dst_addr = remote_addr.sin_addr;
 	session->status = IPROHC_SESSION_CONNECTING;
 	session->last_activity.tv_sec = -1;
 	session->last_activity.tv_usec = -1;
+	session->thread_tunnel = -1;
 
 	/* Initialize TLS session */
 	gnutls_init(&session->tls_session, tls_type);
@@ -111,29 +122,13 @@ bool iprohc_session_new(struct iprohc_session *const session,
 	gnutls_credentials_set(session->tls_session, GNUTLS_CRD_CERTIFICATE, tls_cred);
 	gnutls_certificate_server_set_request(session->tls_session, GNUTLS_CERT_REQUEST);
 
-	/* create locks */
-	ret = pthread_mutex_init(&(session->status_lock), NULL);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "[client %s] failed to init lock: %s (%d)",
-		      session->dst_addr_str, strerror(ret), ret);
-		goto tls_deinit;
-	}
-	ret = pthread_mutex_init(&(session->client_lock), NULL);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "[client %s] failed to init client_lock: %s (%d)",
-		      session->dst_addr_str, strerror(ret), ret);
-		goto destroy_lock;
-	}
-
 	/* create keepalive timer */
 	session->keepalive_timer_fd = timerfd_create(CLOCK_REALTIME, 0);
 	if(session->keepalive_timer_fd < 0)
 	{
 		trace(LOG_ERR, "[client %s] failed to create keepalive timer: %s (%d)",
 		      session->dst_addr_str, strerror(errno), errno);
-		goto destroy_client_lock;
+		goto tls_deinit;
 	}
 
 	/* arm keepalive timer */
@@ -144,14 +139,12 @@ bool iprohc_session_new(struct iprohc_session *const session,
 		goto close_keepalive_timer;
 	}
 
+	AO_store_release_write(&(session->is_thread_running), 0);
+
 	return true;
 
 close_keepalive_timer:
 	close(session->keepalive_timer_fd);
-destroy_client_lock:
-	pthread_mutex_destroy(&(session->client_lock));
-destroy_lock:
-	pthread_mutex_destroy(&(session->status_lock));
 tls_deinit:
 	gnutls_deinit(session->tls_session);
 error:
@@ -171,10 +164,6 @@ bool iprohc_session_free(struct iprohc_session *const session)
 	/* stop and destroy keepalive timer */
 	close(session->keepalive_timer_fd);
 	session->keepalive_timer_fd = -1;
-
-	/* destroy locks */
-	pthread_mutex_destroy(&session->client_lock);
-	pthread_mutex_destroy(&session->status_lock);
 
 	/* free TLS resources */
 	gnutls_deinit(session->tls_session);
@@ -248,5 +237,79 @@ bool iprohc_session_update_keepalive(struct iprohc_session *const session,
 
 error:
 	return false;
+}
+
+
+/**
+ * @brief Start the main loop of the session
+ * 
+ * @param session  A client session
+ * @return         true if the session loop was successfully started,
+ *                 false if a problem occurred
+ */
+bool iprohc_session_start(struct iprohc_session *const session)
+{
+	int ret;
+
+	ret = pipe(session->p2c);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to create a communication pipe between main "
+		      "thread and client thread: %s (%d)", strerror(errno), errno);
+		goto error;
+	}
+
+	AO_store_release_write(&(session->is_thread_running), 1);
+
+	/* Go threads, go ! */
+	ret = pthread_create(&(session->thread_tunnel), NULL,
+	                     iprohc_tunnel_run, session);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to create the client tunnel thread: %s (%d)",
+		      strerror(ret), ret);
+		AO_store_release_write(&(session->is_thread_running), 0);
+		goto close_pipe;
+	}
+
+	return true;
+
+close_pipe:
+	close(session->p2c[1]);
+	close(session->p2c[0]);
+error:
+	return false;
+}
+
+
+/**
+ * @brief Stop the main loop of the session
+ * 
+ * @param session  A client session
+ * @return         true if the session loop was successfully stopped,
+ *                 false if a problem occurred
+ */
+bool iprohc_session_stop(struct iprohc_session *const session)
+{
+	/* stop thread if running */
+	if(AO_load_acquire_read(&(session->is_thread_running)))
+	{
+		/* ask for thread to stop (close the write side of the pipe) */
+		trace(LOG_ERR, "[main] ask client %s to stop", session->dst_addr_str);
+	}
+	if(session->p2c[1] >= 0)
+	{
+		close(session->p2c[1]);
+		session->p2c[1] = -1;
+	}
+
+	/* wait for thread to stop */
+	trace(LOG_ERR, "[main] wait for client %s to stop", session->dst_addr_str);
+	pthread_join(session->thread_tunnel, NULL);
+
+	/* close the remaining read side of the pipe */
+	close(session->p2c[0]);
+
+	return true;
 }
 

@@ -20,7 +20,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "tun_helpers.h"
 #include "client.h"
-#include "messages.h"
 #include "tls.h"
 #include "server_config.h"
 #include "rohc_tunnel.h"
@@ -47,6 +46,16 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <gnutls/pkcs12.h>
 
 
+/** Print in logs a trace related to the given client */
+#define client_trace(client, prio, format, ...) \
+	do \
+	{ \
+		trace((prio), "[main] [client %s] " format, \
+		      (client)->session.dst_addr_str, ##__VA_ARGS__); \
+	} \
+	while(0)
+
+
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
 
@@ -60,6 +69,7 @@ enum type_route { TUN, RAW };
 struct route_args
 {
 	int fd;
+	int p2c[2];
 	struct iprohc_server_session *clients;
 	size_t clients_max_nr;   /**< The maximum number of simultaneous clients */
 	enum type_route type;
@@ -213,20 +223,20 @@ int main(int argc, char *argv[])
 		switch(c)
 		{
 			case 'c':
-				trace(LOG_DEBUG, "Using file : %s", optarg);
+				trace(LOG_DEBUG, "[main] Using file : %s", optarg);
 				strncpy(conf_file, optarg, 1024);
 				conf_file[1023] = '\0';
 				break;
 			case 'b':
-				trace(LOG_DEBUG, "underlying interface: %s", optarg);
+				trace(LOG_DEBUG, "[main] underlying interface: %s", optarg);
 				if(strlen(optarg) >= IFNAMSIZ)
 				{
-					trace(LOG_ERR, "underlying interface name too long");
+					trace(LOG_ERR, "[main] underlying interface name too long");
 					goto error;
 				}
 				if(if_nametoindex(optarg) <= 0)
 				{
-					trace(LOG_ERR, "underlying interface '%s' does not exist",
+					trace(LOG_ERR, "[main] underlying interface '%s' does not exist",
 					      optarg);
 					goto error;
 				}
@@ -234,7 +244,7 @@ int main(int argc, char *argv[])
 				break;
 			case 'd':
 				log_max_priority = LOG_DEBUG;
-				trace(LOG_DEBUG, "debug mode enabled");
+				trace(LOG_DEBUG, "[main] debug mode enabled");
 				break;
 			case 'h':
 				usage();
@@ -250,7 +260,7 @@ int main(int argc, char *argv[])
 	/* load configuration from file, and check its coherency */
 	if(!iprohc_server_load_config(conf_file, &server_opts))
 	{
-		trace(LOG_ERR, "failed to load configuration file '%s'", conf_file);
+		trace(LOG_ERR, "[main] failed to load configuration file '%s'", conf_file);
 		exit_status = 2;
 		goto error;
 	}
@@ -258,14 +268,14 @@ int main(int argc, char *argv[])
 	/* create PID file */
 	if(strcmp(server_opts.pidfile_path, "") == 0)
 	{
-		trace(LOG_WARNING, "No pidfile specified");
+		trace(LOG_WARNING, "[main] No pidfile specified");
 	}
 	else
 	{
 		pid = fopen(server_opts.pidfile_path, "w");
 		if(pid == NULL)
 		{
-			trace(LOG_ERR, "failed to open pidfile '%s': %s (%d)",
+			trace(LOG_ERR, "[main] failed to open pidfile '%s': %s (%d)",
 			      server_opts.pidfile_path, strerror(errno), errno);
 			goto error;
 		}
@@ -293,7 +303,7 @@ int main(int argc, char *argv[])
 	ret = sigprocmask(SIG_BLOCK, &mask, NULL);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "failed to block UNIX signals: %s (%d)",
+		trace(LOG_ERR, "[main] failed to block UNIX signals: %s (%d)",
 		      strerror(errno), errno);
 		goto remove_pidfile;
 	}
@@ -302,7 +312,7 @@ int main(int argc, char *argv[])
 	signal_fd = signalfd(-1, &mask, 0);
 	if(signal_fd < 0)
 	{
-		trace(LOG_ERR, "failed to create signal fd: %s (%d)",
+		trace(LOG_ERR, "[main] failed to create signal fd: %s (%d)",
 		      strerror(errno), errno);
 		goto remove_pidfile;
 	}
@@ -316,7 +326,7 @@ int main(int argc, char *argv[])
 	                 sizeof(struct iprohc_server_session));
 	if(clients == NULL)
 	{
-		trace(LOG_ERR, "failed to allocate memory for the contexts of %zu "
+		trace(LOG_ERR, "[main] failed to allocate memory for the contexts of %zu "
 		      "clients", server_opts.clients_max_nr);
 		goto close_signal_fd;
 	}
@@ -325,6 +335,7 @@ int main(int argc, char *argv[])
 	{
 		memcpy(&(clients[i].session.tunnel.params), &(server_opts.params),
 		       sizeof(struct tunnel_params));
+		AO_store_release_write(&(clients[i].is_init), 0);
 	}
 
 
@@ -332,7 +343,7 @@ int main(int argc, char *argv[])
 	 * GnuTLS stuff
 	 */
 
-	trace(LOG_INFO, "load server certificate from file '%s'",
+	trace(LOG_INFO, "[main] load server certificate from file '%s'",
 			server_opts.pkcs12_f);
 	gnutls_global_init();
 	gnutls_certificate_allocate_credentials(&(server_opts.tls_cred));
@@ -341,16 +352,16 @@ int main(int argc, char *argv[])
 	{
 		if(!load_p12(server_opts.tls_cred, server_opts.pkcs12_f, NULL))
 		{
-			trace(LOG_ERR, "failed to load server certificate from file '%s'",
+			trace(LOG_ERR, "[main] failed to load server certificate from file '%s'",
 					server_opts.pkcs12_f);
 			goto deinit_tls;
 		}
 	}
 
-	trace(LOG_INFO, "generate Diffie–Hellman parameters (it takes a few seconds)");
+	trace(LOG_INFO, "[main] generate Diffie–Hellman parameters (it takes a few seconds)");
 	if(!generate_dh_params(&dh_params))
 	{
-		trace(LOG_ERR, "failed to generate Diffie-Hellman parameters");
+		trace(LOG_ERR, "[main] failed to generate Diffie-Hellman parameters");
 		goto deinit_tls;
 	}
 	gnutls_certificate_set_dh_params(server_opts.tls_cred, dh_params);
@@ -359,11 +370,11 @@ int main(int argc, char *argv[])
 	/*
 	 * Create TCP socket
 	 */
-	trace(LOG_INFO, "listen on TCP 0.0.0.0:%d", server_opts.port);
+	trace(LOG_INFO, "[main] listen on TCP 0.0.0.0:%d", server_opts.port);
 	serv_socket = socket(AF_INET, SOCK_STREAM, 0);
 	if(serv_socket < 0)
 	{
-		trace(LOG_ERR, "failed to create TCP socket: %s (%d)",
+		trace(LOG_ERR, "[main] failed to create TCP socket: %s (%d)",
 				strerror(errno), errno);
 		goto free_dh;
 	}
@@ -371,7 +382,7 @@ int main(int argc, char *argv[])
 	ret = setsockopt(serv_socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "failed to allow the TCP socket to re-use address: %s (%d)",
+		trace(LOG_ERR, "[main] failed to allow the TCP socket to re-use address: %s (%d)",
 				strerror(errno), errno);
 		goto close_tcp;
 	}
@@ -384,7 +395,7 @@ int main(int argc, char *argv[])
 	ret = bind(serv_socket, (struct sockaddr*)&servaddr, sizeof(servaddr));
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "failed to bind on TCP/%d: %s (%d)", server_opts.port,
+		trace(LOG_ERR, "[main] failed to bind on TCP/%d: %s (%d)", server_opts.port,
 				strerror(errno), errno);
 		goto close_tcp;
 	}
@@ -392,63 +403,77 @@ int main(int argc, char *argv[])
 	ret = listen(serv_socket, 10);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "failed to put TCP/%d socket in listen mode: %s (%d)",
+		trace(LOG_ERR, "[main] failed to put TCP/%d socket in listen mode: %s (%d)",
 				server_opts.port, strerror(errno), errno);
 		goto close_tcp;
 	}
 
 	/* TUN create */
-	trace(LOG_INFO, "create TUN interface");
+	trace(LOG_INFO, "[main] create TUN interface");
 	tun = create_tun("tun_ipip", server_opts.basedev,
 	                 &tun_itf_id, &basedev_mtu, &tun_itf_mtu);
 	if(tun < 0)
 	{
-		trace(LOG_ERR, "failed to create TUN device");
+		trace(LOG_ERR, "[main] failed to create TUN device");
 		goto close_tcp;
 	}
 
 	is_ok = set_ip4(tun_itf_id, server_opts.local_address, 24);
 	if(!is_ok)
 	{
-		trace(LOG_ERR, "failed to set IPv4 address on TUN interface");
+		trace(LOG_ERR, "[main] failed to set IPv4 address on TUN interface");
 		goto delete_tun;
 	}
 
 	/* TUN routing thread */
-	trace(LOG_INFO, "start TUN routing thread");
+	trace(LOG_INFO, "[main] start TUN routing thread");
 	route_args_tun.fd = tun;
+	ret = pipe(route_args_tun.p2c);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[main] failed to create communication pipe for TUN "
+		      "routing thread: %s (%d)", strerror(errno), errno);
+		goto delete_tun;
+	}
 	route_args_tun.clients = clients;
 	route_args_tun.clients_max_nr = server_opts.clients_max_nr;
 	route_args_tun.type = TUN;
 	ret = pthread_create(&tun_route_thread, NULL, route, (void*)&route_args_tun);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "failed to create the TUN routing thread: %s (%d)",
+		trace(LOG_ERR, "[main] failed to create the TUN routing thread: %s (%d)",
 				strerror(ret), ret);
-		goto delete_tun;
+		goto close_tun_pipe;
 	}
 
 	/* RAW create */
-	trace(LOG_INFO, "create RAW socket");
+	trace(LOG_INFO, "[main] create RAW socket");
 	raw = create_raw();
 	if(raw < 0)
 	{
-		trace(LOG_ERR, "failed to create RAW socket");
+		trace(LOG_ERR, "[main] failed to create RAW socket");
 		goto stop_tun_thread;
 	}
 
 	/* RAW routing thread */
-	trace(LOG_INFO, "start RAW routing thread");
+	trace(LOG_INFO, "[main] start RAW routing thread");
 	route_args_raw.fd = raw;
+	ret = pipe(route_args_raw.p2c);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[main] failed to create communication pipe for RAW "
+		      "routing thread: %s (%d)", strerror(errno), errno);
+		goto delete_raw;
+	}
 	route_args_raw.clients = clients;
 	route_args_raw.clients_max_nr = server_opts.clients_max_nr;
 	route_args_raw.type = RAW;
 	ret = pthread_create(&raw_route_thread, NULL, route, (void*)&route_args_raw);
 	if(ret != 0)
 	{
-		trace(LOG_ERR, "failed to create the RAW routing thread: %s (%d)",
+		trace(LOG_ERR, "[main] failed to create the RAW routing thread: %s (%d)",
 				strerror(ret), ret);
-		goto delete_raw;
+		goto close_raw_pipe;
 	}
 
 	/* stop writing logs on stderr */
@@ -458,7 +483,7 @@ int main(int argc, char *argv[])
 	struct timeval now;
 
 	/* Start listening and looping on TCP socket */
-	trace(LOG_INFO, "server is now ready to accept requests from clients");
+	trace(LOG_INFO, "[main] server is now ready to accept requests from clients");
 	is_server_alive = true;
 	while(is_server_alive)
 	{
@@ -472,37 +497,6 @@ int main(int argc, char *argv[])
 		FD_SET(signal_fd, &rdfs);
 		max_fd = max(signal_fd, max_fd);
 
-		/* Add client to select readfds */
-		for(j = 0; j < server_opts.clients_max_nr; j++)
-		{
-			if(clients[j].is_init)
-			{
-				ret = pthread_mutex_lock(&(clients[j].session.status_lock));
-				if(ret != 0)
-				{
-					trace(LOG_ERR, "failed to acquire lock for client #%d", j);
-					assert(0);
-					goto delete_raw;
-				}
-
-				if(clients[j].session.status >= IPROHC_SESSION_CONNECTING)
-				{
-					FD_SET(clients[j].session.tcp_socket, &rdfs);
-					max_fd = max(clients[j].session.tcp_socket, max_fd);
-					FD_SET(clients[j].session.keepalive_timer_fd, &rdfs);
-					max_fd = max(clients[j].session.keepalive_timer_fd, max_fd);
-				}
-
-				ret = pthread_mutex_unlock(&(clients[j].session.status_lock));
-				if(ret != 0)
-				{
-					trace(LOG_ERR, "failed to release lock for client #%d", j);
-					assert(0);
-					goto delete_raw;
-				}
-			}
-		}
-
 		/* Reset timeout */
 		timeout.tv_sec = 60;
 		timeout.tv_usec = 0;
@@ -510,12 +504,12 @@ int main(int argc, char *argv[])
 		ret = select(max_fd + 1, &rdfs, NULL, NULL, &timeout);
 		if(ret < 0)
 		{
-			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
+			trace(LOG_ERR, "[main] select failed: %s (%d)", strerror(errno), errno);
 			continue;
 		}
 		else if(ret == 0)
 		{
-			trace(LOG_DEBUG, "select: timeout expired without any event");
+			trace(LOG_DEBUG, "[main] select: timeout expired without any event");
 			continue;
 		}
 
@@ -527,13 +521,13 @@ int main(int argc, char *argv[])
 			ret = read(signal_fd, &signal_infos, sizeof(struct signalfd_siginfo));
 			if(ret < 0)
 			{
-				trace(LOG_ERR, "failed to retrieve information about the received "
+				trace(LOG_ERR, "[main] failed to retrieve information about the received "
 				      "UNIX signal: %s (%d)", strerror(errno), errno);
 				continue;
 			}
 			else if(ret != sizeof(struct signalfd_siginfo))
 			{
-				trace(LOG_ERR, "failed to retrieve information about the received "
+				trace(LOG_ERR, "[main] failed to retrieve information about the received "
 				      "UNIX signal: only %d bytes expected while %zu bytes received",
 				      ret, sizeof(struct signalfd_siginfo));
 				continue;
@@ -548,14 +542,14 @@ int main(int argc, char *argv[])
 					if(signal_infos.ssi_pid > 0)
 					{
 						/* killed by known process */
-						trace(LOG_NOTICE, "process with PID %d run by user with UID "
+						trace(LOG_NOTICE, "[main] process with PID %d run by user with UID "
 						      "%d asked the IP/ROHC server to shutdown",
 						      signal_infos.ssi_pid, signal_infos.ssi_uid);
 					}
 					else
 					{
 						/* killed by unknown process */
-						trace(LOG_NOTICE, "user with UID %d asked the IP/ROHC server "
+						trace(LOG_NOTICE, "[main] user with UID %d asked the IP/ROHC server "
 						      "to shutdown", signal_infos.ssi_uid);
 					}
 					is_server_alive = false;
@@ -564,14 +558,15 @@ int main(int argc, char *argv[])
 				case SIGUSR1:
 				{
 					/* dump stats for all clients */
-					trace(LOG_INFO, "dump stats for all clients");
+					trace(LOG_INFO, "[main] dump stats for all clients");
 					for(j = 0; j < server_opts.clients_max_nr; j++)
 					{
-						if(clients[j].is_init)
+						if(AO_load_acquire_read(&(clients[j].is_init)))
 						{
 							dump_stats_client(&(clients[j]));
 						}
 					}
+					trace(LOG_INFO, "[main] end of stats dump");
 					break;
 				}
 				case SIGUSR2:
@@ -579,17 +574,17 @@ int main(int argc, char *argv[])
 					if(log_max_priority == LOG_DEBUG)
 					{
 						log_max_priority = LOG_INFO;
-						trace(LOG_INFO, "debug mode disabled");
+						trace(LOG_INFO, "[main] debug mode disabled");
 					}
 					else
 					{
 						log_max_priority = LOG_DEBUG;
-						trace(LOG_DEBUG, "debug mode enabled");
+						trace(LOG_DEBUG, "[main] debug mode enabled");
 					}
 					break;
 				default:
 				{
-					trace(LOG_NOTICE, "ignore unexpected signal %d",
+					trace(LOG_NOTICE, "[main] ignore unexpected signal %d",
 					      signal_infos.ssi_signo);
 					break;
 				}
@@ -604,179 +599,66 @@ int main(int argc, char *argv[])
 			                                    raw, tun, tun_itf_mtu, basedev_mtu,
 			                                    server_opts))
 			{
-				trace(LOG_ERR, "failed to handle new client session");
+				trace(LOG_ERR, "[main] failed to handle new client session");
 			}
 		}
 
-		/* Test read on each client socket */
+		/* cleanup deconnected clients */
 		for(j = 0; j < server_opts.clients_max_nr; j++)
 		{
-			iprohc_session_status_t client_status;
-
-			if(!clients[j].is_init)
+			/* skip uninitialized clients */
+			if(!AO_load_acquire_read(&(clients[j].is_init)))
 			{
 				continue;
 			}
 
-			ret = pthread_mutex_lock(&(clients[j].session.status_lock));
-			if(ret != 0)
+			/* skip clients that are still running */
+			if(AO_load_acquire_read(&(clients[j].session.is_thread_running)))
 			{
-				trace(LOG_ERR, "failed to acquire lock for client #%d", j);
-				assert(0);
-				goto delete_raw;
-			}
-			client_status = clients[j].session.status;
-			ret = pthread_mutex_unlock(&(clients[j].session.status_lock));
-			if(ret != 0)
-			{
-				trace(LOG_ERR, "failed to release lock for client #%d", j);
-				assert(0);
-				goto delete_raw;
+				continue;
 			}
 
-			if(client_status >= IPROHC_SESSION_CONNECTING &&
-			   FD_ISSET(clients[j].session.tcp_socket, &rdfs))
+			/* client is not running, we can check its status */
+			if(clients[j].session.status == IPROHC_SESSION_PENDING_DELETE)
 			{
-				int ret_req;
-
-				/* handle request */
-				ret_req = handle_client_request(&(clients[j]));
-
-				ret = pthread_mutex_lock(&(clients[j].session.status_lock));
-				if(ret != 0)
+				/* stop client session */
+				trace(LOG_INFO, "[main] stop session of client #%d", j);
+				if(!iprohc_session_stop(&(clients[j].session)))
 				{
-					trace(LOG_ERR, "failed to acquire lock for client #%d", j);
-					assert(0);
-					goto delete_raw;
-				}
-				client_status = clients[j].session.status;
-				ret = pthread_mutex_unlock(&(clients[j].session.status_lock));
-				if(ret != 0)
-				{
-					trace(LOG_ERR, "failed to release lock for client #%d", j);
-					assert(0);
-					goto delete_raw;
+					trace(LOG_ERR, "[main] failed to stop session of client #%d", j);
 				}
 
-				if(ret_req < 0)
-				{
-					if(client_status == IPROHC_SESSION_CONNECTED)
-					{
-						client_trace(clients[j], LOG_NOTICE, "client #%d was "
-						             "disconnected, stop its thread", j);
-						stop_client_tunnel(&(clients[j]));
-					}
-					else if(client_status == IPROHC_SESSION_CONNECTING)
-					{
-						client_trace(clients[j], LOG_NOTICE, "failed to connect "
-						             "client #%d, aborting", j);
-
-						ret = pthread_mutex_lock(&clients[j].session.status_lock);
-						if(ret != 0)
-						{
-							trace(LOG_ERR, "failed to acquire lock for client #%d", j);
-							assert(0);
-							goto delete_raw;
-						}
-						clients[j].session.status = IPROHC_SESSION_PENDING_DELETE;
-						ret = pthread_mutex_unlock(&clients[j].session.status_lock);
-						if(ret != 0)
-						{
-							trace(LOG_ERR, "failed to release lock for client #%d", j);
-							assert(0);
-							goto delete_raw;
-						}
-					}
-				}
-				else
-				{
-					ret = pthread_mutex_lock(&clients[j].session.status_lock);
-					if(ret != 0)
-					{
-						trace(LOG_ERR, "failed to acquire lock for client #%d", j);
-						assert(0);
-						goto delete_raw;
-					}
-					gettimeofday(&(clients[j].session.last_activity), NULL);
-
-					/* re-arm keepalive timer */
-					if(!iprohc_session_update_keepalive(&(clients[j].session),
-					                                    server_opts.params.keepalive_timeout))
-					{
-						trace(LOG_ERR, "[client %s] failed to update the keepalive "
-						      "timeout to %zu seconds", clients[j].session.dst_addr_str,
-						      server_opts.params.keepalive_timeout);
-						goto error;
-					}
-
-					ret = pthread_mutex_unlock(&clients[j].session.status_lock);
-					if(ret != 0)
-					{
-						trace(LOG_ERR, "failed to release lock for client #%d", j);
-						assert(0);
-						goto delete_raw;
-					}
-				}
-			}
-
-			/* send keepalive in case there is too few activity on control channel */
-			if(client_status >= IPROHC_SESSION_CONNECTING &&
-			   FD_ISSET(clients[j].session.keepalive_timer_fd, &rdfs))
-			{
-				const char command[1] = { C_KEEPALIVE };
-				uint64_t keepalive_timer_nr;
-
-				ret = read(clients[j].session.keepalive_timer_fd,
-				           &keepalive_timer_nr, sizeof(uint64_t));
-				if(ret < 0)
-				{
-					trace(LOG_ERR, "[client %s] failed to read keepalive timer: %s (%d)",
-					      clients[j].session.dst_addr_str, strerror(errno), errno);
-					goto delete_raw;
-				}
-				else if(ret != sizeof(uint64_t))
-				{
-					trace(LOG_ERR, "[client %s] failed to read keepalive timer: "
-					      "received %d bytes while expecting %zu bytes",
-					      clients[j].session.dst_addr_str, ret, sizeof(uint64_t));
-					goto delete_raw;
-				}
-
-				trace(LOG_DEBUG, "send a keepalive command");
-				gnutls_record_send(clients[j].session.tls_session, command, 1);
-			}
-
-			if(client_status == IPROHC_SESSION_PENDING_DELETE)
-			{
-				ret = pthread_mutex_trylock(&clients[j].session.client_lock);
-				if(ret == 0)
-				{
-					/* free dead client */
-					trace(LOG_INFO, "remove context of client #%d", j);
-					dump_stats_client(&(clients[j]));
-					gnutls_bye(clients[j].session.tls_session, GNUTLS_SHUT_WR);
-					/* delete client */
-					del_client(&(clients[j]));
-
-					assert(clients_nr > 0);
-					assert(clients_nr <= server_opts.clients_max_nr);
-					clients_nr--;
-					trace(LOG_INFO, "only %zu/%zu clients remaining", clients_nr,
-					      server_opts.clients_max_nr);
-					assert(clients_nr >= 0);
-					assert(clients_nr < server_opts.clients_max_nr);
-				}
+				/* delete client */
+				trace(LOG_INFO, "[main] remove context of client #%d", j);
+				del_client(&(clients[j]));
+					
+				assert(clients_nr > 0);
+				assert(clients_nr <= server_opts.clients_max_nr);
+				clients_nr--;
+				trace(LOG_INFO, "[main] only %zu/%zu clients remaining", clients_nr,
+				      server_opts.clients_max_nr);
+				assert(clients_nr >= 0);
+				assert(clients_nr < server_opts.clients_max_nr);
 			}
 		}
 	}
-	trace(LOG_INFO, "stopping server...");
+	trace(LOG_INFO, "[main] stopping server...");
 
 	/* release all clients */
-	trace(LOG_INFO, "release resources of connected clients...");
+	trace(LOG_INFO, "[main] release resources of connected clients...");
 	for(client_id = 0; client_id < server_opts.clients_max_nr; client_id++)
 	{
-		if(clients[client_id].is_init)
+		if(AO_load_acquire_read(&(clients[client_id].is_init)))
 		{
+			/* stop client session */
+			trace(LOG_INFO, "[main] stop session of client #%zu", client_id);
+			if(!iprohc_session_stop(&(clients[client_id].session)))
+			{
+				trace(LOG_ERR, "[main] failed to stop session of client #%zu",
+				      client_id);
+			}
+
+			trace(LOG_INFO, "[main] remove context of client #%zu", client_id);
 			del_client(&(clients[client_id]));
 		}
 	}
@@ -784,26 +666,40 @@ int main(int argc, char *argv[])
 	/* everything went fine */
 	exit_status = 0;
 
-	trace(LOG_INFO, "cancel RAW routing thread...");
-	pthread_cancel(raw_route_thread);
+	trace(LOG_INFO, "[main] stop RAW routing thread...");
+	close(route_args_raw.p2c[1]);
+	route_args_raw.p2c[1] = -1;
 	pthread_join(raw_route_thread, NULL);
+close_raw_pipe:
+	if(route_args_raw.p2c[1] >= 0)
+	{
+		close(route_args_raw.p2c[1]);
+	}
+	close(route_args_raw.p2c[0]);
 delete_raw:
-	trace(LOG_INFO, "close RAW socket");
+	trace(LOG_INFO, "[main] close RAW socket");
 	close(raw);
 stop_tun_thread:
-	trace(LOG_INFO, "cancel TUN routing thread...");
-	pthread_cancel(tun_route_thread);
+	trace(LOG_INFO, "[main] stop TUN routing thread...");
+	close(route_args_tun.p2c[1]);
+	route_args_tun.p2c[1] = -1;
 	pthread_join(tun_route_thread, NULL);
+close_tun_pipe:
+	if(route_args_tun.p2c[1] >= 0)
+	{
+		close(route_args_tun.p2c[1]);
+	}
+	close(route_args_tun.p2c[0]);
 delete_tun:
-	trace(LOG_INFO, "close TUN interface");
+	trace(LOG_INFO, "[main] close TUN interface");
 	close(tun);
 close_tcp:
-	trace(LOG_INFO, "close TCP server socket");
+	trace(LOG_INFO, "[main] close TCP server socket");
 	close(serv_socket);
 free_dh:
 	gnutls_dh_params_deinit(dh_params);
 deinit_tls:
-	trace(LOG_INFO, "release TLS resources");
+	trace(LOG_INFO, "[main] release TLS resources");
 	gnutls_certificate_free_credentials(server_opts.tls_cred);
 	gnutls_priority_deinit(server_opts.priority_cache);
 	gnutls_global_deinit();
@@ -814,19 +710,19 @@ close_signal_fd:
 remove_pidfile:
 	if(strcmp(server_opts.pidfile_path, "") != 0)
 	{
-		trace(LOG_INFO, "remove pidfile '%s'", server_opts.pidfile_path);
+		trace(LOG_INFO, "[main] remove pidfile '%s'", server_opts.pidfile_path);
 		unlink(server_opts.pidfile_path);
 	}
 error:
 	if(exit_status == 0)
 	{
-		trace(LOG_INFO, "server stops with exit code %d", exit_status);
+		trace(LOG_INFO, "[main] server stops with exit code %d", exit_status);
 	}
 	else
 	{
-		trace(LOG_NOTICE, "server stops with exit code %d", exit_status);
+		trace(LOG_NOTICE, "[main] server stops with exit code %d", exit_status);
 	}
-	trace(LOG_INFO, "close syslog session");
+	trace(LOG_INFO, "[main] close syslog session");
 	closelog();
 	return exit_status;
 }
@@ -873,7 +769,7 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
 	conn = accept(serv_sock, (struct sockaddr *) &remote_addr, &remote_addr_len);
 	if(conn < 0)
 	{
-		trace(LOG_ERR, "failed to accept new connection on socket %d: %s (%d)",
+		trace(LOG_ERR, "[main] failed to accept new connection on socket %d: %s (%d)",
 				serv_sock, strerror(errno), errno);
 		goto error;
 	}
@@ -882,7 +778,7 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
 	if((*clients_nr) >= clients_max_nr)
 	{
 		/* not enough resource, kick the new client away */
-		trace(LOG_ERR, "no more clients accepted, maximum %zu reached",
+		trace(LOG_ERR, "[main] no more clients accepted, maximum %zu reached",
 		      clients_max_nr);
 
 		/* reject connection */
@@ -895,25 +791,33 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
 
 		/* find the first free context for the new client */
 		for(client_id = 0; client_id < clients_max_nr &&
-		    clients[client_id].is_init; client_id++)
+		    AO_load_acquire_read(&(clients[client_id].is_init)); client_id++)
 		{
 		}
 		assert(client_id < clients_max_nr);
-		trace(LOG_INFO, "will store client %zu/%zu at index %zu",
+		trace(LOG_INFO, "[main] will store client %zu/%zu at index %zu",
 		      (*clients_nr) + 1, clients_max_nr, client_id);
 
 		ret = new_client(conn, remote_addr, raw, tun, tun_itf_mtu, basedev_mtu,
 		                 &(clients[client_id]), client_id, server_opts);
 		if(ret < 0)
 		{
-			trace(LOG_ERR, "failed to init new client session (%d)\n", ret);
+			trace(LOG_ERR, "[main] failed to init new client session (%d)\n", ret);
 			close(conn);
+			goto error;
 		}
-		else
+		
+		/* start client thread */
+		if(!iprohc_session_start(&(clients[client_id].session)))
 		{
-			assert((*clients_nr) < clients_max_nr);
-			(*clients_nr)++;
+			trace(LOG_ERR, "[main] failed to start client thread");
+			del_client(&(clients[client_id]));
+			goto error;
 		}
+
+		/* one client more */
+		assert((*clients_nr) < clients_max_nr);
+		(*clients_nr)++;
 	}
 
 	return true;
@@ -926,82 +830,63 @@ error:
 /**
  * @brief Dump the statistics of the given client in logs
  *
+ * @warning THIS FUNCTION IS NOT THREAD-SAFE
+ *
  * @param client  The client session
  */
 static void dump_stats_client(struct iprohc_server_session *const client)
 {
-	int ret;
-
-	ret = pthread_mutex_lock(&client->session.status_lock);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "dump_stats_client: failed to acquire lock for client");
-		assert(0);
-		goto error;
-	}
-
-	client_tracep(client, LOG_INFO, "--------------------------------------------");
+	client_trace(client, LOG_INFO, "--------------------------------------------");
 	switch(client->session.status)
 	{
 		case IPROHC_SESSION_CONNECTING:
-			client_tracep(client, LOG_INFO, "status: connecting");
+			client_trace(client, LOG_INFO, "status: connecting");
 			break;
 		case IPROHC_SESSION_CONNECTED:
-			client_tracep(client, LOG_INFO, "status: connected");
+			client_trace(client, LOG_INFO, "status: connected");
 			break;
 		case IPROHC_SESSION_PENDING_DELETE:
-			client_tracep(client, LOG_INFO, "status: pending delete");
+			client_trace(client, LOG_INFO, "status: pending delete");
 			break;
 		default:
-			client_tracep(client, LOG_INFO, "status: unknown (%d)",
-			              client->session.status);
+			client_trace(client, LOG_INFO, "status: unknown (%d)",
+			             client->session.status);
 			break;
 	}
 	if(client->session.status == IPROHC_SESSION_CONNECTED)
 	{
 		int i;
 
-		client_tracep(client, LOG_INFO, "packing: %d", client->packing);
-		client_tracep(client, LOG_INFO, "stats:");
-		client_tracep(client, LOG_INFO, "  failed decompression:          %d",
-		              client->session.tunnel.stats.decomp_failed);
-		client_tracep(client, LOG_INFO, "  total  decompression:          %d",
-		              client->session.tunnel.stats.decomp_total);
-		client_tracep(client, LOG_INFO, "  failed compression:            %d",
-		              client->session.tunnel.stats.comp_failed);
-		client_tracep(client, LOG_INFO, "  total  compression:            %d",
-		              client->session.tunnel.stats.comp_total);
-		client_tracep(client, LOG_INFO, "  failed depacketization:        %d",
-		              client->session.tunnel.stats.unpack_failed);
-		client_tracep(client, LOG_INFO, "  total received packets on raw: %d",
-		              client->session.tunnel.stats.total_received);
-		client_tracep(client, LOG_INFO, "  total compressed header size:  %d bytes",
-		              client->session.tunnel.stats.head_comp_size);
-		client_tracep(client, LOG_INFO, "  total compressed packet size:  %d bytes",
-		              client->session.tunnel.stats.total_comp_size);
-		client_tracep(client, LOG_INFO, "  total header size before comp: %d bytes",
-		              client->session.tunnel.stats.head_uncomp_size);
-		client_tracep(client, LOG_INFO, "  total packet size before comp: %d bytes",
-		              client->session.tunnel.stats.total_uncomp_size);
-		client_tracep(client, LOG_INFO, "stats packing:");
+		client_trace(client, LOG_INFO, "packing: %d", client->session.tunnel.params.packing);
+		client_trace(client, LOG_INFO, "stats:");
+		client_trace(client, LOG_INFO, "  failed decompression:          %d",
+		             client->session.tunnel.stats.decomp_failed);
+		client_trace(client, LOG_INFO, "  total  decompression:          %d",
+		             client->session.tunnel.stats.decomp_total);
+		client_trace(client, LOG_INFO, "  failed compression:            %d",
+		             client->session.tunnel.stats.comp_failed);
+		client_trace(client, LOG_INFO, "  total  compression:            %d",
+		             client->session.tunnel.stats.comp_total);
+		client_trace(client, LOG_INFO, "  failed depacketization:        %d",
+		             client->session.tunnel.stats.unpack_failed);
+		client_trace(client, LOG_INFO, "  total received packets on raw: %d",
+		             client->session.tunnel.stats.total_received);
+		client_trace(client, LOG_INFO, "  total compressed header size:  %d bytes",
+		             client->session.tunnel.stats.head_comp_size);
+		client_trace(client, LOG_INFO, "  total compressed packet size:  %d bytes",
+		             client->session.tunnel.stats.total_comp_size);
+		client_trace(client, LOG_INFO, "  total header size before comp: %d bytes",
+		             client->session.tunnel.stats.head_uncomp_size);
+		client_trace(client, LOG_INFO, "  total packet size before comp: %d bytes",
+		             client->session.tunnel.stats.total_uncomp_size);
+		client_trace(client, LOG_INFO, "stats packing:");
 		for(i = 1; i < client->session.tunnel.stats.n_stats_packing; i++)
 		{
-			client_tracep(client, LOG_INFO, "  %d packets: %d", i,
-			              client->session.tunnel.stats.stats_packing[i]);
+			client_trace(client, LOG_INFO, "  %d packets: %d", i,
+			             client->session.tunnel.stats.stats_packing[i]);
 		}
 	}
-	client_tracep(client, LOG_INFO, "--------------------------------------------");
-
-	ret = pthread_mutex_unlock(&client->session.status_lock);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "dump_stats_client: failed to acquire lock for client");
-		assert(0);
-		goto error;
-	}
-
-error:
-	;
+	client_trace(client, LOG_INFO, "--------------------------------------------");
 }
 
 
@@ -1022,8 +907,8 @@ static void * route(void *arg)
 	size_t clients_max_nr = _arg->clients_max_nr;
 	enum type_route type = _arg->type;
 
+	bool is_route_thread_alive = true;
 	int i;
-	int ret;
 	size_t len;
 
 	unsigned char buffer[TUNTAP_BUFSIZE];
@@ -1034,37 +919,82 @@ static void * route(void *arg)
 	uint32_t*src_ip;
 	uint32_t*dest_ip;
 
-	trace(LOG_INFO, "Initializing routing thread\n");
+	trace(LOG_INFO, "[route] Initializing routing thread");
 
-	while((ret = read(fd, buffer, buffer_len)))
+	while(is_route_thread_alive)
 	{
-		if(ret < 0 || ret > buffer_len)
-		{
-			trace(LOG_ERR, "read failed: %s (%d)\n", strerror(errno), errno);
-			return NULL;
-		}
-		len = ret;
-		trace(LOG_DEBUG, "Read %zu bytes\n", len);
+		fd_set readfds;
+		struct timeval timeout;
+		int max_fd = 0;
+		int ret;
 
-		/* Get packet destination IP if tun or source IP if raw */
-		if(type == TUN)
+		FD_ZERO(&readfds);
+		/* read side of the pipe */
+		FD_SET(_arg->p2c[0], &readfds);
+		max_fd = max(_arg->p2c[0], max_fd);
+		/* socket to route traffic for */
+		FD_SET(fd, &readfds);
+		max_fd = max(fd, max_fd);
+
+		timeout.tv_sec = 60;
+		timeout.tv_usec = 0;
+
+		ret = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
+		if(ret < 0)
 		{
-			dest_ip = (uint32_t*) &buffer[20];
-			addr.s_addr = *dest_ip;
-			trace(LOG_DEBUG, "Packet destination : %s\n", inet_ntoa(addr));
+			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
+			goto error;
 		}
-		else
+		else if(ret == 0)
 		{
-			src_ip = (uint32_t*) &buffer[12];
-			addr.s_addr = *src_ip;
-			trace(LOG_DEBUG, "Packet source : %s\n", inet_ntoa(addr));
+			continue;
 		}
 
-		for(i = 0; i < clients_max_nr; i++)
+		/* stop thread if main thread closed the write side of the pipe */
+		if(FD_ISSET(_arg->p2c[0], &readfds))
 		{
-			/* Find associated client */
-			if(clients[i].is_init)
+			goto quit;
+		}
+
+		if(FD_ISSET(fd, &readfds))
+		{
+			ret = read(fd, buffer, buffer_len);
+			if(ret < 0)
 			{
+				trace(LOG_ERR, "[route] read failed: %s (%d)", strerror(errno),
+				      errno);
+				goto error;
+			}
+			else if(ret != 0)
+			{
+				trace(LOG_ERR, "[route] nothing read on socket");
+				goto error;
+			}
+			len = ret;
+			trace(LOG_DEBUG, "[route] read %zu bytes", len);
+
+			/* Get packet destination IP if tun or source IP if raw */
+			if(type == TUN)
+			{
+				dest_ip = (uint32_t*) &buffer[20];
+				addr.s_addr = *dest_ip;
+				trace(LOG_DEBUG, "[route] packet destination = %s", inet_ntoa(addr));
+			}
+			else
+			{
+				src_ip = (uint32_t*) &buffer[12];
+				addr.s_addr = *src_ip;
+				trace(LOG_DEBUG, "[route] packet source = %s", inet_ntoa(addr));
+			}
+
+			for(i = 0; i < clients_max_nr; i++)
+			{
+				/* Find associated client */
+				if(!AO_load_acquire_read(&(clients[i].is_init)))
+				{
+					continue;
+				}
+
 				/* Send to fake raw or tun device */
 				if(type == TUN)
 				{
@@ -1073,14 +1003,13 @@ static void * route(void *arg)
 						ret = write(clients[i].fake_tun[1], buffer, len);
 						if(ret < 0)
 						{
-							trace(LOG_WARNING, "failed to send %zu-byte packet to "
-							      "TUN interface: %s (%d)", len, strerror(errno),
-							      errno);
+							trace(LOG_WARNING, "[route] failed to send %zu-byte packet "
+							      "to TUN interface: %s (%d)", len, strerror(errno), errno);
 						}
 						else if(ret != len)
 						{
-							trace(LOG_WARNING, "partial write: only %d bytes of the "
-							      "%zu-byte packet were sent to the TUN interface",
+							trace(LOG_WARNING, "[route] partial write: only %d bytes of "
+							      "the %zu-byte packet were sent to the TUN interface",
 							      ret, len);
 						}
 						break;
@@ -1093,14 +1022,14 @@ static void * route(void *arg)
 						ret = write(clients[i].fake_raw[1], buffer, len);
 						if(ret < 0)
 						{
-							trace(LOG_WARNING, "failed to send %zu-byte packet to "
-							      "the underlying interface: %s (%d)", len,
+							trace(LOG_WARNING, "[route] failed to send %zu-byte packet "
+							      "to the underlying interface: %s (%d)", len,
 							      strerror(errno), errno);
 						}
 						else if(ret != len)
 						{
-							trace(LOG_WARNING, "partial write: only %d bytes of the "
-							      "%zu-byte packet were sent to the underlying "
+							trace(LOG_WARNING, "[route] partial write: only %d bytes of "
+							      "the %zu-byte packet were sent to the underlying "
 							      "interface", ret, len);
 						}
 						break;
@@ -1110,8 +1039,9 @@ static void * route(void *arg)
 		}
 	}
 
+quit:
+	trace(LOG_INFO, "[route] end of thread");
+error:
 	return NULL;
 }
-
-
 

@@ -305,18 +305,3 @@ error:
 	return ret;
 }
 
-
-#if defined __GNUC__
-#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
-#endif
-void gnutls_transport_set_ptr_nowarn(gnutls_session_t session, int ptr)
-{
-	return gnutls_transport_set_ptr(session, (gnutls_transport_ptr_t) ptr);
-}
-
-
-#if defined __GNUC__
-#pragma GCC diagnostic error "-Wint-to-pointer-cast"
-#endif
-
-

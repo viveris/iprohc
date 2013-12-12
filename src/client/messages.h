@@ -21,11 +21,15 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <gnutls/gnutls.h>
 
 /* Generic functions for handling messages */
-bool handle_message(struct iprohc_client_session *const client_session,
-						  unsigned char *const buf,
-						  const int length)
+
+bool iprohc_client_send_conn_request(struct iprohc_session *const session)
+	__attribute__((nonnull(1), warn_unused_result));
+
+bool handle_message(struct iprohc_session *const session,
+						  const uint8_t *const buf,
+						  const size_t length)
 	__attribute__((nonnull(1, 2), warn_unused_result));
 
-bool client_send_disconnect_msg(gnutls_session_t session)
-	__attribute__((warn_unused_result));
+bool client_send_disconnect_msg(struct iprohc_session *const session)
+	__attribute__((warn_unused_result, nonnull(1)));
 

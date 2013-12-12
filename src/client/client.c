@@ -50,7 +50,6 @@ Returns :
 #include <stdio.h>
 #include <string.h>
 #include <syslog.h>
-#include <unistd.h>
 #include <errno.h>
 #include <getopt.h>
 #include <signal.h>
@@ -60,6 +59,7 @@ Returns :
 #include <netdb.h>
 #include <assert.h>
 #include <sys/signalfd.h>
+#include <unistd.h>
 
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
@@ -121,11 +121,9 @@ int main(int argc, char *argv[])
 	int exit_status = 1;
 	char serv_addr[PATH_MAX + 1];
 	char port[6]  = {'3','1','2','6', '\0', '\0'};
-	unsigned char buf[1024];
 	int c;
 
 	char pkcs12_f[PATH_MAX + 1];
-	unsigned int verify_status;
 
 	struct sockaddr_in local_addr;
 	socklen_t local_addr_len;
@@ -133,8 +131,6 @@ int main(int argc, char *argv[])
 	int ctrl_sock = -1;
 
 	int ret;
-	bool is_ok;
-
 
 	struct iprohc_client_session client;
 
@@ -247,9 +243,17 @@ int main(int argc, char *argv[])
 				strncpy(client.up_script_path, optarg, PATH_MAX);
 				break;
 			case 'k':
-				client.packing = atoi(optarg);
-				trace(LOG_DEBUG, "Using forced packing : %d\n", client.packing);
+			{
+				const int num = atoi(optarg);
+				if(num < 0 || num > 10)
+				{
+					trace(LOG_ERR, "packing level must be in range [0;10]");
+					goto error;
+				}
+				client.packing = num;
+				trace(LOG_DEBUG, "Using forced packing: %zu\n", client.packing);
 				break;
+			}
 			case 'h':
 				usage();
 				goto error;
@@ -294,6 +298,9 @@ int main(int argc, char *argv[])
 	/*
 	 * Handle signals for stats and log
 	 */
+
+	signal(SIGHUP, SIG_IGN); /* used to stop client threads */
+	signal(SIGPIPE, SIG_IGN); /* don't stop if TCP connection was unexpectedly closed */
 
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGINT);
@@ -434,8 +441,10 @@ int main(int argc, char *argv[])
 	 * Initialize session context
 	 */
 
-	if(!iprohc_session_new(&(client.session), GNUTLS_CLIENT, client.tls_cred,
-	                       NULL, ctrl_sock, local_addr.sin_addr, remote_addr,
+	if(!iprohc_session_new(&(client.session), iprohc_client_send_conn_request,
+	                       handle_message, client_send_disconnect_msg, &client,
+	                       GNUTLS_CLIENT, client.tls_cred, NULL,
+	                       ctrl_sock, local_addr.sin_addr, remote_addr,
 	                       client.raw, client.tun, 0))
 	{
 		trace(LOG_ERR, "failed to init session context");
@@ -448,104 +457,15 @@ int main(int argc, char *argv[])
 
 
 	/*
-	 * TLS handshake
+	 * Start client thread
 	 */
 
-	/* Get rid of warning, it's a "bug" of GnuTLS
-	 * (cf. http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
-	gnutls_transport_set_ptr_nowarn(client.session.tls_session,
-	                                client.session.tcp_socket);
-
-	/* perform TLS handshake with server */
-	do
+	if(!iprohc_session_start(&(client.session)))
 	{
-		ret = gnutls_handshake(client.session.tls_session);
-	}
-	while(ret < 0 && gnutls_error_is_fatal(ret) == 0);
-	if(ret < 0)
-	{
-		trace(LOG_ERR, "TLS handshake failed : %s", gnutls_strerror(ret));
-		exit_status = 2;
+		trace(LOG_ERR, "failed to start tunnel thread");
 		goto free_session;
 	}
-	trace(LOG_INFO, "TLS handshake succeeded");
-
-	/* check server certificate */
-	if(gnutls_certificate_verify_peers2(client.session.tls_session, &verify_status) < 0)
-	{
-		trace(LOG_ERR, "TLS verify failed : %s", gnutls_strerror(ret));
-		exit_status = -3;
-		goto close_tls;
-	}
-
-	if((verify_status & GNUTLS_CERT_INVALID) &&
-	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
-	{
-		trace(LOG_ERR, "certificate cannot be verified (status %u)",
-		      verify_status);
-		if(verify_status & GNUTLS_CERT_REVOKED)
-		{
-			trace(LOG_ERR, " - Revoked certificate");
-		}
-		if(verify_status & GNUTLS_CERT_SIGNER_NOT_FOUND)
-		{
-			trace(LOG_ERR, " - Unable to trust certificate issuer");
-		}
-		if(verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
-		{
-			trace(LOG_ERR, " - Certificate issuer is not a CA");
-		}
-#ifdef GNUTLS_CERT_NOT_ACTIVATED
-		if(verify_status & GNUTLS_CERT_NOT_ACTIVATED)
-		{
-			trace(LOG_ERR, " - The certificate is not activated");
-		}
-#endif
-#ifdef GNUTLS_CERT_EXPIRED
-		if(verify_status & GNUTLS_CERT_EXPIRED)
-		{
-			trace(LOG_ERR, " - The certificate has expired");
-		}
-#endif
-		exit_status = -3;
-		goto close_tls;
-	}
-	trace(LOG_INFO, "client certificate accepted");
-
-	/* ask for connection to server */
-	{
-		unsigned char command[1024];
-		size_t command_len;
-		size_t tlv_len;
-
-		command[0] = C_CONNECT;
-		command_len = 1;
-
-		trace(LOG_INFO, "send connect message to server");
-		is_ok = gen_connrequest(client.packing, command + 1, &tlv_len);
-		if(!is_ok)
-		{
-			trace(LOG_ERR, "failed to generate the connect messsage for server");
-			goto close_tls;
-		}
-		command_len += tlv_len;
-
-		/* Emit a simple connect message */
-		size_t emitted_len = 0;
-		do
-		{
-			ret = gnutls_record_send(client.session.tls_session,
-			                         command + emitted_len,
-			                         command_len - emitted_len);
-			if(ret < 0)
-			{
-				trace(LOG_ERR, "failed to send message to server over TLS (%d)", ret);
-				goto close_tls;
-			}
-			emitted_len += ret;
-		}
-		while(emitted_len < command_len);
-	}
+	trace(LOG_INFO, "tunnel thread started");
 
 
 	/*
@@ -553,26 +473,17 @@ int main(int argc, char *argv[])
 	 */
 
 	/* Wait for answer and other messages, close when socket is close */
-	trace(LOG_INFO, "wait for connect answer from server");
 	is_client_alive = true;
 	while(is_client_alive)
 	{
-		size_t timeout_orig;
 		struct timeval timeout;
 		int max_fd = 0;
 		fd_set rdfs;
 
-		timeout_orig = 80;
-		if(client.session.status == IPROHC_SESSION_CONNECTED)
-		{
-			timeout_orig = client.session.tunnel.params.keepalive_timeout * 2;
-		}
-		timeout.tv_sec = timeout_orig;
+		timeout.tv_sec = 600;
 		timeout.tv_usec = 0;
 
 		FD_ZERO(&rdfs);
-		FD_SET(client.session.tcp_socket, &rdfs);
-		max_fd = max(client.session.tcp_socket, max_fd);
 		FD_SET(signal_fd, &rdfs);
 		max_fd = max(signal_fd, max_fd);
 
@@ -585,14 +496,11 @@ int main(int argc, char *argv[])
 				continue;
 			}
 			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
-			goto close_tls;
+			goto stop_session;
 		}
 		else if(ret == 0)
 		{
-			/* timeout reached */
-			trace(LOG_WARNING, "timeout (%zu seconds) reached while waiting for "
-			      "message on TCP connection, give up", timeout_orig);
-			goto close_tls;
+			continue;
 		}
 
 		/* UNIX signal received? */
@@ -645,42 +553,22 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
-
-		if(FD_ISSET(client.session.tcp_socket, &rdfs))
-		{
-			ret = gnutls_record_recv(client.session.tls_session, buf, 1024);
-			if(ret < 0)
-			{
-				trace(LOG_ERR, "failed to receive data from server on TLS "
-				      "session: %s (%d)", gnutls_strerror(ret), ret);
-				goto close_tls;
-			}
-			else if(ret == 0)
-			{
-				trace(LOG_ERR, "TLS session was interrupted by server");
-				goto close_tls;
-			}
-			if(!handle_message(&client, buf, ret))
-			{
-				trace(LOG_ERR, "failed to handle message received from server");
-				goto close_tls;
-			}
-		}
 	}
 
 	trace(LOG_INFO, "client interrupted, interrupt established session");
 
-	/* send disconnect message to server */
-	if(!client_send_disconnect_msg(client.session.tls_session))
-	{
-		trace(LOG_WARNING, "failed to cleanly close the session with server");
-	}
-
 	exit_status = 0;
 
-close_tls:
-	trace(LOG_INFO, "close TLS session");
-	gnutls_bye(client.session.tls_session, GNUTLS_SHUT_RDWR);
+stop_session:
+	trace(LOG_INFO, "stop session");
+	if(!iprohc_session_stop(&(client.session)))
+	{
+		trace(LOG_ERR, "failed to stop session");
+	}
+	if(!iprohc_tunnel_free(&(client.session.tunnel)))
+	{
+		trace(LOG_ERR, "failed to reset tunnel context");
+	}
 free_session:
 	trace(LOG_INFO, "close session");
 	if(!iprohc_session_free(&(client.session)))

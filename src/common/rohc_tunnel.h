@@ -62,6 +62,8 @@ struct statitics
 /* Stucture defining a tunnel */
 struct iprohc_tunnel
 {
+	bool is_init; /**< Whether the tunnel is defined or not */
+
 	/* input and output RAW sockets may be different sockets */
 	int raw_socket_in;   /**< The RAW socket for receiving data from remote endpoint */
 	int raw_socket_out;  /**< The RAW socket towards the remote endpoint */

@@ -34,10 +34,5 @@ int new_client(const int conn,
 void del_client(struct iprohc_server_session *const client)
 	__attribute__((nonnull(1)));
 
-int  start_client_tunnel(struct iprohc_server_session *const client);
-
-void stop_client_tunnel(struct iprohc_server_session *const client)
-	__attribute__((nonnull(1)));
-
 #endif
 

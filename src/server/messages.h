@@ -17,18 +17,18 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "server_session.h"
 
-/** Print in logs a trace related to the given client */
-#define client_trace(client, prio, format, ...) \
+/** Print in logs a trace related to the given session */
+#define session_trace(session, prio, format, ...) \
 	do \
 	{ \
 		trace((prio), "[client %s] " format, \
-		      (client).session.dst_addr_str, ##__VA_ARGS__); \
+		      (session)->dst_addr_str, ##__VA_ARGS__); \
 	} \
 	while(0)
 
-/** Print in logs a trace related to the given client */
-#define client_tracep(clientp, prio, format, ...) \
-	client_trace(*(clientp), prio, format, ##__VA_ARGS__)
 
-int handle_client_request(struct iprohc_server_session *const client);
+bool handle_client_request(struct iprohc_session *const session,
+                           const uint8_t *const msg,
+                           const size_t len)
+	__attribute__((warn_unused_result, nonnull(1, 2)));
 

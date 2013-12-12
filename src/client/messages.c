@@ -31,21 +31,70 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 /* Handlers of differents messages types */
 static bool handle_okconnect(struct iprohc_client_session *const client,
-                             unsigned char *const data,
+                             const unsigned char *const data,
                              const size_t data_len,
                              size_t *const parsed_len)
 	__attribute__((nonnull(1, 2, 4), warn_unused_result));
 
 
-/* Generic functions for handling messages */
-bool handle_message(struct iprohc_client_session *const client,
-						  unsigned char *const buf,
-						  const int length)
+bool iprohc_client_send_conn_request(struct iprohc_session *const session)
 {
+	struct iprohc_client_session *client;
+	unsigned char command[1024];
+	size_t command_len;
+	size_t tlv_len;
+	bool is_ok;
+
+	assert(session != NULL);
+	client = (struct iprohc_client_session *) session->handle_ctrl_opaque;
+
+	command[0] = C_CONNECT;
+	command_len = 1;
+
+	trace(LOG_INFO, "send connect message to remote peer");
+	is_ok = gen_connrequest(client->packing, command + 1, &tlv_len);
+	if(!is_ok)
+	{
+		trace(LOG_ERR, "failed to generate the connect messsage for remote peer");
+		goto error;
+	}
+	command_len += tlv_len;
+
+	/* Emit a simple connect message */
+	size_t emitted_len = 0;
+	do
+	{
+		const int ret = gnutls_record_send(session->tls_session,
+		                                   command + emitted_len,
+		                                   command_len - emitted_len);
+		if(ret < 0)
+		{
+			trace(LOG_ERR, "failed to send message to remote peer over TLS (%d)",
+			      ret);
+			goto error;
+		}
+		emitted_len += ret;
+	}
+	while(emitted_len < command_len);
+
+	return true;
+
+error:
+	return false;
+}
+
+
+/* Generic functions for handling messages */
+bool handle_message(struct iprohc_session *const session,
+						  const uint8_t *const buf,
+						  const size_t length)
+{
+	struct iprohc_client_session *client;
 	size_t parsed_len;
 	size_t i;
 
-	assert(client != NULL);
+	assert(session != NULL);
+	client = (struct iprohc_client_session *) session->handle_ctrl_opaque;
 	assert(buf != NULL);
 	assert(length > 0);
 
@@ -63,8 +112,8 @@ bool handle_message(struct iprohc_client_session *const client,
 				parsed_len++;
 
 				/* TODO: give remaining length */
-				is_ok = handle_okconnect(client, buf + i + 1,
-				                         length - i - 1, &tlv_len);
+				is_ok = handle_okconnect(client, buf + i + 1, length - i - 1,
+				                         &tlv_len);
 				if(!is_ok)
 				{
 					trace(LOG_ERR, "failed to handle CONNECT_OK message from "
@@ -78,13 +127,15 @@ bool handle_message(struct iprohc_client_session *const client,
 
 			case C_KEEPALIVE:
 			{
+				const char command[1] = { C_KEEPALIVE };
+
 				trace(LOG_DEBUG, "Received keepalive");
-				gettimeofday(&(client->session.last_activity), NULL);
 				parsed_len++;
+
 				/* send keepalive */
-				char command[1] = { C_KEEPALIVE };
 				trace(LOG_DEBUG, "Keepalive !");
-				gnutls_record_send(client->session.tls_session, command, 1);
+				gnutls_record_send(session->tls_session, command, 1);
+
 				break;
 			}
 
@@ -113,19 +164,17 @@ error:
 
 /* Handler of okconnect message from server */
 static bool handle_okconnect(struct iprohc_client_session *const client,
-                             unsigned char *const data,
+                             const unsigned char *const data,
                              const size_t data_len,
                              size_t *const parsed_len)
 {
 	struct in_addr debug_addr;
-	pthread_t tunnel_thread;
 	struct tunnel_params tp;
 	char message[1] = { C_CONNECT_DONE };
 
 	int pid;
 	int status;
 	bool is_ok;
-	int ret;
 
 	assert(client != NULL);
 	assert(data != NULL);
@@ -180,19 +229,9 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 		goto free_tunnel;
 	}
 
-	/* Go thread, go ! */
-	trace(LOG_INFO, "run tunnel thread for new client");
-	ret = pthread_create(&tunnel_thread, NULL, iprohc_tunnel_run,
-	                     &(client->session));
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "failed to run tunnel thread for new client: %s (%d)",
-				strerror(ret), ret);
-		goto free_tunnel;
-	}
-
 	gnutls_record_send(client->session.tls_session, message, 1);
 
+	trace(LOG_INFO, "session is now fully established");
 	client->session.status = IPROHC_SESSION_CONNECTED;
 
 	/* up script */
@@ -237,7 +276,7 @@ error:
 }
 
 
-bool client_send_disconnect_msg(gnutls_session_t session)
+bool client_send_disconnect_msg(struct iprohc_session *const session)
 {
 	unsigned char command[1];
 	size_t command_len;
@@ -256,7 +295,8 @@ bool client_send_disconnect_msg(gnutls_session_t session)
 	emitted_len = 0;
 	do
 	{
-		ret = gnutls_record_send(session, command + emitted_len,
+		ret = gnutls_record_send(session->tls_session,
+		                         command + emitted_len,
 										 command_len - emitted_len);
 		if(ret < 0)
 		{

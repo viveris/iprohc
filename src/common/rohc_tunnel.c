@@ -106,6 +106,8 @@ int tun2raw(struct rohc_comp *comp,
             size_t *const packing_cur_pkts,
             struct statitics *stats);
 
+static void gnutls_transport_set_ptr_nowarn(gnutls_session_t session, int ptr);
+
 
 /*
  * Main functions
@@ -249,6 +251,7 @@ bool iprohc_tunnel_new(struct iprohc_tunnel *const tunnel,
 		goto destroy_decomp;
 	}
 
+	tunnel->is_init = true;
 	return true;
 
 destroy_decomp:
@@ -271,26 +274,32 @@ error:
  */
 bool iprohc_tunnel_free(struct iprohc_tunnel *const tunnel)
 {
-	/* free the ROHC compressor and decompressor */
-	rohc_decomp_free(tunnel->decomp);
-	rohc_comp_free(tunnel->comp);
+	if(tunnel->is_init)
+	{
+		/* free the ROHC compressor and decompressor */
+		rohc_decomp_free(tunnel->decomp);
+		rohc_comp_free(tunnel->comp);
 
-	/* reset RAW sockets and TUN fds */
-	tunnel->tun_fd_in = -1;
-	tunnel->tun_fd_out = -1;
-	tunnel->raw_socket_in = -1;
-	tunnel->raw_socket_out = -1;
+		/* reset RAW sockets and TUN fds: do not close them, they are shared with
+		 * other clients */
+		tunnel->tun_fd_in = -1;
+		tunnel->tun_fd_out = -1;
+		tunnel->raw_socket_in = -1;
+		tunnel->raw_socket_out = -1;
 
-	/* device MTU */
-	tunnel->tun_itf_mtu = 0;
-	tunnel->basedev_mtu = 0;
+		/* device MTU */
+		tunnel->tun_itf_mtu = 0;
+		tunnel->basedev_mtu = 0;
 
-	/* no more parameter */
-	memset(&tunnel->params, 0, sizeof(struct tunnel_params));
+		/* no more parameter */
+		memset(&tunnel->params, 0, sizeof(struct tunnel_params));
 
-	/* reset stats */
-	free(tunnel->stats.stats_packing);
-	memset(&tunnel->stats, 0, sizeof(struct statitics));
+		/* reset stats */
+		free(tunnel->stats.stats_packing);
+		memset(&tunnel->stats, 0, sizeof(struct statitics));
+
+		tunnel->is_init = false;
+	}
 
 	return true;
 }
@@ -314,132 +323,285 @@ void * iprohc_tunnel_run(void *arg)
 	struct iprohc_session *const session = (struct iprohc_session *) arg;
 	struct iprohc_tunnel *const tunnel = &(session->tunnel);
 
-	int failure = 0;
-	iprohc_session_status_t session_status;
+	unsigned int verify_status;
 
-	fd_set readfds;
-	struct timespec timeout;
-	sigset_t sigmask;
+	int failure = 0;
+	int ret;
 
 	struct timeval now;
 	struct timeval last;
 	bool is_last_init = false;
 
-	int kp_timeout   = tunnel->params.keepalive_timeout;
-
-	int ret;
-
-	const size_t packing_max_len = tunnel->basedev_mtu - sizeof(struct iphdr);
 	size_t packing_cur_len = 0;  /* number of packed bytes */
-	const size_t packing_max_pkts = tunnel->params.packing;
 	size_t packing_cur_pkts = 0;  /* number of packed frames */
 
 	/* TODO : Check assumed present attributes
 	   (thread, local_address, dest_address, tun, fake_tun, raw_socket) */
 
-	ret = pthread_mutex_lock(&(session->client_lock));
-	if(ret != 0)
-	{
-		tunnel_trace(session, LOG_ERR, "failed to acquire client_lock for client");
-		assert(0);
-		goto error;
-	}
-
-	/* poll network interfaces each 200 ms */
-	timeout.tv_sec = 0;
-	timeout.tv_nsec = 200 * 1000 * 1000;
-
-	/* mask signals during interface polling */
-	sigemptyset(&sigmask);
-	sigaddset(&sigmask, SIGKILL);
-	sigaddset(&sigmask, SIGTERM);
-	sigaddset(&sigmask, SIGINT);
+	tunnel_trace(session, LOG_INFO, "start of thread");
 
 	/* initialize the last time we sent a packet */
-	ret = pthread_mutex_lock(&session->status_lock);
-	if(ret != 0)
-	{
-		tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
-		assert(0);
-		goto unlock;
-	}
 	gettimeofday(&(session->last_activity), NULL);
-	session->status = IPROHC_SESSION_CONNECTED;
-	session_status = session->status;
-	ret = pthread_mutex_unlock(&session->status_lock);
-	if(ret != 0)
-	{
-		tunnel_trace(session, LOG_ERR, "failed to release lock for client");
-		assert(0);
-		goto unlock;
-	}
 
+	/* Get rid of warning, it's a "bug" of GnuTLS
+	 * (see http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
+	gnutls_transport_set_ptr_nowarn(session->tls_session, session->tcp_socket);
+
+	/* perform TLS handshake */
 	do
 	{
+		ret = gnutls_handshake(session->tls_session);
+	}
+	while(ret < 0 && gnutls_error_is_fatal(ret) == 0);
+	if(ret < 0)
+	{
+		tunnel_trace(session, LOG_ERR, "TLS handshake failed: %s (%d)",
+		             gnutls_strerror(ret), ret);
+		goto error;
+	}
+	tunnel_trace(session, LOG_INFO, "TLS handshake succeeded");
+
+	/* check the peer certificate */
+	ret = gnutls_certificate_verify_peers2(session->tls_session, &verify_status);
+	if(ret < 0)
+	{
+		tunnel_trace(session, LOG_ERR, "TLS verify failed: %s (%d)",
+		             gnutls_strerror(ret), ret);
+		goto tls_bye;
+	}
+	if((verify_status & GNUTLS_CERT_INVALID) &&
+	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
+	{
+		tunnel_trace(session, LOG_ERR, "certificate cannot be verified "
+		             "(status %u)", verify_status);
+		if(verify_status & GNUTLS_CERT_REVOKED)
+		{
+			tunnel_trace(session, LOG_ERR, "- revoked certificate");
+		}
+		if(verify_status & GNUTLS_CERT_SIGNER_NOT_FOUND)
+		{
+			tunnel_trace(session, LOG_ERR, "- unable to trust certificate issuer");
+		}
+		if(verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
+		{
+			tunnel_trace(session, LOG_ERR, "- certificate issuer is not a CA");
+		}
+#ifdef GNUTLS_CERT_NOT_ACTIVATED
+		if(verify_status & GNUTLS_CERT_NOT_ACTIVATED)
+		{
+			tunnel_trace(session, LOG_ERR, "- the certificate is not activated");
+		}
+#endif
+#ifdef GNUTLS_CERT_EXPIRED
+		if(verify_status & GNUTLS_CERT_EXPIRED)
+		{
+			tunnel_trace(session, LOG_ERR, "- the certificate has expired");
+		}
+#endif
+		goto tls_bye;
+	}
+	trace(LOG_INFO, "remote certificate accepted");
+
+	/* send initial control message to remote peer if asked to do so */
+	if(session->start_ctrl != NULL)
+	{
+		if(!session->start_ctrl(session))
+		{
+			tunnel_trace(session, LOG_ERR, "failed to send initial control "
+			             "message to remote peer");
+			goto tls_bye;
+		}
+	}
+
+	/* main loop of client */
+	do
+	{
+		fd_set readfds;
+		size_t timeout_orig;
+		struct timeval timeout;
+		int max_fd = 0;
 		int ret;
 
-		/* poll the read sockets/file descriptors */
-		FD_ZERO(&readfds);
-		FD_SET(tunnel->tun_fd_in, &readfds);
-		FD_SET(tunnel->raw_socket_in, &readfds);
+		/* wait at most twice the keepalive timeout */
+		timeout_orig = 80;
+		if(session->status == IPROHC_SESSION_CONNECTED)
+		{
+			timeout_orig = session->tunnel.params.keepalive_timeout * 2;
+		}
+		timeout.tv_sec = timeout_orig;
+		timeout.tv_usec = 0;
 
-		ret = pselect(max(tunnel->tun_fd_in, tunnel->raw_socket_in) + 1, &readfds,
-		              NULL, NULL, &timeout, &sigmask);
+		/* sockets and file descriptors to monitor */
+		FD_ZERO(&readfds);
+		/* read side of the pipe */
+		FD_SET(session->p2c[0], &readfds);
+		max_fd = max(session->p2c[0], max_fd);
+		/* TCP socket */
+		FD_SET(session->tcp_socket, &readfds);
+		max_fd = max(session->tcp_socket, max_fd);
+		/* keepalive timer */
+		FD_SET(session->keepalive_timer_fd, &readfds);
+		max_fd = max(session->keepalive_timer_fd, max_fd);
+		if(session->status == IPROHC_SESSION_CONNECTED)
+		{
+			/* TUN interface */
+			FD_SET(tunnel->tun_fd_in, &readfds);
+			max_fd = max(tunnel->tun_fd_in, max_fd);
+			/* RAW socket */
+			FD_SET(tunnel->raw_socket_in, &readfds);
+			max_fd = max(tunnel->raw_socket_in, max_fd);
+		}
+
+		ret = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
 		if(ret < 0)
 		{
-			tunnel_trace(session, LOG_ERR, "pselect failed: %s (%d)",
+			tunnel_trace(session, LOG_ERR, "select failed: %s (%d)",
 			             strerror(errno), errno);
 			failure = 1;
-
-			ret = pthread_mutex_lock(&session->status_lock);
-			if(ret != 0)
-			{
-				tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
-				assert(0);
-				goto unlock;
-			}
 			session->status = IPROHC_SESSION_PENDING_DELETE;
-			ret = pthread_mutex_unlock(&session->status_lock);
-			if(ret != 0)
+			goto tls_bye;
+		}
+		else if(ret == 0)
+		{
+			/* no event occurred */
+			tunnel_trace(session, LOG_DEBUG, "select: no event occurred");
+			continue;
+		}
+
+		/* stop thread if main thread closed the write side of the pipe */
+		if(FD_ISSET(session->p2c[0], &readfds))
+		{
+			session->status = IPROHC_SESSION_PENDING_DELETE;
+			goto tls_bye;
+		}
+
+		/* event on control channel? */
+		if(FD_ISSET(session->tcp_socket, &readfds))
+		{
+			const size_t max_msg_len = 1024;
+			unsigned char msg[max_msg_len];
+			size_t msg_len;
+			int ret;
+
+			tunnel_trace(session, LOG_DEBUG, "read on control socket");
+			ret = gnutls_record_recv(session->tls_session, msg, max_msg_len);
+			if(ret < 0)
 			{
-				tunnel_trace(session, LOG_ERR, "failed to release lock for client");
-				assert(0);
-				goto unlock;
+				tunnel_trace(session, LOG_ERR, "failed to receive data from remote "
+				             "peer on TLS session: %s (%d)", gnutls_strerror(ret), ret);
+				session->status = IPROHC_SESSION_PENDING_DELETE;
+				goto tls_bye;
+			}
+			else if(ret == 0)
+			{
+				tunnel_trace(session, LOG_ERR, "TLS session was interrupted by "
+				             "remote peer");
+				session->status = IPROHC_SESSION_PENDING_DELETE;
+				goto tls_bye;
+			}
+			msg_len = ret;
+			tunnel_trace(session, LOG_DEBUG, "[thread] received %zu byte(s) on TCP socket",
+			             msg_len);
+
+			/* handle request */
+			if(!session->handle_ctrl_msg(session, msg, msg_len))
+			{
+				if(session->status == IPROHC_SESSION_CONNECTED)
+				{
+					tunnel_trace(session, LOG_NOTICE, "client was disconnected");
+					session->status = IPROHC_SESSION_PENDING_DELETE;
+					goto tls_bye;
+				}
+				else if(session->status == IPROHC_SESSION_CONNECTING)
+				{
+					tunnel_trace(session, LOG_NOTICE, "client failed to connect");
+					session->status = IPROHC_SESSION_PENDING_DELETE;
+					goto tls_bye;
+				}
+				assert(0); /* should not happen */
+			}
+			else if(session->status == IPROHC_SESSION_PENDING_DELETE)
+			{
+				tunnel_trace(session, LOG_INFO, "session closed");
+				continue;
+			}
+			else
+			{
+				/* refresh last activity timestamp */
+				gettimeofday(&(session->last_activity), NULL);
+
+				/* re-arm keepalive timer */
+				if(!iprohc_session_update_keepalive(session,
+				                                    tunnel->params.keepalive_timeout))
+				{
+					tunnel_trace(session, LOG_ERR, "failed to update the keepalive "
+					      "timeout to %zu seconds", tunnel->params.keepalive_timeout);
+					session->status = IPROHC_SESSION_PENDING_DELETE;
+					goto tls_bye;
+				}
 			}
 		}
-		else if(ret > 0)
-		{
-			tunnel_trace(session, LOG_DEBUG, "packet received...");
 
-			/* bridge from TUN to RAW */
-			if(FD_ISSET(tunnel->tun_fd_in, &readfds))
+		/* send keepalive in case there is too few activity on control channel */
+		if(FD_ISSET(session->keepalive_timer_fd, &readfds))
+		{
+			const char command[1] = { C_KEEPALIVE };
+			uint64_t keepalive_timer_nr;
+
+			ret = read(session->keepalive_timer_fd, &keepalive_timer_nr,
+			           sizeof(uint64_t));
+			if(ret < 0)
 			{
-				tunnel_trace(session, LOG_DEBUG, "...from tun");
-				failure = tun2raw(tunnel->comp, tunnel->tun_fd_in,
-				                  tunnel->raw_socket_out, session->dst_addr,
-				                  tunnel->basedev_mtu, tunnel->packing_frame,
-				                  packing_max_len, &packing_cur_len,
-				                  packing_max_pkts, &packing_cur_pkts,
-				                  &(tunnel->stats));
-				gettimeofday(&last, NULL);
-				is_last_init = true;
-				if(failure)
-				{
-					tunnel_trace(session, LOG_NOTICE, "tun2raw failed");
-				}
+				tunnel_trace(session, LOG_ERR, "failed to read keepalive timer: "
+				             "%s (%d)", strerror(errno), errno);
+				session->status = IPROHC_SESSION_PENDING_DELETE;
+				goto tls_bye;
+			}
+			else if(ret != sizeof(uint64_t))
+			{
+				tunnel_trace(session, LOG_ERR, "failed to read keepalive timer: "
+				             "received %d bytes while expecting %zu bytes",
+				             ret, sizeof(uint64_t));
+				session->status = IPROHC_SESSION_PENDING_DELETE;
+				goto tls_bye;
 			}
 
-			/* bridge from RAW to TUN */
-			if(FD_ISSET(tunnel->raw_socket_in, &readfds))
+			trace(LOG_DEBUG, "send a keepalive command");
+			gnutls_record_send(session->tls_session, command, 1);
+		}
+
+		/* bridge from TUN to RAW */
+		if(session->status == IPROHC_SESSION_CONNECTED &&
+		   FD_ISSET(tunnel->tun_fd_in, &readfds))
+		{
+			const size_t packing_max_len = tunnel->basedev_mtu - sizeof(struct iphdr);
+
+			tunnel_trace(session, LOG_DEBUG, "received data from tun");
+			failure = tun2raw(tunnel->comp, tunnel->tun_fd_in,
+			                  tunnel->raw_socket_out, session->dst_addr,
+			                  tunnel->basedev_mtu, tunnel->packing_frame,
+			                  packing_max_len, &packing_cur_len,
+			                  tunnel->params.packing, &packing_cur_pkts,
+			                  &(tunnel->stats));
+			gettimeofday(&last, NULL);
+			is_last_init = true;
+			if(failure)
 			{
-				tunnel_trace(session, LOG_DEBUG, "...from raw");
-				failure = raw2tun(tunnel->decomp, session->src_addr.s_addr,
-				                  tunnel->raw_socket_in, tunnel->tun_fd_out,
-				                  tunnel->basedev_mtu, &(tunnel->stats));
-				if(failure)
-				{
-					tunnel_trace(session, LOG_NOTICE, "raw2tun failed");
-				}
+				tunnel_trace(session, LOG_NOTICE, "tun2raw failed");
+			}
+		}
+
+		/* bridge from RAW to TUN */
+		if(session->status == IPROHC_SESSION_CONNECTED &&
+		   FD_ISSET(tunnel->raw_socket_in, &readfds))
+		{
+			tunnel_trace(session, LOG_DEBUG, "received data from raw");
+			failure = raw2tun(tunnel->decomp, session->src_addr.s_addr,
+			                  tunnel->raw_socket_in, tunnel->tun_fd_out,
+			                  tunnel->basedev_mtu, &(tunnel->stats));
+			if(failure)
+			{
+				tunnel_trace(session, LOG_NOTICE, "raw2tun failed");
 			}
 		}
 
@@ -463,56 +625,38 @@ void * iprohc_tunnel_run(void *arg)
 			}
 		}
 
-		ret = pthread_mutex_lock(&session->status_lock);
-		if(ret != 0)
-		{
-			tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
-			assert(0);
-			goto unlock;
-		}
-		if(now.tv_sec > session->last_activity.tv_sec + kp_timeout)
+		if(now.tv_sec > session->last_activity.tv_sec + tunnel->params.keepalive_timeout)
 		{
 			tunnel_trace(session, LOG_ERR, "keepalive timeout detected "
-			             "(%ld > %ld + %d), disconnect client", now.tv_sec,
-			             session->last_activity.tv_sec, kp_timeout);
+			             "(%ld > %ld + %zu), disconnect client", now.tv_sec,
+			             session->last_activity.tv_sec,
+			             tunnel->params.keepalive_timeout);
 			session->status = IPROHC_SESSION_PENDING_DELETE;
 		}
-		ret = pthread_mutex_unlock(&session->status_lock);
-		if(ret != 0)
-		{
-			tunnel_trace(session, LOG_ERR, "failed to release lock for client");
-			assert(0);
-			goto unlock;
-		}
-
-		ret = pthread_mutex_lock(&session->status_lock);
-		if(ret != 0)
-		{
-			tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
-			assert(0);
-			goto unlock;
-		}
-		session_status = session->status;
-		ret = pthread_mutex_unlock(&session->status_lock);
-		if(ret != 0)
-		{
-			tunnel_trace(session, LOG_ERR, "failed to release lock for client");
-			assert(0);
-			goto unlock;
-		}
 	}
-	while(session_status == IPROHC_SESSION_CONNECTED);
+	while(session->status >= IPROHC_SESSION_CONNECTING);
 
 	tunnel_trace(session, LOG_INFO, "client thread was asked to stop");
 
-unlock:
-	ret = pthread_mutex_unlock(&(session->client_lock));
-	if(ret != 0)
+	/* send final control message to remote peer if asked to do so */
+	if(session->stop_ctrl != NULL)
 	{
-		tunnel_trace(session, LOG_ERR, "failed to release client_lock for client");
-		assert(0);
+		if(!session->stop_ctrl(session))
+		{
+			tunnel_trace(session, LOG_ERR, "failed to send final control "
+			             "message to remote peer");
+			goto tls_bye;
+		}
 	}
+
+tls_bye:
+	/* close TLS session */
+	tunnel_trace(session, LOG_INFO, "close TLS session");
+	gnutls_bye(session->tls_session, GNUTLS_SHUT_WR);
 error:
+	tunnel_trace(session, LOG_INFO, "end of thread");
+	session->status = IPROHC_SESSION_PENDING_DELETE;
+	AO_store_release_write(&(session->is_thread_running), 0);
 	return NULL;
 }
 
@@ -1136,4 +1280,19 @@ bool callback_rtp_detect(const unsigned char *const ip,
 not_rtp:
 	return is_rtp;
 }
+
+
+#if defined __GNUC__
+#pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
+#endif
+
+static void gnutls_transport_set_ptr_nowarn(gnutls_session_t session, int ptr)
+{
+	return gnutls_transport_set_ptr(session, (gnutls_transport_ptr_t) ptr);
+}
+
+#if defined __GNUC__
+#pragma GCC diagnostic error "-Wint-to-pointer-cast"
+#endif
+
 

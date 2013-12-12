@@ -27,14 +27,13 @@
 #include "session.h"
 
 #include <stdbool.h>
+#include <atomic_ops.h>
 
 /** The context of the client session at server */
 struct iprohc_server_session
 {
-	bool is_init;                   /**< Whether the client session is used or not */
+	volatile AO_t is_init;          /**< Whether the client session is used or not */
 	struct iprohc_session session;  /**< The generic session context */
-
-	int packing;                    /** The packing level enforced by client */
 
 	int fake_raw[2];                /**< Fake RAW device for server side */
 	int fake_tun[2];                /**< Fake TUN device for server side */

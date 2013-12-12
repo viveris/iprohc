@@ -24,35 +24,23 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <assert.h>
 
 
-static bool handle_connect(struct iprohc_server_session *const client,
+static bool handle_connect(struct iprohc_session *const session,
                            const unsigned char *const message,
                            const size_t message_len,
                            size_t *const parsed_len)
 	__attribute__((warn_unused_result, nonnull(1, 2, 4)));
 
 
-int handle_client_request(struct iprohc_server_session *const client)
+bool handle_client_request(struct iprohc_session *const session,
+                           const uint8_t *const msg,
+                           const size_t len)
 {
-	unsigned char buf[1024];
-	int length;
-	unsigned char *remain_data;
-	size_t remain_len;;
+	const unsigned char *remain_data;
+	size_t remain_len;
 	bool is_ok;
 
-	length = gnutls_record_recv(client->session.tls_session, buf, 1024);
-	if(length == 0)
-	{
-		return -1;
-	}
-	if(length < 0)
-	{
-		return -1;
-	}
-	client_tracep(client, LOG_DEBUG, "received %d bytes on TCP socket",
-	              length);
-
-	remain_data = buf;
-	remain_len = length;
+	remain_data = msg;
+	remain_len = len;
 	while(remain_len > 0)
 	{
 		uint8_t req_type;
@@ -67,42 +55,42 @@ int handle_client_request(struct iprohc_server_session *const client)
 			{
 				size_t parsed_len;
 
-				client_tracep(client, LOG_INFO, "connection request from client");
-				is_ok = handle_connect(client, remain_data, remain_len, &parsed_len);
+				session_trace(session, LOG_INFO, "connection request received from client");
+				is_ok = handle_connect(session, remain_data, remain_len, &parsed_len);
 				if(!is_ok)
 				{
-					return -1;
+					goto error;
 				}
 				remain_data += parsed_len;
 				remain_len -= parsed_len;
 				break;
 			}
 			case C_CONNECT_DONE:
-				client_tracep(client, LOG_INFO, "connection started by client");
-				if(start_client_tunnel(client) < 0)
-				{
-					return -1;
-				}
+				session_trace(session, LOG_INFO, "client fully established session");
+				session->status = IPROHC_SESSION_CONNECTED;
 				break;
 			case C_KEEPALIVE:
-				client_tracep(client, LOG_DEBUG, "received keepalive from client");
+				session_trace(session, LOG_DEBUG, "keepalive received from client");
 				break;
 			case C_DISCONNECT:
-				client_tracep(client, LOG_INFO, "disconnection asked by client");
-				stop_client_tunnel(client);
+				session_trace(session, LOG_INFO, "disconnection asked by client");
+				session->status = IPROHC_SESSION_PENDING_DELETE;
 				break;
 			default:
-				client_tracep(client, LOG_WARNING, "unexpected command 0x%02x "
-				              "received from client", req_type);
-				return -1;
+				session_trace(session, LOG_WARNING, "unexpected command 0x%02x "
+				               "received from client", req_type);
+				goto error;
 		}
 	}
 
-	return 0;
+	return true;
+
+error:
+	return false;
 }
 
 
-static bool handle_connect(struct iprohc_server_session *const client,
+static bool handle_connect(struct iprohc_session *const session,
                            const unsigned char *const message,
                            const size_t message_len,
                            size_t *const parsed_len)
@@ -118,21 +106,21 @@ static bool handle_connect(struct iprohc_server_session *const client,
 	bool is_ok;
 	bool is_success = false;
 
-	assert(client != NULL);
+	assert(session != NULL);
 	assert(message != NULL);
 	assert(parsed_len != NULL);
 
 	*parsed_len = 0;
 	tlv_len = 0;
 
-	client_tracep(client, LOG_INFO, "connection asked, negotating parameters");
+	session_trace(session, LOG_INFO, "connection asked, negotating parameters");
 
 	/* parse connect message received from client */
 	is_ok = parse_connrequest(message, message_len, parsed_len, &packing,
 	                          &client_proto_version);
 	if(!is_ok)
 	{
-		client_tracep(client, LOG_ERR, "unable to parse connection request");
+		session_trace(session, LOG_ERR, "unable to parse connection request");
 
 		/* create failure answer for client */
 		tlv[0] = C_CONNECT_KO;
@@ -142,7 +130,7 @@ static bool handle_connect(struct iprohc_server_session *const client,
 	else if(client_proto_version != CURRENT_PROTO_VERSION)
 	{
 		/* Current behaviour as for proto version = 1 : refuse any other version */
-		client_tracep(client, LOG_WARNING, "connection refused because of wrong "
+		session_trace(session, LOG_WARNING, "connection refused because of wrong "
 		              "protocol version: %d received from client but %d expected",
 		              client_proto_version, CURRENT_PROTO_VERSION);
 
@@ -155,20 +143,31 @@ static bool handle_connect(struct iprohc_server_session *const client,
 	{
 		size_t len;
 
-		client_tracep(client, LOG_INFO, "connection asked, negotating parameters "
+		session_trace(session, LOG_INFO, "connection asked, negotating parameters "
 		              "(proto version = %d, asked packing = %d)",
 		              client_proto_version, packing);
-		client->packing = packing;
+		if(packing < 0 || packing > 10)
+		{
+			/* invalid packing value requested by client, don't use it */
+			session_trace(session, LOG_NOTICE, "ignore invalid packing level "
+			              "requested by client");
+		}
+		else if(packing != 0)
+		{
+			session_trace(session, LOG_INFO, "client asked for packing level %d",
+			              packing);
+			session->tunnel.params.packing = packing;
+		}
 
 		/* create successful answer for client */
 		tlv[0] = C_CONNECT_OK;
 		tlv_len++;
 
 		/* add parameters in TLV format */
-		is_ok = gen_connect(client->session.tunnel.params, tlv + 1, &len);
+		is_ok = gen_connect(session->tunnel.params, tlv + 1, &len);
 		if(!is_ok)
 		{
-			client_tracep(client, LOG_ERR, "failed to generate the connect "
+			session_trace(session, LOG_ERR, "failed to generate the connect "
 			              "message for client");
 			goto error;
 		}
@@ -177,7 +176,7 @@ static bool handle_connect(struct iprohc_server_session *const client,
 		is_success = true;
 	}
 
-	gnutls_record_send(client->session.tls_session, tlv, tlv_len);
+	gnutls_record_send(session->tls_session, tlv, tlv_len);
 
 	return is_success;
 

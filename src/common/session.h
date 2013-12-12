@@ -28,7 +28,11 @@
 
 #include <netinet/in.h>
 #include <pthread.h>
+#include <atomic_ops.h>
 #include <gnutls/gnutls.h>
+
+
+struct iprohc_session;
 
 
 /** The different session statuses */
@@ -38,6 +42,18 @@ typedef enum
 	IPROHC_SESSION_CONNECTING      = 1,  /**< The session is currently connecting */
 	IPROHC_SESSION_CONNECTED       = 2,  /**< The session successfully connected */
 } iprohc_session_status_t;
+
+
+typedef bool (*iprohc_session_start_t) (struct iprohc_session *const session)
+	__attribute__((warn_unused_result, nonnull(1)));
+
+typedef bool (*iprohc_session_handler_t) (struct iprohc_session *const session,
+                                          const uint8_t *const msg,
+                                          const size_t len)
+	__attribute__((warn_unused_result, nonnull(1, 2)));
+
+typedef bool (*iprohc_session_stop_t) (struct iprohc_session *const session)
+	__attribute__((warn_unused_result, nonnull(1)));
 
 
 /** The generic part of the session shared by server and client */
@@ -51,23 +67,22 @@ struct iprohc_session
 	char dst_addr_str[INET_ADDRSTRLEN];  /**< string representation of dst_addr */
 	struct in_addr src_addr;             /**< The IP address of the local endpoint */
 
-	struct iprohc_tunnel tunnel;   /**< The tunnel context */
-	pthread_t thread_tunnel;       /**< The thread that handle the session */
-	/**
-	 * @brief The client lock
-	 *
-	 * Protect the client context against deletion by main thread when used by
-	 * client thread
-	 */
-	pthread_mutex_t client_lock;
+	/** The handler for starting the control session */
+	iprohc_session_start_t start_ctrl;
+	/** The handler for received control messages */
+	iprohc_session_handler_t handle_ctrl_msg;
+	/** The handler for stopping the control session */
+	iprohc_session_start_t stop_ctrl;
+	/** The private data to give to the control message handler */
+	void *handle_ctrl_opaque;
 
-	/**
-	 * @brief The status lock
-	 *
-	 * Protect the client status and keepalive timestamp against concurrent
-	 * accesses by main thread and client thread.
-	 */
-	pthread_mutex_t status_lock;
+	struct iprohc_tunnel tunnel;   /**< The tunnel context */
+
+	int p2c[2];                      /**< The communication pipe between parent
+	                                      and child threads */
+	pthread_t thread_tunnel;         /**< The thread that handle the session */
+	volatile AO_t is_thread_running; /**< Whether the thread is running or not */
+
 	iprohc_session_status_t status;  /**< The session status */
 
 	struct timeval last_activity;  /**< The time at which last control message
@@ -78,6 +93,10 @@ struct iprohc_session
 
 
 bool iprohc_session_new(struct iprohc_session *const session,
+                        iprohc_session_start_t start_ctrl,
+                        iprohc_session_handler_t handle_ctrl_msg,
+                        iprohc_session_start_t stop_ctrl,
+                        void *const handle_ctrl_opaque,
                         const gnutls_connection_end_t tls_type,
                         gnutls_certificate_credentials_t tls_cred,
                         gnutls_priority_t priority_cache,
@@ -94,6 +113,12 @@ bool iprohc_session_free(struct iprohc_session *const session)
 
 bool iprohc_session_update_keepalive(struct iprohc_session *const session,
                                      const size_t timeout)
+	__attribute__((warn_unused_result, nonnull(1)));
+
+bool iprohc_session_start(struct iprohc_session *const session)
+	__attribute__((warn_unused_result, nonnull(1)));
+
+bool iprohc_session_stop(struct iprohc_session *const session)
 	__attribute__((warn_unused_result, nonnull(1)));
 
 #endif
