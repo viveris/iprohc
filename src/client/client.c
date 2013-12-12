@@ -555,7 +555,7 @@ int main(int argc, char *argv[])
 		else if(ret == 0)
 		{
 			/* timeout reached */
-			trace(LOG_WARNING, "timeout reached while waiting to message "
+			trace(LOG_WARNING, "timeout reached while waiting for message "
 			      "on TCP connection, give up");
 			goto close_tls;
 		}
