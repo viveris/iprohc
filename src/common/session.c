@@ -233,8 +233,8 @@ bool iprohc_session_update_keepalive(struct iprohc_session *const session,
 	}
 	else
 	{
-		trace(LOG_DEBUG, "[client %s] (re-)arm keepalive timer to %zu seconds",
-		      session->dst_addr_str, period.it_value.tv_sec);
+		trace(LOG_DEBUG, "[client %s] (re-)arm keepalive timer to %lu seconds",
+		      session->dst_addr_str, (unsigned long) period.it_value.tv_sec);
 	}
 
 	/* arm keepalive timer with the new value */
@@ -242,8 +242,8 @@ bool iprohc_session_update_keepalive(struct iprohc_session *const session,
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "[client %s] failed to arm keepalive timer with a "
-		      "%zu-second period: %s (%d)", session->dst_addr_str,
-		      period.it_value.tv_sec, strerror(errno), errno);
+		      "%lu-second period: %s (%d)", session->dst_addr_str,
+		      (unsigned long) period.it_value.tv_sec, strerror(errno), errno);
 		goto error;
 	}
 
@@ -256,7 +256,7 @@ error:
 
 /**
  * @brief Start the main loop of the session
- * 
+ *
  * @param session  A client session
  * @return         true if the session loop was successfully started,
  *                 false if a problem occurred
