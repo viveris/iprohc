@@ -113,6 +113,8 @@ static void usage(void)
 	       "Other options:\n"
 	       "  -c, --conf PATH     Path to configuration file\n"
 	       "                      (default: /etc/iprohc_server.conf)\n"
+	       "      --nofdlimit     Do not set the file descriptor limit\n"
+	       "                      (for use with Valgrind)\n"
 	       "  -d, --debug         Enable debuging\n"
 	       "  -h, --help          Print this help message\n"
 	       "  -v, --version       Print the software version\n"
@@ -153,6 +155,8 @@ int main(int argc, char *argv[])
 
 	struct iprohc_server_session *clients = NULL;
 	size_t clients_nr = 0;
+
+	bool nofdlimit = false;
 
 	size_t client_id;
 	int serv_socket;
@@ -217,17 +221,18 @@ int main(int argc, char *argv[])
 	server_opts.params.rohc_compat_version = 1;
 
 	struct option options[] = {
-		{ "conf",    required_argument, NULL, 'c' },
-		{ "basedev", required_argument, NULL, 'b' },
-		{ "debug",   no_argument,       NULL, 'd' },
-		{ "help",    no_argument,       NULL, 'h' },
-		{ "version", no_argument,       NULL, 'v' },
+		{ "conf",      required_argument, NULL, 'c' },
+		{ "basedev",   required_argument, NULL, 'b' },
+		{ "nofdlimit", no_argument,       NULL, 'n' },
+		{ "debug",     no_argument,       NULL, 'd' },
+		{ "help",      no_argument,       NULL, 'h' },
+		{ "version",   no_argument,       NULL, 'v' },
 		{NULL, 0, 0, 0}
 	};
 	int option_index = 0;
 	do
 	{
-		c = getopt_long(argc, argv, "c:b:hvd", options, &option_index);
+		c = getopt_long(argc, argv, "c:b:nhvd", options, &option_index);
 		switch(c)
 		{
 			case 'c':
@@ -249,6 +254,10 @@ int main(int argc, char *argv[])
 					goto error;
 				}
 				strncpy(server_opts.basedev, optarg, IFNAMSIZ);
+				break;
+			case 'n':
+				trace(LOG_NOTICE, "[main] option --nofdlimit specified");
+				nofdlimit = true;
 				break;
 			case 'd':
 				log_max_priority = LOG_DEBUG;
@@ -330,6 +339,7 @@ int main(int argc, char *argv[])
 	 * Set system limits
 	 */
 
+	if(!nofdlimit)
 	{
 		const size_t fds_nr_base = 20U;
 		const size_t fds_nr_per_client = 9U;
