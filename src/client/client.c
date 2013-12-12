@@ -531,6 +531,11 @@ int main(int argc, char *argv[])
 
 		timeout.tv_sec = 80;
 		timeout.tv_usec = 0;
+		if(client_session.session.status == IPROHC_SESSION_CONNECTED)
+		{
+			timeout.tv_sec = client_session.session.tunnel.params.keepalive_timeout * 2;
+			timeout.tv_usec = 0;
+		}
 
 		FD_ZERO(&rdfs);
 		FD_SET(client_session.session.tcp_socket, &rdfs);
