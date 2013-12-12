@@ -404,9 +404,23 @@ int main(int argc, char *argv[])
 	}
 	for(rp = result; rp != NULL; rp = rp->ai_next)
 	{
+		uint32_t raddr;
+
+		if(rp->ai_family != AF_INET)
+		{
+			trace(LOG_DEBUG, "skip address of unsupported family %d", rp->ai_family);
+			continue;
+		}
+		raddr = htonl(((struct sockaddr_in *) rp->ai_addr)->sin_addr.s_addr);
+		trace(LOG_DEBUG, "try to connect to server with IPv4 address "
+		      IPV4_ADDR_FMT, IPV4_ADDR(raddr));
+
 		ctrl_sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
 		if(ctrl_sock < 0)
 		{
+			trace(LOG_DEBUG, "failed to create socket to connect to server with "
+			      "IPv4 address " IPV4_ADDR_FMT ": %s (%d)", IPV4_ADDR(raddr),
+			      strerror(errno), errno);
 			continue;
 		}
 
@@ -415,6 +429,8 @@ int main(int argc, char *argv[])
 			break; /* success */
 		}
 		/* failure */
+		trace(LOG_DEBUG, "failed to connect to server with IPv4 address "
+		      IPV4_ADDR_FMT ": %s (%d)", IPV4_ADDR(raddr), strerror(errno), errno);
 		close(ctrl_sock);
 		ctrl_sock = -1;
 	}

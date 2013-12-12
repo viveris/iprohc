@@ -27,5 +27,13 @@
 /** return the greater value from the two */
 #define max(x, y)  (((x) > (y)) ? (x) : (y))
 
+/** The format string to print an IPv4 address */
+#define IPV4_ADDR_FMT  "%u.%u.%u.%u"
+
+/** The format arguments to print an IPv4 address (in host byte order) */
+#define IPV4_ADDR(x) \
+	((x) >> 24) & 0xff, ((x) >> 16) & 0xff, \
+	((x) >>  8) & 0xff, ((x) >>  0) & 0xff
+
 #endif
 
