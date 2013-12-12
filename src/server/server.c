@@ -48,16 +48,8 @@ static bool clients_do_dump_stats = false;
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
 
-
-static bool iprohc_server_handle_new_client(const int serv_sock,
-                                            struct iprohc_server_session *const clients,
-                                            size_t *const clients_nr,
-                                            const size_t clients_max_nr,
-                                            const int tun,
-                                            const size_t tun_itf_mtu,
-                                            const size_t basedev_mtu,
-                                            const struct server_opts server_opts)
-	__attribute__((warn_unused_result, nonnull(2, 3)));
+/** Server stays alive until alive becomes zero */
+static int alive;
 
 
 /*
@@ -74,198 +66,43 @@ struct route_args
 	enum type_route type;
 };
 
-/* Thread that will be called to monitor tun or raw and route */
-void * route(void*arg)
-{
-	/* Getting args */
-	const struct route_args *const _arg = (struct route_args *) arg;
-	int fd = _arg->fd;
-	struct iprohc_server_session *clients = _arg->clients;
-	size_t clients_max_nr = _arg->clients_max_nr;
-	enum type_route type = _arg->type;
+static void * route(void *arg);
 
-	int i;
-	int ret;
-	size_t len;
-
-	unsigned char buffer[TUNTAP_BUFSIZE];
-	unsigned int buffer_len = TUNTAP_BUFSIZE;
-
-	struct in_addr addr;
-
-	uint32_t*src_ip;
-	uint32_t*dest_ip;
-
-	trace(LOG_INFO, "Initializing routing thread\n");
-
-	while((ret = read(fd, buffer, buffer_len)))
-	{
-		if(ret < 0 || ret > buffer_len)
-		{
-			trace(LOG_ERR, "read failed: %s (%d)\n", strerror(errno), errno);
-			return NULL;
-		}
-		len = ret;
-		trace(LOG_DEBUG, "Read %zu bytes\n", len);
-
-		/* Get packet destination IP if tun or source IP if raw */
-		if(type == TUN)
-		{
-			dest_ip = (uint32_t*) &buffer[20];
-			addr.s_addr = *dest_ip;
-			trace(LOG_DEBUG, "Packet destination : %s\n", inet_ntoa(addr));
-		}
-		else
-		{
-			src_ip = (uint32_t*) &buffer[12];
-			addr.s_addr = *src_ip;
-			trace(LOG_DEBUG, "Packet source : %s\n", inet_ntoa(addr));
-		}
-
-		for(i = 0; i < clients_max_nr; i++)
-		{
-			/* Find associated client */
-			if(clients[i].is_init)
-			{
-				/* Send to fake raw or tun device */
-				if(type == TUN)
-				{
-					if(addr.s_addr == clients[i].session.local_address.s_addr)
-					{
-						ret = write(clients[i].session.tunnel.fake_tun[1], buffer, len);
-						if(ret < 0)
-						{
-							trace(LOG_WARNING, "failed to send %zu-byte packet to "
-							      "TUN interface: %s (%d)", len, strerror(errno),
-							      errno);
-						}
-						else if(ret != len)
-						{
-							trace(LOG_WARNING, "partial write: only %d bytes of the "
-							      "%zu-byte packet were sent to the TUN interface",
-							      ret, len);
-						}
-						break;
-					}
-				}
-				else
-				{
-					if(addr.s_addr == clients[i].session.tunnel.dest_address.s_addr)
-					{
-						ret = write(clients[i].session.tunnel.fake_raw[1], buffer, len);
-						if(ret < 0)
-						{
-							trace(LOG_WARNING, "failed to send %zu-byte packet to "
-							      "the underlying interface: %s (%d)", len,
-							      strerror(errno), errno);
-						}
-						else if(ret != len)
-						{
-							trace(LOG_WARNING, "partial write: only %d bytes of the "
-							      "%zu-byte packet were sent to the underlying "
-							      "interface", ret, len);
-						}
-						break;
-					}
-				}
-			}
-		}
-	}
-
-	return NULL;
-}
-
-
+static bool iprohc_server_handle_new_client(const int serv_sock,
+                                            struct iprohc_server_session *const clients,
+                                            size_t *const clients_nr,
+                                            const size_t clients_max_nr,
+                                            const int tun,
+                                            const size_t tun_itf_mtu,
+                                            const size_t basedev_mtu,
+                                            const struct server_opts server_opts)
+	__attribute__((warn_unused_result, nonnull(2, 3)));
+	
 static void dump_stats_client(struct iprohc_server_session *const client)
-{
-	int ret;
-
-	ret = pthread_mutex_lock(&client->session.status_lock);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "dump_stats_client: failed to acquire lock for client");
-		assert(0);
-		goto error;
-	}
-
-	client_tracep(client, LOG_INFO, "--------------------------------------------");
-	switch(client->session.status)
-	{
-		case IPROHC_SESSION_CONNECTING:
-			client_tracep(client, LOG_INFO, "status: connecting");
-			break;
-		case IPROHC_SESSION_CONNECTED:
-			client_tracep(client, LOG_INFO, "status: connected");
-			break;
-		case IPROHC_SESSION_PENDING_DELETE:
-			client_tracep(client, LOG_INFO, "status: pending delete");
-			break;
-		default:
-			client_tracep(client, LOG_INFO, "status: unknown (%d)",
-			              client->session.status);
-			break;
-	}
-	if(client->session.status == IPROHC_SESSION_CONNECTED)
-	{
-		int i;
-
-		client_tracep(client, LOG_INFO, "packing: %d", client->packing);
-		client_tracep(client, LOG_INFO, "stats:");
-		client_tracep(client, LOG_INFO, "  failed decompression:          %d",
-		              client->session.tunnel.stats.decomp_failed);
-		client_tracep(client, LOG_INFO, "  total  decompression:          %d",
-		              client->session.tunnel.stats.decomp_total);
-		client_tracep(client, LOG_INFO, "  failed compression:            %d",
-		              client->session.tunnel.stats.comp_failed);
-		client_tracep(client, LOG_INFO, "  total  compression:            %d",
-		              client->session.tunnel.stats.comp_total);
-		client_tracep(client, LOG_INFO, "  failed depacketization:        %d",
-		              client->session.tunnel.stats.unpack_failed);
-		client_tracep(client, LOG_INFO, "  total received packets on raw: %d",
-		              client->session.tunnel.stats.total_received);
-		client_tracep(client, LOG_INFO, "  total compressed header size:  %d bytes",
-		              client->session.tunnel.stats.head_comp_size);
-		client_tracep(client, LOG_INFO, "  total compressed packet size:  %d bytes",
-		              client->session.tunnel.stats.total_comp_size);
-		client_tracep(client, LOG_INFO, "  total header size before comp: %d bytes",
-		              client->session.tunnel.stats.head_uncomp_size);
-		client_tracep(client, LOG_INFO, "  total packet size before comp: %d bytes",
-		              client->session.tunnel.stats.total_uncomp_size);
-		client_tracep(client, LOG_INFO, "stats packing:");
-		for(i = 1; i < client->session.tunnel.stats.n_stats_packing; i++)
-		{
-			client_tracep(client, LOG_INFO, "  %d packets: %d", i,
-			              client->session.tunnel.stats.stats_packing[i]);
-		}
-	}
-	client_tracep(client, LOG_INFO, "--------------------------------------------");
-
-	ret = pthread_mutex_unlock(&client->session.status_lock);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "dump_stats_client: failed to acquire lock for client");
-		assert(0);
-		goto error;
-	}
-
-error:
-	;
-}
+	__attribute__((nonnull(1)));
 
 
-/*
- * Fonction called on SIGUSR1 to dump statistics to log
+/**
+ * @brief Tell the main loop to dump statistics to log
+ *
+ * Called on SIGUSR1 signal.
+ *
+ * @param sig  The received signal, should be SIGUSR1
  */
-void dump_stats(int sig)
+static void iprohc_server_dump_stats(int sig)
 {
 	clients_do_dump_stats = true;
 }
 
 
-/*
- * Fonction called on SIGUSR2 to switch between LOG_INFO and LOG_DEBUG for log_max_priority
+/**
+ * @brief Switch between LOG_INFO and LOG_DEBUG
+ *
+ * Called on SIGUSR2 signal.
+ * 
+ * @param sig  The received signal, should be SIGUSR2
  */
-void switch_log_max(int sig)
+static void iprohc_server_switch_log_max(int sig)
 {
 	if(log_max_priority == LOG_DEBUG)
 	{
@@ -280,6 +117,23 @@ void switch_log_max(int sig)
 }
 
 
+/**
+ * @brief Tell the main loop to quit
+ *
+ * Called on SIGINT or SIGTERM signals.
+ * 
+ * @param sig  The received signal.
+ */
+static void iprohc_server_quit(int sig)
+{
+	trace(LOG_NOTICE, "SIGTERM or SIGINT received");
+	alive = 0;
+}
+
+
+/**
+ * @brief Print the usage of the IP/ROHC server
+ */
 static void usage(void)
 {
 	printf("IP/ROHC server: establish tunnels requested by IP/ROHC clients\n"
@@ -317,19 +171,18 @@ static void usage(void)
 	       "\n"
 	       "Report bugs to <%s>.\n",
 	       PACKAGE_BUGREPORT);
-
 }
 
 
-int alive;
-void quit(int sig)
-{
-	trace(LOG_NOTICE, "SIGTERM or SIGINT received");
-	alive = 0;
-}
-
-
-
+/**
+ * @brief The main entry point of the IP/ROHC server
+ *
+ * @param argc  The number of arguments given on command line
+ * @param argv  The arguments given on command line
+ * @return      0 in case of success,
+ *              2 if configuration file is invalid,
+ *              1 in all other error cases.
+ */
 int main(int argc, char *argv[])
 {
 	int exit_status = 1;
@@ -371,12 +224,12 @@ int main(int argc, char *argv[])
 	openlog("iprohc_server", LOG_PID, LOG_DAEMON);
 
 	/* Signal for stats and log */
-	signal(SIGINT,  quit);
-	signal(SIGTERM, quit);
+	signal(SIGINT,  iprohc_server_quit);
+	signal(SIGTERM, iprohc_server_quit);
 	signal(SIGHUP, SIG_IGN); /* used to stop client threads */
 	signal(SIGPIPE, SIG_IGN); /* don't stop if TCP connection was unexpectedly closed */
-	signal(SIGUSR1, dump_stats);
-	signal(SIGUSR2, switch_log_max);
+	signal(SIGUSR1, iprohc_server_dump_stats);
+	signal(SIGUSR2, iprohc_server_switch_log_max);
 
 	/*
 	 * Parsing options
@@ -1003,3 +856,197 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
 error:
 	return false;
 }
+
+
+/**
+ * @brief Dump the statistics of the given client in logs
+ *
+ * @param client  The client session
+ */
+static void dump_stats_client(struct iprohc_server_session *const client)
+{
+	int ret;
+
+	ret = pthread_mutex_lock(&client->session.status_lock);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "dump_stats_client: failed to acquire lock for client");
+		assert(0);
+		goto error;
+	}
+
+	client_tracep(client, LOG_INFO, "--------------------------------------------");
+	switch(client->session.status)
+	{
+		case IPROHC_SESSION_CONNECTING:
+			client_tracep(client, LOG_INFO, "status: connecting");
+			break;
+		case IPROHC_SESSION_CONNECTED:
+			client_tracep(client, LOG_INFO, "status: connected");
+			break;
+		case IPROHC_SESSION_PENDING_DELETE:
+			client_tracep(client, LOG_INFO, "status: pending delete");
+			break;
+		default:
+			client_tracep(client, LOG_INFO, "status: unknown (%d)",
+			              client->session.status);
+			break;
+	}
+	if(client->session.status == IPROHC_SESSION_CONNECTED)
+	{
+		int i;
+
+		client_tracep(client, LOG_INFO, "packing: %d", client->packing);
+		client_tracep(client, LOG_INFO, "stats:");
+		client_tracep(client, LOG_INFO, "  failed decompression:          %d",
+		              client->session.tunnel.stats.decomp_failed);
+		client_tracep(client, LOG_INFO, "  total  decompression:          %d",
+		              client->session.tunnel.stats.decomp_total);
+		client_tracep(client, LOG_INFO, "  failed compression:            %d",
+		              client->session.tunnel.stats.comp_failed);
+		client_tracep(client, LOG_INFO, "  total  compression:            %d",
+		              client->session.tunnel.stats.comp_total);
+		client_tracep(client, LOG_INFO, "  failed depacketization:        %d",
+		              client->session.tunnel.stats.unpack_failed);
+		client_tracep(client, LOG_INFO, "  total received packets on raw: %d",
+		              client->session.tunnel.stats.total_received);
+		client_tracep(client, LOG_INFO, "  total compressed header size:  %d bytes",
+		              client->session.tunnel.stats.head_comp_size);
+		client_tracep(client, LOG_INFO, "  total compressed packet size:  %d bytes",
+		              client->session.tunnel.stats.total_comp_size);
+		client_tracep(client, LOG_INFO, "  total header size before comp: %d bytes",
+		              client->session.tunnel.stats.head_uncomp_size);
+		client_tracep(client, LOG_INFO, "  total packet size before comp: %d bytes",
+		              client->session.tunnel.stats.total_uncomp_size);
+		client_tracep(client, LOG_INFO, "stats packing:");
+		for(i = 1; i < client->session.tunnel.stats.n_stats_packing; i++)
+		{
+			client_tracep(client, LOG_INFO, "  %d packets: %d", i,
+			              client->session.tunnel.stats.stats_packing[i]);
+		}
+	}
+	client_tracep(client, LOG_INFO, "--------------------------------------------");
+
+	ret = pthread_mutex_unlock(&client->session.status_lock);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "dump_stats_client: failed to acquire lock for client");
+		assert(0);
+		goto error;
+	}
+
+error:
+	;
+}
+
+
+/**
+ * @brief Route RAW or TUN traffic to related clients
+ *
+ * Use client's IP address to route traffic to the related client socketpair.
+ *
+ * @param arg  The route context
+ * @return     Always NULL
+ */
+static void * route(void *arg)
+{
+	/* Getting args */
+	const struct route_args *const _arg = (struct route_args *) arg;
+	int fd = _arg->fd;
+	struct iprohc_server_session *clients = _arg->clients;
+	size_t clients_max_nr = _arg->clients_max_nr;
+	enum type_route type = _arg->type;
+
+	int i;
+	int ret;
+	size_t len;
+
+	unsigned char buffer[TUNTAP_BUFSIZE];
+	unsigned int buffer_len = TUNTAP_BUFSIZE;
+
+	struct in_addr addr;
+
+	uint32_t*src_ip;
+	uint32_t*dest_ip;
+
+	trace(LOG_INFO, "Initializing routing thread\n");
+
+	while((ret = read(fd, buffer, buffer_len)))
+	{
+		if(ret < 0 || ret > buffer_len)
+		{
+			trace(LOG_ERR, "read failed: %s (%d)\n", strerror(errno), errno);
+			return NULL;
+		}
+		len = ret;
+		trace(LOG_DEBUG, "Read %zu bytes\n", len);
+
+		/* Get packet destination IP if tun or source IP if raw */
+		if(type == TUN)
+		{
+			dest_ip = (uint32_t*) &buffer[20];
+			addr.s_addr = *dest_ip;
+			trace(LOG_DEBUG, "Packet destination : %s\n", inet_ntoa(addr));
+		}
+		else
+		{
+			src_ip = (uint32_t*) &buffer[12];
+			addr.s_addr = *src_ip;
+			trace(LOG_DEBUG, "Packet source : %s\n", inet_ntoa(addr));
+		}
+
+		for(i = 0; i < clients_max_nr; i++)
+		{
+			/* Find associated client */
+			if(clients[i].is_init)
+			{
+				/* Send to fake raw or tun device */
+				if(type == TUN)
+				{
+					if(addr.s_addr == clients[i].session.local_address.s_addr)
+					{
+						ret = write(clients[i].session.tunnel.fake_tun[1], buffer, len);
+						if(ret < 0)
+						{
+							trace(LOG_WARNING, "failed to send %zu-byte packet to "
+							      "TUN interface: %s (%d)", len, strerror(errno),
+							      errno);
+						}
+						else if(ret != len)
+						{
+							trace(LOG_WARNING, "partial write: only %d bytes of the "
+							      "%zu-byte packet were sent to the TUN interface",
+							      ret, len);
+						}
+						break;
+					}
+				}
+				else
+				{
+					if(addr.s_addr == clients[i].session.tunnel.dest_address.s_addr)
+					{
+						ret = write(clients[i].session.tunnel.fake_raw[1], buffer, len);
+						if(ret < 0)
+						{
+							trace(LOG_WARNING, "failed to send %zu-byte packet to "
+							      "the underlying interface: %s (%d)", len,
+							      strerror(errno), errno);
+						}
+						else if(ret != len)
+						{
+							trace(LOG_WARNING, "partial write: only %d bytes of the "
+							      "%zu-byte packet were sent to the underlying "
+							      "interface", ret, len);
+						}
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	return NULL;
+}
+
+
+
