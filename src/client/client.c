@@ -387,6 +387,20 @@ int main(int argc, char *argv[])
 			(tunnel.src_address.s_addr >>  0) & 0xff,
 			ntohs(local_addr.sin_port));
 
+	/* create the locks for tunnel resources */
+	ret = pthread_mutex_init(&(tunnel.status_lock), NULL);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to init lock: %s (%d)", strerror(ret), ret);
+		goto close_tcp;
+	}
+	ret = pthread_mutex_init(&(tunnel.client_lock), NULL);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to init client_lock: %s (%d)", strerror(ret), ret);
+		goto destroy_status_lock;
+	}
+
 
 	/* stop writing logs on stderr */
 	iprohc_log_stderr = false;
@@ -584,6 +598,10 @@ close_tls:
 	gnutls_deinit(session);
 	gnutls_certificate_free_credentials(xcred);
 	gnutls_global_deinit();
+/*destroy_client_lock:*/
+	pthread_mutex_destroy(&(tunnel.client_lock));
+destroy_status_lock:
+	pthread_mutex_destroy(&(tunnel.status_lock));
 close_tcp:
 	trace(LOG_INFO, "close TCP connection");
 	close(sock);
