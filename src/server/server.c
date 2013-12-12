@@ -276,11 +276,13 @@ int main(int argc, char *argv[])
 	 * Handle signals for stats and log
 	 */
 
+	signal(SIGHUP, SIG_IGN); /* used to stop client threads */
+	signal(SIGPIPE, SIG_IGN); /* don't stop if TCP connection was unexpectedly closed */
+
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGINT);
 	sigaddset(&mask, SIGTERM);
 	sigaddset(&mask, SIGQUIT);
-	sigaddset(&mask, SIGHUP); /* used to stop client threads */
 	sigaddset(&mask, SIGPIPE); /* don't stop if TCP connection was unexpectedly closed */
 	sigaddset(&mask, SIGUSR1);
 	sigaddset(&mask, SIGUSR2);
@@ -516,7 +518,7 @@ int main(int argc, char *argv[])
 		/* UNIX signal received? */
 		if(FD_ISSET(signal_fd, &rdfs))
 		{
-	   	struct signalfd_siginfo signal_infos;
+			struct signalfd_siginfo signal_infos;
 
 			ret = read(signal_fd, &signal_infos, sizeof(struct signalfd_siginfo));
 			if(ret < 0)
@@ -580,10 +582,6 @@ int main(int argc, char *argv[])
 						log_max_priority = LOG_DEBUG;
 						trace(LOG_DEBUG, "debug mode enabled");
 					}
-					break;
-				case SIGHUP:
-				case SIGPIPE:
-					/* ignore those signals */
 					break;
 				default:
 				{
