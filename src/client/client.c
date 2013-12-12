@@ -36,7 +36,10 @@ Returns :
 
 #include "client_session.h"
 #include "tun_helpers.h"
+#include "messages.h"
+#include "tls.h"
 #include "log.h"
+#include "utils.h"
 
 #include "config.h"
 
@@ -56,15 +59,10 @@ Returns :
 #include <net/if.h>
 #include <netdb.h>
 #include <assert.h>
+#include <sys/signalfd.h>
 
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
-
-/** Client stays alive until alive becomes 0 */
-static int alive;
-
-#include "messages.h"
-#include "tls.h"
 
 
 static void usage(void)
@@ -118,13 +116,6 @@ static void usage(void)
 }
 
 
-static void iprohc_sigterm(int signal)
-{
-	trace(LOG_INFO, "received signal %d", signal);
-	alive = 0;
-}
-
-
 int main(int argc, char *argv[])
 {
 	int exit_status = 1;
@@ -148,6 +139,10 @@ int main(int argc, char *argv[])
 	size_t tun_itf_mtu;
 
 	struct iprohc_client_session client;
+
+	int signal_fd;
+	sigset_t mask;
+	bool is_client_alive;
 
 	memset(client.tun_name, 0, IFNAMSIZ);
 	memset(client.basedev, 0, IFNAMSIZ);
@@ -299,6 +294,34 @@ int main(int argc, char *argv[])
 
 
 	/*
+	 * Handle signals for stats and log
+	 */
+
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGINT);
+	sigaddset(&mask, SIGTERM);
+	sigaddset(&mask, SIGQUIT);
+
+	/* block signals to handle them through signal fd */
+	ret = sigprocmask(SIG_BLOCK, &mask, NULL);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to block UNIX signals: %s (%d)",
+		      strerror(errno), errno);
+		goto error;
+	}
+
+	/* create signal fd */
+	signal_fd = signalfd(-1, &mask, 0);
+	if(signal_fd < 0)
+	{
+		trace(LOG_ERR, "failed to create signal fd: %s (%d)",
+		      strerror(errno), errno);
+		goto error;
+	}
+
+
+	/*
 	 * Initialize client context
 	 */
 
@@ -415,11 +438,12 @@ int main(int argc, char *argv[])
 
 	if(!iprohc_session_new(&(client.session), GNUTLS_CLIENT, client.tls_cred,
 	                       NULL, ctrl_sock, local_addr.sin_addr, remote_addr,
-	                       client.raw, client.tun, basedev_mtu, tun_itf_mtu))
+	                       client.raw, client.tun, basedev_mtu, tun_itf_mtu, 0))
 	{
 		trace(LOG_ERR, "failed to init session context");
 		goto close_tcp;
 	}
+	ctrl_sock = -1; /* avoid double close() */
 
 	/* stop writing logs on stderr */
 	iprohc_log_stderr = false;
@@ -530,46 +554,31 @@ int main(int argc, char *argv[])
 	 * Main loop
 	 */
 
-	/* Handle SIGTERM */
-	if(signal(SIGTERM, iprohc_sigterm) == SIG_ERR)
-	{
-		trace(LOG_ERR, "failed to install handler for signal TERM: %s (%d)",
-		      strerror(errno), errno);
-		goto close_tls;
-	}
-	if(signal(SIGINT, iprohc_sigterm) == SIG_ERR)
-	{
-		trace(LOG_ERR, "failed to install handler for signal INT: %s (%d)",
-		      strerror(errno), errno);
-		goto close_tls;
-	}
-	if(signal(SIGQUIT, iprohc_sigterm) == SIG_ERR)
-	{
-		trace(LOG_ERR, "failed to install handler for signal QUIT: %s (%d)",
-		      strerror(errno), errno);
-		goto close_tls;
-	}
-
 	/* Wait for answer and other messages, close when socket is close */
 	trace(LOG_INFO, "wait for connect answer from server");
-	alive = 1;
-	while(alive)
+	is_client_alive = true;
+	while(is_client_alive)
 	{
+		size_t timeout_orig;
 		struct timeval timeout;
+		int max_fd = 0;
 		fd_set rdfs;
 
-		timeout.tv_sec = 80;
-		timeout.tv_usec = 0;
+		timeout_orig = 80;
 		if(client.session.status == IPROHC_SESSION_CONNECTED)
 		{
-			timeout.tv_sec = client.session.tunnel.params.keepalive_timeout * 2;
-			timeout.tv_usec = 0;
+			timeout_orig = client.session.tunnel.params.keepalive_timeout * 2;
 		}
+		timeout.tv_sec = timeout_orig;
+		timeout.tv_usec = 0;
 
 		FD_ZERO(&rdfs);
 		FD_SET(client.session.tcp_socket, &rdfs);
+		max_fd = max(client.session.tcp_socket, max_fd);
+		FD_SET(signal_fd, &rdfs);
+		max_fd = max(signal_fd, max_fd);
 
-		ret = select(client.session.tcp_socket + 1, &rdfs, NULL, NULL, &timeout);
+		ret = select(max_fd + 1, &rdfs, NULL, NULL, &timeout);
 		if(ret < 0)
 		{
 			if(errno == EINTR)
@@ -583,9 +592,60 @@ int main(int argc, char *argv[])
 		else if(ret == 0)
 		{
 			/* timeout reached */
-			trace(LOG_WARNING, "timeout reached while waiting for message "
-			      "on TCP connection, give up");
+			trace(LOG_WARNING, "timeout (%zu seconds) reached while waiting for "
+			      "message on TCP connection, give up", timeout_orig);
 			goto close_tls;
+		}
+
+		/* UNIX signal received? */
+		if(FD_ISSET(signal_fd, &rdfs))
+		{
+	   	struct signalfd_siginfo signal_infos;
+
+			ret = read(signal_fd, &signal_infos, sizeof(struct signalfd_siginfo));
+			if(ret < 0)
+			{
+				trace(LOG_ERR, "failed to retrieve information about the received "
+				      "UNIX signal: %s (%d)", strerror(errno), errno);
+				continue;
+			}
+			else if(ret != sizeof(struct signalfd_siginfo))
+			{
+				trace(LOG_ERR, "failed to retrieve information about the received "
+				      "UNIX signal: only %d bytes expected while %zu bytes received",
+				      ret, sizeof(struct signalfd_siginfo));
+				continue;
+			}
+
+			switch(signal_infos.ssi_signo)
+			{
+				case SIGINT:
+				case SIGTERM:
+				case SIGQUIT:
+				{
+					if(signal_infos.ssi_pid > 0)
+					{
+						/* killed by known process */
+						trace(LOG_NOTICE, "process with PID %d run by user with UID "
+						      "%d asked the IP/ROHC client to shutdown",
+						      signal_infos.ssi_pid, signal_infos.ssi_uid);
+					}
+					else
+					{
+						/* killed by unknown process */
+						trace(LOG_NOTICE, "user with UID %d asked the IP/ROHC client "
+						      "to shutdown", signal_infos.ssi_uid);
+					}
+					is_client_alive = false;
+					continue;
+				}
+				default:
+				{
+					trace(LOG_NOTICE, "ignore unexpected signal %d",
+					      signal_infos.ssi_signo);
+					break;
+				}
+			}
 		}
 
 		if(FD_ISSET(client.session.tcp_socket, &rdfs))
@@ -624,13 +684,17 @@ close_tls:
 	trace(LOG_INFO, "close TLS session");
 	gnutls_bye(client.session.tls_session, GNUTLS_SHUT_RDWR);
 free_session:
+	trace(LOG_INFO, "close session");
 	if(!iprohc_session_free(&(client.session)))
 	{
 		trace(LOG_ERR, "failed to reset session context");
 	}
 close_tcp:
-	trace(LOG_INFO, "close TCP connection");
-	close(ctrl_sock);
+	if(ctrl_sock >= 0)
+	{
+		trace(LOG_INFO, "close TCP connection");
+		close(ctrl_sock);
+	}
 free_addrinfo:
 	freeaddrinfo(result);
 delete_raw:
@@ -641,6 +705,8 @@ tls_deinit:
 	trace(LOG_INFO, "free TLS resources");
 	gnutls_certificate_free_credentials(client.tls_cred);
 	gnutls_global_deinit();
+/*close_signal_fd:*/
+	close(signal_fd);
 error:
 	closelog();
 	return exit_status;

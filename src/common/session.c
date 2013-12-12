@@ -30,25 +30,27 @@
 #include <errno.h>
 #include <unistd.h>
 #include <assert.h>
+#include <sys/timerfd.h>
 
 
 /**
  * @brief Initialize the given generic session
  *
- * @param session         The session to initialize
- * @param tls_type        The type of TLS endpoint: GNUTLS_CLIENT or GNUTLS_SERVER
- * @param tls_cred        The credentials to use for the TLS session
- * @param priority_cache  The TLS priority cache
- * @param ctrl_socket     The TCP socket used for the control channel
- * @param local_addr      The IP address of the local endpoint
- * @param remote_addr     The IP address of the remote endpoint
- * @param raw_socket      The RAW socket to use to send packets to remote endpoint
- * @param tun_fd          The file descriptor of the local TUN interface
- * @param base_dev_mtu    The MTU of the base device used to send packets to the
- *                        remote endpoint
- * @param tun_dev_mtu     The MTU of the local TUN interface
- * @return                true if session was successfully initialized,
- *                        false if a problem occurred
+ * @param session           The session to initialize
+ * @param tls_type          The type of TLS endpoint: GNUTLS_CLIENT or GNUTLS_SERVER
+ * @param tls_cred          The credentials to use for the TLS session
+ * @param priority_cache    The TLS priority cache
+ * @param ctrl_socket       The TCP socket used for the control channel
+ * @param local_addr        The IP address of the local endpoint
+ * @param remote_addr       The IP address of the remote endpoint
+ * @param raw_socket        The RAW socket to use to send packets to remote endpoint
+ * @param tun_fd            The file descriptor of the local TUN interface
+ * @param base_dev_mtu      The MTU of the base device used to send packets to the
+ *                          remote endpoint
+ * @param tun_dev_mtu       The MTU of the local TUN interface
+ * @param keepalive_timeout The timeout (in seconds) for keepalive packets
+ * @return                  true if session was successfully initialized,
+ *                          false if a problem occurred
  */
 bool iprohc_session_new(struct iprohc_session *const session,
                         const gnutls_connection_end_t tls_type,
@@ -60,7 +62,8 @@ bool iprohc_session_new(struct iprohc_session *const session,
                         const int raw_socket,
                         const int tun_fd,
                         const size_t base_dev_mtu,
-                        const size_t tun_dev_mtu)
+                        const size_t tun_dev_mtu,
+                        const size_t keepalive_timeout)
 {
 	int ret;
 
@@ -88,7 +91,8 @@ bool iprohc_session_new(struct iprohc_session *const session,
 	session->src_addr.s_addr = INADDR_ANY;
 	session->dst_addr = remote_addr.sin_addr;
 	session->status = IPROHC_SESSION_CONNECTING;
-	session->last_keepalive.tv_sec = -1;
+	session->last_activity.tv_sec = -1;
+	session->last_activity.tv_usec = -1;
 
 	/* Initialize TLS session */
 	gnutls_init(&session->tls_session, tls_type);
@@ -128,17 +132,36 @@ bool iprohc_session_new(struct iprohc_session *const session,
 		goto destroy_lock;
 	}
 
+	/* create keepalive timer */
+	session->keepalive_timer_fd = timerfd_create(CLOCK_REALTIME, 0);
+	if(session->keepalive_timer_fd < 0)
+	{
+		trace(LOG_ERR, "[client %s] failed to create keepalive timer: %s (%d)",
+		      session->dst_addr_str, strerror(errno), errno);
+		goto destroy_client_lock;
+	}
+
+	/* arm keepalive timer */
+	if(!iprohc_session_update_keepalive(session, keepalive_timeout))
+	{
+		trace(LOG_ERR, "[client %s] failed to update the keepalive timeout to "
+		      "%zu seconds", session->dst_addr_str, keepalive_timeout);
+		goto close_keepalive_timer;
+	}
+
 	/* init tunnel context */
 	if(!iprohc_tunnel_new(&(session->tunnel), raw_socket, tun_fd,
 	                      base_dev_mtu, tun_dev_mtu))
 	{
 		trace(LOG_ERR, "[client %s] failed to init tunnel context",
 		      session->dst_addr_str);
-		goto destroy_client_lock;
+		goto close_keepalive_timer;
 	}
 
 	return true;
 
+close_keepalive_timer:
+	close(session->keepalive_timer_fd);
 destroy_client_lock:
 	pthread_mutex_destroy(&(session->client_lock));
 destroy_lock:
@@ -159,6 +182,10 @@ error:
  */
 bool iprohc_session_free(struct iprohc_session *const session)
 {
+	/* stop and destroy keepalive timer */
+	close(session->keepalive_timer_fd);
+	session->keepalive_timer_fd = -1;
+
 	/* destroy locks */
 	pthread_mutex_destroy(&session->client_lock);
 	pthread_mutex_destroy(&session->status_lock);
@@ -183,5 +210,64 @@ bool iprohc_session_free(struct iprohc_session *const session)
 	session->tcp_socket = -1;
 
 	return true;
+}
+
+
+/**
+ * @brief Change the timeout of the keepalive for control channel
+ *
+ * @param session  The session to update
+ * @param timeout  The new keepalive timeout (in seconds)
+ * @return         true if the update is successful,
+ *                 false if a problem occurs
+ */
+bool iprohc_session_update_keepalive(struct iprohc_session *const session,
+                                     const size_t timeout)
+{
+	struct itimerspec period;
+	int ret;
+
+	/* send keepalive 3 times more often than the timeout */
+	if(timeout == 0)
+	{
+		period.it_value.tv_sec = 0;
+	}
+	else
+	{
+		period.it_value.tv_sec = timeout / 3;
+		if(period.it_value.tv_sec == 0)
+		{
+			period.it_value.tv_sec = 1;
+		}
+	}
+	period.it_value.tv_nsec = 0;
+	period.it_interval.tv_sec = period.it_value.tv_sec;
+	period.it_interval.tv_nsec = 0;
+
+	if(period.it_value.tv_sec == 0)
+	{
+		trace(LOG_DEBUG, "[client %s] de-arm keepalive timer",
+		      session->dst_addr_str);
+	}
+	else
+	{
+		trace(LOG_DEBUG, "[client %s] (re-)arm keepalive timer to %zu seconds",
+		      session->dst_addr_str, period.it_value.tv_sec);
+	}
+
+	/* arm keepalive timer with the new value */
+	ret = timerfd_settime(session->keepalive_timer_fd, 0, &period, NULL);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "[client %s] failed to arm keepalive timer with a "
+		      "%zu-second period: %s (%d)", session->dst_addr_str,
+		      period.it_value.tv_sec, strerror(errno), errno);
+		goto error;
+	}
+
+	return true;
+
+error:
+	return false;
 }
 

@@ -69,7 +69,11 @@ struct iprohc_session
 	 */
 	pthread_mutex_t status_lock;
 	iprohc_session_status_t status;  /**< The session status */
-	struct timeval last_keepalive;   /**< The time at which last keepalive was sent */
+
+	struct timeval last_activity;  /**< The time at which last control message
+	                                    was received */
+	int keepalive_timer_fd;        /**< The timer to send keepalive messages in
+	                                    case of inactivity on control channel */
 };
 
 
@@ -83,10 +87,15 @@ bool iprohc_session_new(struct iprohc_session *const session,
                         const int raw_socket,
                         const int tun_fd,
                         const size_t base_dev_mtu,
-                        const size_t tun_dev_mtu)
+                        const size_t tun_dev_mtu,
+                        const size_t keepalive_timeout)
 	__attribute__((warn_unused_result, nonnull(1)));
 
 bool iprohc_session_free(struct iprohc_session *const session)
+	__attribute__((warn_unused_result, nonnull(1)));
+
+bool iprohc_session_update_keepalive(struct iprohc_session *const session,
+                                     const size_t timeout)
 	__attribute__((warn_unused_result, nonnull(1)));
 
 #endif

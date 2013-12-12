@@ -60,7 +60,8 @@ int new_client(const int conn,
 	/* init the generic session part */
 	if(!iprohc_session_new(&(client->session), GNUTLS_SERVER, server_opts.tls_cred,
 	                       server_opts.priority_cache, conn, client_local_addr,
-	                       remote_addr, raw, tun, basedev_mtu, tun_itf_mtu))
+	                       remote_addr, raw, tun, basedev_mtu, tun_itf_mtu,
+	                       server_opts.params.keepalive_timeout))
 	{
 		trace(LOG_ERR, "failed to init session for client #%zu", client_id);
 		status = -1;

@@ -79,7 +79,7 @@ bool handle_message(struct iprohc_client_session *const client,
 			case C_KEEPALIVE:
 			{
 				trace(LOG_DEBUG, "Received keepalive");
-				gettimeofday(&(client->session.last_keepalive), NULL);
+				gettimeofday(&(client->session.last_activity), NULL);
 				parsed_len++;
 				/* send keepalive */
 				char command[1] = { C_KEEPALIVE };
@@ -154,6 +154,16 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 		client->session.tunnel.params.packing = client->packing;
 	}
 
+	/* update the period of the keepalive timer */
+	if(!iprohc_session_update_keepalive(&(client->session),
+	                                    client->session.tunnel.params.keepalive_timeout))
+	{
+		trace(LOG_ERR, "[client %s] failed to update the keepalive period to %zu "
+		      "seconds", client->session.dst_addr_str,
+		      client->session.tunnel.params.keepalive_timeout);
+		goto error;
+	}
+
 	/* set the IPv4 address on the TUN interface */
 	is_ok = set_ip4(client->tun_itf_id, tp.local_address, 24);
 	if(!is_ok)
@@ -161,6 +171,21 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 		trace(LOG_ERR, "failed to set IP address on TUN interface");
 		goto error;
 	}
+
+	/* Go thread, go ! */
+	trace(LOG_INFO, "run tunnel thread for new client");
+	ret = pthread_create(&tunnel_thread, NULL, iprohc_tunnel_run,
+	                     &(client->session));
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to run tunnel thread for new client: %s (%d)",
+				strerror(ret), ret);
+		goto error;
+	}
+
+	gnutls_record_send(client->session.tls_session, message, 1);
+
+	client->session.status = IPROHC_SESSION_CONNECTED;
 
 	/* up script */
 	if(strcmp(client->up_script_path, "") != 0)
@@ -191,19 +216,6 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 			}
 		}
 	}
-
-	/* Go thread, go ! */
-	trace(LOG_INFO, "run tunnel thread for new client");
-	ret = pthread_create(&tunnel_thread, NULL, iprohc_tunnel_run,
-	                     &(client->session));
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "failed to run tunnel thread for new client: %s (%d)",
-				strerror(ret), ret);
-		goto error;
-	}
-
-	gnutls_record_send(client->session.tls_session, message, 1);
 
 	return true;
 

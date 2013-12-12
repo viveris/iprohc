@@ -329,7 +329,7 @@ void * iprohc_tunnel_run(void *arg)
 		assert(0);
 		goto destroy_decomp;
 	}
-	gettimeofday(&(session->last_keepalive), NULL);
+	gettimeofday(&(session->last_activity), NULL);
 	session->status = IPROHC_SESSION_CONNECTED;
 	session_status = session->status;
 	ret = pthread_mutex_unlock(&session->status_lock);
@@ -450,11 +450,11 @@ void * iprohc_tunnel_run(void *arg)
 			assert(0);
 			goto destroy_decomp;
 		}
-		if(now.tv_sec > session->last_keepalive.tv_sec + kp_timeout)
+		if(now.tv_sec > session->last_activity.tv_sec + kp_timeout)
 		{
 			tunnel_trace(session, LOG_ERR, "keepalive timeout detected "
 			             "(%ld > %ld + %d), disconnect client", now.tv_sec,
-			             session->last_keepalive.tv_sec, kp_timeout);
+			             session->last_activity.tv_sec, kp_timeout);
 			session->status = IPROHC_SESSION_PENDING_DELETE;
 		}
 		ret = pthread_mutex_unlock(&session->status_lock);

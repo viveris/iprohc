@@ -39,9 +39,12 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <signal.h>
 #include <getopt.h>
 #include <assert.h>
+
+#include <sys/signalfd.h>
+#include <sys/timerfd.h>
+
 #include <gnutls/gnutls.h>
 #include <gnutls/pkcs12.h>
-#include <sys/signalfd.h>
 
 
 int log_max_priority = LOG_INFO;
@@ -486,6 +489,8 @@ int main(int argc, char *argv[])
 				{
 					FD_SET(clients[j].session.tcp_socket, &rdfs);
 					max_fd = max(clients[j].session.tcp_socket, max_fd);
+					FD_SET(clients[j].session.keepalive_timer_fd, &rdfs);
+					max_fd = max(clients[j].session.keepalive_timer_fd, max_fd);
 				}
 
 				ret = pthread_mutex_unlock(&(clients[j].session.status_lock));
@@ -629,58 +634,31 @@ int main(int argc, char *argv[])
 				goto delete_raw;
 			}
 
-			if(client_status == IPROHC_SESSION_CONNECTED &&
-			   (clients[j].last_keepalive.tv_sec == -1 ||
-			    clients[j].last_keepalive.tv_sec +
-			    ceil(clients[j].session.tunnel.params.keepalive_timeout / 3) < now.tv_sec))
+			if(client_status >= IPROHC_SESSION_CONNECTING &&
+			   FD_ISSET(clients[j].session.tcp_socket, &rdfs))
 			{
-				/* send keepalive */
-				char command[1] = { C_KEEPALIVE };
-				trace(LOG_DEBUG, "Keepalive !");
-				gnutls_record_send(clients[j].session.tls_session, command, 1);
+				int ret_req;
 
-				ret = pthread_mutex_lock(&clients[j].session.status_lock);
+				/* handle request */
+				ret_req = handle_client_request(&(clients[j]));
+
+				ret = pthread_mutex_lock(&(clients[j].session.status_lock));
 				if(ret != 0)
 				{
 					trace(LOG_ERR, "failed to acquire lock for client #%d", j);
 					assert(0);
 					goto delete_raw;
 				}
-				gettimeofday(&(clients[j].last_keepalive), NULL);
-				ret = pthread_mutex_unlock(&clients[j].session.status_lock);
+				client_status = clients[j].session.status;
+				ret = pthread_mutex_unlock(&(clients[j].session.status_lock));
 				if(ret != 0)
 				{
 					trace(LOG_ERR, "failed to release lock for client #%d", j);
 					assert(0);
 					goto delete_raw;
 				}
-			}
-			else if(client_status == IPROHC_SESSION_PENDING_DELETE)
-			{
-				ret = pthread_mutex_trylock(&clients[j].session.client_lock);
-				if(ret == 0)
-				{
-					/* free dead client */
-					trace(LOG_INFO, "remove context of client #%d", j);
-					dump_stats_client(&(clients[j]));
-					gnutls_bye(clients[j].session.tls_session, GNUTLS_SHUT_WR);
-					/* delete client */
-					del_client(&(clients[j]));
 
-					assert(clients_nr > 0);
-					assert(clients_nr <= server_opts.clients_max_nr);
-					clients_nr--;
-					trace(LOG_INFO, "only %zu/%zu clients remaining", clients_nr,
-					      server_opts.clients_max_nr);
-					assert(clients_nr >= 0);
-					assert(clients_nr < server_opts.clients_max_nr);
-				}
-			}
-			else if(FD_ISSET(clients[j].session.tcp_socket, &rdfs))
-			{
-				/* handle request */
-				ret = handle_client_request(&(clients[j]));
-				if(ret < 0)
+				if(ret_req < 0)
 				{
 					if(client_status == IPROHC_SESSION_CONNECTED)
 					{
@@ -719,7 +697,18 @@ int main(int argc, char *argv[])
 						assert(0);
 						goto delete_raw;
 					}
-					gettimeofday(&(clients[j].session.last_keepalive), NULL);
+					gettimeofday(&(clients[j].session.last_activity), NULL);
+
+					/* re-arm keepalive timer */
+					if(!iprohc_session_update_keepalive(&(clients[j].session),
+					                                    server_opts.params.keepalive_timeout))
+					{
+						trace(LOG_ERR, "[client %s] failed to update the keepalive "
+						      "timeout to %zu seconds", clients[j].session.dst_addr_str,
+						      server_opts.params.keepalive_timeout);
+						goto error;
+					}
+
 					ret = pthread_mutex_unlock(&clients[j].session.status_lock);
 					if(ret != 0)
 					{
@@ -727,6 +716,55 @@ int main(int argc, char *argv[])
 						assert(0);
 						goto delete_raw;
 					}
+				}
+			}
+
+			/* send keepalive in case there is too few activity on control channel */
+			if(client_status >= IPROHC_SESSION_CONNECTING &&
+			   FD_ISSET(clients[j].session.keepalive_timer_fd, &rdfs))
+			{
+				const char command[1] = { C_KEEPALIVE };
+				uint64_t keepalive_timer_nr;
+
+				ret = read(clients[j].session.keepalive_timer_fd,
+				           &keepalive_timer_nr, sizeof(uint64_t));
+				if(ret < 0)
+				{
+					trace(LOG_ERR, "[client %s] failed to read keepalive timer: %s (%d)",
+					      clients[j].session.dst_addr_str, strerror(errno), errno);
+					goto delete_raw;
+				}
+				else if(ret != sizeof(uint64_t))
+				{
+					trace(LOG_ERR, "[client %s] failed to read keepalive timer: "
+					      "received %d bytes while expecting %zu bytes",
+					      clients[j].session.dst_addr_str, ret, sizeof(uint64_t));
+					goto delete_raw;
+				}
+
+				trace(LOG_DEBUG, "send a keepalive command");
+				gnutls_record_send(clients[j].session.tls_session, command, 1);
+			}
+
+			if(client_status == IPROHC_SESSION_PENDING_DELETE)
+			{
+				ret = pthread_mutex_trylock(&clients[j].session.client_lock);
+				if(ret == 0)
+				{
+					/* free dead client */
+					trace(LOG_INFO, "remove context of client #%d", j);
+					dump_stats_client(&(clients[j]));
+					gnutls_bye(clients[j].session.tls_session, GNUTLS_SHUT_WR);
+					/* delete client */
+					del_client(&(clients[j]));
+
+					assert(clients_nr > 0);
+					assert(clients_nr <= server_opts.clients_max_nr);
+					clients_nr--;
+					trace(LOG_INFO, "only %zu/%zu clients remaining", clients_nr,
+					      server_opts.clients_max_nr);
+					assert(clients_nr >= 0);
+					assert(clients_nr < server_opts.clients_max_nr);
 				}
 			}
 		}

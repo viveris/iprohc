@@ -34,7 +34,6 @@ struct iprohc_server_session
 	bool is_init;                   /**< Whether the client session is used or not */
 	struct iprohc_session session;  /**< The generic session context */
 
-	struct timeval last_keepalive;  /** The time at which the last keepalive was sent */
 	int packing;                    /** The packing level enforced by client */
 
 	int fake_raw[2];                /**< Fake RAW device for server side */
