@@ -35,6 +35,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdarg.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
+#include <linux/if_tun.h>
 
 
 /*
@@ -54,10 +55,10 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #define tunnel_trace(tunnel, prio, format, ...) \
 	do \
 	{ \
-		if((tunnel)->dest_addr_str[0] == '\0') \
+		if((tunnel)->dst_addr_str[0] == '\0') \
 		{ \
 			trace((prio), "[client %s] " format, \
-			      (tunnel)->dest_addr_str, ##__VA_ARGS__); \
+			      (tunnel)->dst_addr_str, ##__VA_ARGS__); \
 		} \
 		else \
 		{ \
@@ -143,7 +144,6 @@ void * new_tunnel(void *arg)
 
 	int kp_timeout   = tunnel->params.keepalive_timeout;
 
-	int read_tun, read_raw;
 	bool is_ok;
 	int ret;
 
@@ -161,7 +161,7 @@ void * new_tunnel(void *arg)
 	ret = pthread_mutex_lock(&(session->client_lock));
 	if(ret != 0)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "failed to acquire client_lock for client");
+		tunnel_trace(session, LOG_ERR, "failed to acquire client_lock for client");
 		assert(0);
 		goto error;
 	}
@@ -174,7 +174,7 @@ void * new_tunnel(void *arg)
 	comp = rohc_comp_new(ROHC_SMALL_CID, tunnel->params.max_cid);
 	if(comp == NULL)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "cannot create the ROHC compressor");
+		tunnel_trace(session, LOG_ERR, "cannot create the ROHC compressor");
 		goto unlock;
 	}
 
@@ -182,7 +182,7 @@ void * new_tunnel(void *arg)
 	is_ok = rohc_comp_set_traces_cb(comp, print_rohc_traces);
 	if(!is_ok)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "cannot set trace callback for compressor");
+		tunnel_trace(session, LOG_ERR, "cannot set trace callback for compressor");
 		goto destroy_comp;
 	}
 
@@ -194,7 +194,7 @@ void * new_tunnel(void *arg)
 	                                  ROHC_PROFILE_RTP, -1);
 	if(!is_ok)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "cannot enable profiles for compressor");
+		tunnel_trace(session, LOG_ERR, "cannot enable profiles for compressor");
 		goto destroy_comp;
 	}
 
@@ -202,7 +202,7 @@ void * new_tunnel(void *arg)
 	is_ok = rohc_comp_set_rtp_detection_cb(comp, callback_rtp_detect, NULL);
 	if(!is_ok)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "failed to set RTP detection callback");
+		tunnel_trace(session, LOG_ERR, "failed to set RTP detection callback");
 		goto destroy_comp;
 	}
 
@@ -213,7 +213,7 @@ void * new_tunnel(void *arg)
 	                         (is_umode ? NULL : comp));
 	if(decomp == NULL)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "cannot create the ROHC decompressor");
+		tunnel_trace(session, LOG_ERR, "cannot create the ROHC decompressor");
 		goto destroy_comp;
 	}
 
@@ -221,7 +221,7 @@ void * new_tunnel(void *arg)
 	is_ok = rohc_decomp_set_traces_cb(decomp, print_rohc_traces);
 	if(!is_ok)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "cannot set trace callback for decompressor");
+		tunnel_trace(session, LOG_ERR, "cannot set trace callback for decompressor");
 		goto destroy_decomp;
 	}
 
@@ -234,7 +234,7 @@ void * new_tunnel(void *arg)
 	                                    ROHC_PROFILE_RTP, -1);
 	if(!is_ok)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "cannot enable profiles for decompressor");
+		tunnel_trace(session, LOG_ERR, "cannot enable profiles for decompressor");
 		goto destroy_decomp;
 	}
 
@@ -252,7 +252,7 @@ void * new_tunnel(void *arg)
 	ret = pthread_mutex_lock(&session->status_lock);
 	if(ret != 0)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
+		tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
 		assert(0);
 		goto destroy_decomp;
 	}
@@ -262,31 +262,9 @@ void * new_tunnel(void *arg)
 	ret = pthread_mutex_unlock(&session->status_lock);
 	if(ret != 0)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
+		tunnel_trace(session, LOG_ERR, "failed to release lock for client");
 		assert(0);
 		goto destroy_decomp;
-	}
-
-	/* We read the fake TUN device if we are on a server */
-	if(tunnel->fake_tun[0] == -1 && tunnel->fake_tun[1] == -1)
-	{
-		/* No fake_tun, we use the real TUN */
-		read_tun = tunnel->tun;
-	}
-	else
-	{
-		read_tun = tunnel->fake_tun[0];
-	}
-
-	/* We read the fake raw device if we are on a server */
-	if(tunnel->fake_raw[0] == -1 && tunnel->fake_raw[1] == -1)
-	{
-		/* No fake_raw, we use the real raw */
-		read_raw = tunnel->raw_socket;
-	}
-	else
-	{
-		read_raw = tunnel->fake_raw[0];
 	}
 
 	/* Initialize stats */
@@ -309,21 +287,21 @@ void * new_tunnel(void *arg)
 
 		/* poll the read sockets/file descriptors */
 		FD_ZERO(&readfds);
-		FD_SET(read_tun, &readfds);
-		FD_SET(read_raw, &readfds);
+		FD_SET(tunnel->tun_fd_in, &readfds);
+		FD_SET(tunnel->raw_socket_in, &readfds);
 
-		ret = pselect(max(read_tun, read_raw) + 1, &readfds, NULL, NULL,
-		              &timeout, &sigmask);
+		ret = pselect(max(tunnel->tun_fd_in, tunnel->raw_socket_in) + 1, &readfds,
+		              NULL, NULL, &timeout, &sigmask);
 		if(ret < 0)
 		{
-			tunnel_trace(tunnel, LOG_ERR, "pselect failed: %s (%d)",
+			tunnel_trace(session, LOG_ERR, "pselect failed: %s (%d)",
 			             strerror(errno), errno);
 			failure = 1;
 
 			ret = pthread_mutex_lock(&session->status_lock);
 			if(ret != 0)
 			{
-				tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
+				tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
 				assert(0);
 				goto destroy_decomp;
 			}
@@ -331,21 +309,21 @@ void * new_tunnel(void *arg)
 			ret = pthread_mutex_unlock(&session->status_lock);
 			if(ret != 0)
 			{
-				tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
+				tunnel_trace(session, LOG_ERR, "failed to release lock for client");
 				assert(0);
 				goto destroy_decomp;
 			}
 		}
 		else if(ret > 0)
 		{
-			tunnel_trace(tunnel, LOG_DEBUG, "packet received...");
+			tunnel_trace(session, LOG_DEBUG, "packet received...");
 
 			/* bridge from TUN to RAW */
-			if(FD_ISSET(read_tun, &readfds))
+			if(FD_ISSET(tunnel->tun_fd_in, &readfds))
 			{
-				tunnel_trace(tunnel, LOG_DEBUG, "...from tun");
-				failure = tun2raw(comp, read_tun, tunnel->raw_socket,
-				                  tunnel->dest_address, tunnel->basedev_mtu,
+				tunnel_trace(session, LOG_DEBUG, "...from tun");
+				failure = tun2raw(comp, tunnel->tun_fd_in, tunnel->raw_socket_out,
+				                  session->dst_addr, tunnel->basedev_mtu,
 				                  tunnel->packing_frame,
 				                  packing_max_len, &packing_cur_len,
 				                  packing_max_pkts, &packing_cur_pkts,
@@ -354,20 +332,20 @@ void * new_tunnel(void *arg)
 				is_last_init = true;
 				if(failure)
 				{
-					tunnel_trace(tunnel, LOG_NOTICE, "tun2raw failed");
+					tunnel_trace(session, LOG_NOTICE, "tun2raw failed");
 				}
 			}
 
 			/* bridge from RAW to TUN */
-			if(FD_ISSET(read_raw, &readfds))
+			if(FD_ISSET(tunnel->raw_socket_in, &readfds))
 			{
-				tunnel_trace(tunnel, LOG_DEBUG, "...from raw");
-				failure = raw2tun(decomp, tunnel->src_address.s_addr, read_raw,
-				                  tunnel->tun, tunnel->basedev_mtu,
-				                  &(tunnel->stats));
+				tunnel_trace(session, LOG_DEBUG, "...from raw");
+				failure = raw2tun(decomp, session->src_addr.s_addr,
+				                  tunnel->raw_socket_in, tunnel->tun_fd_out,
+				                  tunnel->basedev_mtu, &(tunnel->stats));
 				if(failure)
 				{
-					tunnel_trace(tunnel, LOG_NOTICE, "raw2tun failed");
+					tunnel_trace(session, LOG_NOTICE, "raw2tun failed");
 				}
 			}
 		}
@@ -382,10 +360,9 @@ void * new_tunnel(void *arg)
 		{
 			if(packing_cur_len > 0)
 			{
-				tunnel_trace(tunnel, LOG_DEBUG, "no packets since a while, "
-				             "sending keepalive");
-				send_puree(tunnel->raw_socket, tunnel->dest_address,
-				           tunnel->basedev_mtu,
+				tunnel_trace(session, LOG_DEBUG, "no packets since a while, "
+				             "flushing incomplete frame");
+				send_puree(tunnel->raw_socket_out, session->dst_addr, tunnel->basedev_mtu,
 				           tunnel->packing_frame, &packing_cur_len, &packing_cur_pkts,
 				           &(tunnel->stats));
 				assert(packing_cur_len == 0);
@@ -396,13 +373,13 @@ void * new_tunnel(void *arg)
 		ret = pthread_mutex_lock(&session->status_lock);
 		if(ret != 0)
 		{
-			tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
+			tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
 			assert(0);
 			goto destroy_decomp;
 		}
 		if(now.tv_sec > session->last_keepalive.tv_sec + kp_timeout)
 		{
-			tunnel_trace(tunnel, LOG_ERR, "keepalive timeout detected "
+			tunnel_trace(session, LOG_ERR, "keepalive timeout detected "
 			             "(%ld > %ld + %d), disconnect client", now.tv_sec,
 			             session->last_keepalive.tv_sec, kp_timeout);
 			session->status = IPROHC_SESSION_PENDING_DELETE;
@@ -410,7 +387,7 @@ void * new_tunnel(void *arg)
 		ret = pthread_mutex_unlock(&session->status_lock);
 		if(ret != 0)
 		{
-			tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
+			tunnel_trace(session, LOG_ERR, "failed to release lock for client");
 			assert(0);
 			goto destroy_decomp;
 		}
@@ -418,7 +395,7 @@ void * new_tunnel(void *arg)
 		ret = pthread_mutex_lock(&session->status_lock);
 		if(ret != 0)
 		{
-			tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
+			tunnel_trace(session, LOG_ERR, "failed to acquire lock for client");
 			assert(0);
 			goto destroy_decomp;
 		}
@@ -426,14 +403,14 @@ void * new_tunnel(void *arg)
 		ret = pthread_mutex_unlock(&session->status_lock);
 		if(ret != 0)
 		{
-			tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
+			tunnel_trace(session, LOG_ERR, "failed to release lock for client");
 			assert(0);
 			goto destroy_decomp;
 		}
 	}
 	while(session_status == IPROHC_SESSION_CONNECTED);
 
-	tunnel_trace(tunnel, LOG_INFO, "client thread was asked to stop");
+	tunnel_trace(session, LOG_INFO, "client thread was asked to stop");
 
 	/*
 	 * Cleaning:
@@ -446,7 +423,7 @@ unlock:
 	ret = pthread_mutex_unlock(&(session->client_lock));
 	if(ret != 0)
 	{
-		tunnel_trace(tunnel, LOG_ERR, "failed to release client_lock for client");
+		tunnel_trace(session, LOG_ERR, "failed to release client_lock for client");
 		assert(0);
 	}
 error:
@@ -585,7 +562,7 @@ int tun2raw(struct rohc_comp *comp,
 
 	/* read the IP packet from the virtual interface */
 	ret = read(from, buffer, buffer_len);
-	if(ret < 0 || ret > buffer_len)
+	if(ret < 0)
 	{
 		trace(LOG_ERR, "Read failed: %s (%d)\n", strerror(errno), errno);
 		goto error;
@@ -594,17 +571,22 @@ int tun2raw(struct rohc_comp *comp,
 
 	trace(LOG_DEBUG, "Read %u bytes on tun fd %d\n", ret, from);
 
-	dump_packet("Read from tun: ", buffer, buffer_len);
+	dump_packet("Read from tun", buffer, buffer_len);
 
 	if(buffer_len == 0)
 	{
 		goto quit;
 	}
+	else if(buffer_len < sizeof(struct tun_pi))
+	{
+		trace(LOG_ERR, "tun2raw: drop invalid packet: too small for TUN header");
+		goto quit;
+	}
 
 	/* We skip the 4 bytes TUN header */
 	/* XXX : To be parametrized if fd is not tun */
-	packet = &buffer[4];
-	packet_len = buffer_len - 4;
+	packet = buffer + sizeof(struct tun_pi);
+	packet_len = buffer_len - sizeof(struct tun_pi);
 
 	/* update stats */
 	stats->comp_total++;
@@ -927,6 +909,10 @@ void dump_packet(char *descr, unsigned char *packet, unsigned int length)
 		}
 		snprintf(tmp, 4, "%.2x ", packet[i]);
 		strcat(line, tmp);
+	}
+	if(line[0] != '\0')
+	{
+		trace(LOG_DEBUG, "%s", line);
 	}
 	trace(LOG_DEBUG, "-------------------------------\n");
 }

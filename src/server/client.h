@@ -23,6 +23,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 int new_client(const int conn,
                const struct sockaddr_in remote_addr,
+               const int raw,
                const int tun,
                const size_t tun_itf_mtu,
                const size_t basedev_mtu,

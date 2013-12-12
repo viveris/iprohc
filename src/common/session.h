@@ -43,9 +43,13 @@ typedef enum
 /** The generic part of the session shared by server and client */
 struct iprohc_session
 {
-	int tcp_socket;                /**< The TCP socket for the control channel */
-	gnutls_session_t tls_session;  /**< The TLS session for the control channel */
-	struct in_addr local_address;  /**< The local address on the TUN interface */
+	int tcp_socket;                    /**< The TCP socket for the control channel */
+	gnutls_session_t tls_session;      /**< The TLS session for the control channel */
+	struct in_addr local_address;      /**< The local address on the TUN interface */
+
+	struct in_addr dst_addr;             /**< The IP address of the remote endpoint */
+	char dst_addr_str[INET_ADDRSTRLEN];  /**< string representation of dst_addr */
+	struct in_addr src_addr;             /**< The IP address of the local endpoint */
 
 	struct tunnel tunnel;          /**< The tunnel context */
 	pthread_t thread_tunnel;       /**< The thread that handle the session */
@@ -67,6 +71,23 @@ struct iprohc_session
 	iprohc_session_status_t status;  /**< The session status */
 	struct timeval last_keepalive;   /**< The time at which last keepalive was sent */
 };
+
+
+bool iprohc_session_new(struct iprohc_session *const session,
+                        const gnutls_connection_end_t tls_type,
+                        gnutls_certificate_credentials_t tls_cred,
+                        gnutls_priority_t priority_cache,
+                        const int ctrl_socket,
+                        const struct in_addr local_addr,
+                        const struct sockaddr_in remote_addr,
+                        const int raw_socket,
+                        const int tun_fd,
+                        const size_t base_dev_mtu,
+                        const size_t tun_dev_mtu)
+	__attribute__((warn_unused_result, nonnull(1)));
+
+bool iprohc_session_free(struct iprohc_session *const session)
+	__attribute__((warn_unused_result, nonnull(1)));
 
 #endif
 

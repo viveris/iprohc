@@ -27,7 +27,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /* Structure defining global parameters for the server */
 struct server_opts
 {
-	gnutls_certificate_credentials_t xcred;
+	gnutls_certificate_credentials_t tls_cred;
 	gnutls_priority_t priority_cache;
 
 	size_t clients_max_nr;    /**< The maximum number of simultaneous clients */

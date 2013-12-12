@@ -10,7 +10,8 @@ noinst_LTLIBRARIES = libiprohc_common.la
 libiprohc_common_la_SOURCES = \
 	rohc_tunnel.c \
 	tlv.c \
-	tun_helpers.c
+	tun_helpers.c \
+	session.c
 
 libiprohc_common_la_LIBADD = \
 	-lgnutls \
@@ -30,5 +31,6 @@ noinst_HEADERS = \
 	log.h \
 	rohc_tunnel.h \
 	tlv.h \
-	tun_helpers.h
+	tun_helpers.h \
+	session.h
 

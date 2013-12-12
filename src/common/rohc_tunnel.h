@@ -54,7 +54,7 @@ struct statitics
 	int unpack_failed;
 	int total_received;
 
-	int*stats_packing;
+	int *stats_packing;
 	int n_stats_packing;
 };
 
@@ -62,17 +62,16 @@ struct statitics
 /* Stucture defining a tunnel */
 struct tunnel
 {
-	struct in_addr dest_address;
-	char dest_addr_str[INET_ADDRSTRLEN];
-	struct in_addr src_address;
+	/* input and output RAW sockets may be different sockets */
+	int raw_socket_in;   /**< The RAW socket for receiving data from remote endpoint */
+	int raw_socket_out;  /**< The RAW socket towards the remote endpoint */
 
-	int raw_socket;      /**< Real RAW */
+	/* input and output TUN fds may be different fds */
+	int tun_fd_in;       /**< The TUN device for receiving data from local endpoint */
+	int tun_fd_out;      /**< The TUN device for towards the local endpoint */
+	
 	size_t basedev_mtu;  /**< The MTU (in bytes) of the base interface */
-	int fake_raw[2];     /**< Fake RAW device for server side */
-
-	int tun;             /**< Real TUN device */
 	size_t tun_itf_mtu;  /**< The MTU (in bytes) of the TUN interface */
-	int fake_tun[2];     /**< Fake TUN device for server side */
 
 	/** The frame being packed, stored in context until completion or timeout */
 	unsigned char packing_frame[TUNTAP_BUFSIZE];

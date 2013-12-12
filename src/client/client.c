@@ -35,6 +35,9 @@ Returns :
 */
 
 #include "client_session.h"
+#include "tun_helpers.h"
+#include "log.h"
+
 #include "config.h"
 
 #include <sys/socket.h>
@@ -52,10 +55,13 @@ Returns :
 #include <sys/socket.h>
 #include <net/if.h>
 #include <netdb.h>
+#include <assert.h>
 
-#include "log.h"
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
+
+/** Client stays alive until alive becomes 0 */
+static int alive;
 
 #include "messages.h"
 #include "tls.h"
@@ -112,7 +118,6 @@ static void usage(void)
 }
 
 
-int alive;
 static void iprohc_sigterm(int signal)
 {
 	trace(LOG_INFO, "received signal %d", signal);
@@ -123,26 +128,31 @@ static void iprohc_sigterm(int signal)
 int main(int argc, char *argv[])
 {
 	int exit_status = 1;
-	char serv_addr[1024];
-	struct sockaddr_in local_addr;
-	socklen_t local_addr_len;
+	char serv_addr[PATH_MAX + 1];
 	char port[6]  = {'3','1','2','6', '\0', '\0'};
 	unsigned char buf[1024];
 	int c;
 
-	char pkcs12_f[1024];
-	gnutls_certificate_credentials_t xcred;
+	char pkcs12_f[PATH_MAX + 1];
 	unsigned int verify_status;
+
+	struct sockaddr_in local_addr;
+	socklen_t local_addr_len;
+	struct sockaddr_in remote_addr;
+	int ctrl_sock = -1;
 
 	int ret;
 	bool is_ok;
 
-	struct iprohc_client_session client_session;
+	size_t basedev_mtu;
+	size_t tun_itf_mtu;
 
-	memset(client_session.tun_name, 0, IFNAMSIZ);
-	memset(client_session.basedev, 0, IFNAMSIZ);
-	client_session.up_script_path = calloc(1024, sizeof(char));
-	client_session.packing = 0;
+	struct iprohc_client_session client;
+
+	memset(client.tun_name, 0, IFNAMSIZ);
+	memset(client.basedev, 0, IFNAMSIZ);
+	memset(client.up_script_path, 0, PATH_MAX + 1);
+	client.packing = 0;
 	serv_addr[0] = '\0';
 	pkcs12_f[0] = '\0';
 
@@ -194,7 +204,7 @@ int main(int argc, char *argv[])
 					trace(LOG_ERR, "TUN interface name too long");
 					goto error;
 				}
-				strncpy(client_session.tun_name, optarg, IFNAMSIZ);
+				strncpy(client.tun_name, optarg, IFNAMSIZ);
 				break;
 			case 'b':
 				trace(LOG_DEBUG, "underlying interface: %s", optarg);
@@ -209,12 +219,16 @@ int main(int argc, char *argv[])
 					      optarg);
 					goto error;
 				}
-				strncpy(client_session.basedev, optarg, IFNAMSIZ);
+				strncpy(client.basedev, optarg, IFNAMSIZ);
 				break;
 			case 'r':
-				trace(LOG_DEBUG, "Remote address : %s", optarg);
-				strncpy(serv_addr, optarg, 1024);
-				serv_addr[1023] = '\0';
+				if(strlen(optarg) > PATH_MAX)
+				{
+					trace(LOG_ERR, "remote address is too long");
+					goto error;
+				}
+				trace(LOG_DEBUG, "Remote address: %s", optarg);
+				strncpy(serv_addr, optarg, PATH_MAX);
 				break;
 			case 'p':
 				strncpy(port, optarg, 6);
@@ -222,22 +236,26 @@ int main(int argc, char *argv[])
 				trace(LOG_DEBUG, "Remote port : %s", port);
 				break;
 			case 'P':
-				strncpy(pkcs12_f, optarg, 1024);
-				pkcs12_f[1023] = '\0';
-				trace(LOG_DEBUG, "PKCS12 file : %s",  pkcs12_f);
+				if(strlen(optarg) > PATH_MAX)
+				{
+					trace(LOG_ERR, "path of PKCS12 file is too long");
+					goto error;
+				}
+				strncpy(pkcs12_f, optarg, PATH_MAX);
+				trace(LOG_DEBUG, "PKCS12 file: %s", pkcs12_f);
 				break;
 			case 'u':
 				trace(LOG_DEBUG, "Up script path: %s", optarg);
-				if(strlen(optarg) >= 1024)
+				if(strlen(optarg) > PATH_MAX)
 				{
 					trace(LOG_ERR, "Up script path too long");
 					goto error;
 				}
-				strncpy(client_session.up_script_path, optarg, 1024);
+				strncpy(client.up_script_path, optarg, PATH_MAX);
 				break;
 			case 'k':
-				client_session.packing = atoi(optarg);
-				trace(LOG_DEBUG, "Using forced packing : %d\n", client_session.packing);
+				client.packing = atoi(optarg);
+				trace(LOG_DEBUG, "Using forced packing : %d\n", client.packing);
 				break;
 			case 'h':
 				usage();
@@ -257,14 +275,14 @@ int main(int argc, char *argv[])
 		goto error;
 	}
 
-	if(strcmp(client_session.tun_name, "") == 0)
+	if(strcmp(client.tun_name, "") == 0)
 	{
 		trace(LOG_ERR, "wrong usage: TUN interface name is mandatory, "
 		      "use the --dev or -i option to specify it");
 		goto error;
 	}
 
-	if(strcmp(client_session.basedev, "") == 0)
+	if(strcmp(client.basedev, "") == 0)
 	{
 		trace(LOG_ERR, "wrong usage: underlying interface name is mandatory, "
 		      "use the --basedev or -b option to specify it");
@@ -281,36 +299,41 @@ int main(int argc, char *argv[])
 
 
 	/*
-	 * GnuTLS stuff
+	 * Initialize client context
 	 */
 
+	/* load certificates and key for TLS session */
 	gnutls_global_init();
-	gnutls_certificate_allocate_credentials(&xcred);
-	ret = load_p12(xcred, pkcs12_f, NULL);
+	gnutls_certificate_allocate_credentials(&(client.tls_cred));
+	ret = load_p12(client.tls_cred, pkcs12_f, NULL);
 	if(ret < 0)
 	{
-		/* Try with empyty password */
-		ret = load_p12(xcred, pkcs12_f, "");
+		/* try with empty password */
+		ret = load_p12(client.tls_cred, pkcs12_f, "");
 		if(ret < 0)
 		{
-			trace(LOG_ERR, "Unable to load certificate : %s", gnutls_strerror(ret));
-			goto error;
+			trace(LOG_ERR, "failed to load certificate: %s (%d)",
+			      gnutls_strerror(ret), ret);
+			goto tls_deinit;
 		}
 	}
 
-	gnutls_init(&(client_session.session.tls_session), GNUTLS_CLIENT);
-	const int protocol_priority[] = { GNUTLS_TLS1, GNUTLS_SSL3, 0 };
-	const int kx_priority[] = { GNUTLS_KX_RSA, 0 };
-	const int cipher_priority[] = { GNUTLS_CIPHER_3DES_CBC, GNUTLS_CIPHER_ARCFOUR, 0};
-	const int comp_priority[] = { GNUTLS_COMP_ZLIB, GNUTLS_COMP_NULL, 0 };
-	const int mac_priority[] = { GNUTLS_MAC_SHA, GNUTLS_MAC_MD5, 0 };
-	gnutls_protocol_set_priority(client_session.session.tls_session, protocol_priority);
-	gnutls_cipher_set_priority(client_session.session.tls_session, cipher_priority);
-	gnutls_compression_set_priority(client_session.session.tls_session, comp_priority);
-	gnutls_kx_set_priority(client_session.session.tls_session, kx_priority);
-	gnutls_mac_set_priority(client_session.session.tls_session, mac_priority);
+	/* create the TUN interface */
+	client.tun = create_tun(client.tun_name, client.basedev,
+	                         &client.tun_itf_id, &basedev_mtu, &tun_itf_mtu);
+	if(client.tun < 0)
+	{
+		trace(LOG_ERR, "Unable to create TUN device");
+		goto tls_deinit;
+	}
 
-	gnutls_credentials_set(client_session.session.tls_session, GNUTLS_CRD_CERTIFICATE, xcred);
+	/* set RAW  */
+	client.raw = create_raw();
+	if(client.raw < 0)
+	{
+		trace(LOG_ERR, "Unable to create RAW socket");
+		goto delete_tun;
+	}
 
 
 	/*
@@ -319,7 +342,6 @@ int main(int argc, char *argv[])
 
 	struct addrinfo *result, *rp;
 	struct addrinfo hints;
-	int s;
 
 	memset(&hints, 0, sizeof(struct addrinfo));
 	hints.ai_family = AF_INET;    /* Allow IPv4 */
@@ -327,77 +349,77 @@ int main(int argc, char *argv[])
 	hints.ai_flags = 0;
 	hints.ai_protocol = 0;           /* Any protocol */
 
-	s = getaddrinfo(serv_addr, port, &hints, &result);
-	if(s != 0)
+	ret = getaddrinfo(serv_addr, port, &hints, &result);
+	if(ret != 0)
 	{
-		trace(LOG_ERR, "Unable to connect to %s : %s", serv_addr, gai_strerror(s));
-		goto error;
+		trace(LOG_ERR, "Unable to connect to %s: %s (%d)", serv_addr,
+		      gai_strerror(ret), ret);
+		goto delete_raw;
 	}
 
 
 	/*
 	 * Creation of TCP socket to negotiate parameters and maintain it
 	 */
+
 	if(result == NULL) /* no address available */
 	{
 		trace(LOG_ERR, "failed connect to server: no address available");
-		goto error;
+		goto free_addrinfo;
 	}
 	for(rp = result; rp != NULL; rp = rp->ai_next)
 	{
-		client_session.session.tcp_socket = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-		if(client_session.session.tcp_socket < 0)
+		ctrl_sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		if(ctrl_sock < 0)
 		{
 			continue;
 		}
 
-		if(connect(client_session.session.tcp_socket, rp->ai_addr, rp->ai_addrlen) != -1)
+		if(connect(ctrl_sock, rp->ai_addr, rp->ai_addrlen) != -1)
 		{
-			break;                  /* Success */
+			break; /* success */
 		}
-		close(client_session.session.tcp_socket);
+		/* failure */
+		close(ctrl_sock);
+		ctrl_sock = -1;
 	}
-	if(rp == NULL || client_session.session.tcp_socket < 0) /* no address succeeded */
+	if(rp == NULL || ctrl_sock < 0) /* no address succeeded */
 	{
 		trace(LOG_ERR, "failed to connect to server: %s (%d)",
 				strerror(errno), errno);
-		goto close_tcp;
+		goto free_addrinfo;
 	}
+	memcpy(&remote_addr, rp->ai_addr, sizeof(struct sockaddr_in));
 
 	/* retrieve the local address and port used to contact the server
 	 * (will be used to filter ingress data traffic later on) */
 	local_addr_len = sizeof(struct sockaddr_in);
 	memset(&local_addr, 0, local_addr_len);
-	ret = getsockname(client_session.session.tcp_socket, (struct sockaddr *) &local_addr,
-	                  &local_addr_len);
+	ret = getsockname(ctrl_sock, (struct sockaddr *) &local_addr, &local_addr_len);
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "failed to determine the local IP address used to "
 				"contact the server: %s (%d)", strerror(errno), errno);
 		goto close_tcp;
 	}
-	client_session.session.tunnel.src_address.s_addr = ntohl(local_addr.sin_addr.s_addr);
 	trace(LOG_INFO, "local address %u.%u.%u.%u:%u is used to contact server",
-			(client_session.session.tunnel.src_address.s_addr >> 24) & 0xff,
-			(client_session.session.tunnel.src_address.s_addr >> 16) & 0xff,
-			(client_session.session.tunnel.src_address.s_addr >>  8) & 0xff,
-			(client_session.session.tunnel.src_address.s_addr >>  0) & 0xff,
+			(ntohl(local_addr.sin_addr.s_addr) >> 24) & 0xff,
+			(ntohl(local_addr.sin_addr.s_addr) >> 16) & 0xff,
+			(ntohl(local_addr.sin_addr.s_addr) >>  8) & 0xff,
+			(ntohl(local_addr.sin_addr.s_addr) >>  0) & 0xff,
 			ntohs(local_addr.sin_port));
 
-	/* create the locks for tunnel resources */
-	ret = pthread_mutex_init(&(client_session.session.status_lock), NULL);
-	if(ret != 0)
+	/*
+	 * Initialize session context
+	 */
+
+	if(!iprohc_session_new(&(client.session), GNUTLS_CLIENT, client.tls_cred,
+	                       NULL, ctrl_sock, local_addr.sin_addr, remote_addr,
+	                       client.raw, client.tun, basedev_mtu, tun_itf_mtu))
 	{
-		trace(LOG_ERR, "failed to init lock: %s (%d)", strerror(ret), ret);
+		trace(LOG_ERR, "failed to init session context");
 		goto close_tcp;
 	}
-	ret = pthread_mutex_init(&(client_session.session.client_lock), NULL);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "failed to init client_lock: %s (%d)", strerror(ret), ret);
-		goto destroy_status_lock;
-	}
-
 
 	/* stop writing logs on stderr */
 	iprohc_log_stderr = false;
@@ -409,22 +431,25 @@ int main(int argc, char *argv[])
 
 	/* Get rid of warning, it's a "bug" of GnuTLS
 	 * (cf. http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
-	gnutls_transport_set_ptr_nowarn(client_session.session.tls_session, client_session.session.tcp_socket);
+	gnutls_transport_set_ptr_nowarn(client.session.tls_session,
+	                                client.session.tcp_socket);
+
+	/* perform TLS handshake with server */
 	do
 	{
-		ret = gnutls_handshake(client_session.session.tls_session);
+		ret = gnutls_handshake(client.session.tls_session);
 	}
 	while(ret < 0 && gnutls_error_is_fatal(ret) == 0);
-
 	if(ret < 0)
 	{
 		trace(LOG_ERR, "TLS handshake failed : %s", gnutls_strerror(ret));
 		exit_status = 2;
-		goto close_tls;
+		goto free_session;
 	}
 	trace(LOG_INFO, "TLS handshake succeeded");
 
-	if(gnutls_certificate_verify_peers2(client_session.session.tls_session, &verify_status) < 0)
+	/* check server certificate */
+	if(gnutls_certificate_verify_peers2(client.session.tls_session, &verify_status) < 0)
 	{
 		trace(LOG_ERR, "TLS verify failed : %s", gnutls_strerror(ret));
 		exit_status = -3;
@@ -465,41 +490,45 @@ int main(int argc, char *argv[])
 	}
 	trace(LOG_INFO, "client certificate accepted");
 
-	/* Set destination tunnel parameter */
-	client_session.session.tunnel.dest_address = ((struct sockaddr_in*) rp->ai_addr)->sin_addr;
-	memset(&(client_session.session.tunnel.dest_addr_str), 0, INET_ADDRSTRLEN);
-
-	/* Ask for connection */
-	unsigned char command[1024];
-	size_t command_len;
-	size_t tlv_len;
-
-	command[0] = C_CONNECT;
-	command_len = 1;
-
-	trace(LOG_INFO, "send connect message to server");
-	is_ok = gen_connrequest(client_session.packing, command + 1, &tlv_len);
-	if(!is_ok)
+	/* ask for connection to server */
 	{
-		trace(LOG_ERR, "failed to generate the connect messsage for server");
-		goto close_tls;
-	}
-	command_len += tlv_len;
+		unsigned char command[1024];
+		size_t command_len;
+		size_t tlv_len;
 
-	/* Emit a simple connect message */
-	size_t emitted_len = 0;
-	do
-	{
-		ret = gnutls_record_send(client_session.session.tls_session, command + emitted_len,
-		                         command_len - emitted_len);
-		if(ret < 0)
+		command[0] = C_CONNECT;
+		command_len = 1;
+
+		trace(LOG_INFO, "send connect message to server");
+		is_ok = gen_connrequest(client.packing, command + 1, &tlv_len);
+		if(!is_ok)
 		{
-			trace(LOG_ERR, "failed to send message to server over TLS (%d)", ret);
+			trace(LOG_ERR, "failed to generate the connect messsage for server");
 			goto close_tls;
 		}
-		emitted_len += ret;
+		command_len += tlv_len;
+
+		/* Emit a simple connect message */
+		size_t emitted_len = 0;
+		do
+		{
+			ret = gnutls_record_send(client.session.tls_session,
+			                         command + emitted_len,
+			                         command_len - emitted_len);
+			if(ret < 0)
+			{
+				trace(LOG_ERR, "failed to send message to server over TLS (%d)", ret);
+				goto close_tls;
+			}
+			emitted_len += ret;
+		}
+		while(emitted_len < command_len);
 	}
-	while(emitted_len < command_len);
+
+
+	/*
+	 * Main loop
+	 */
 
 	/* Handle SIGTERM */
 	if(signal(SIGTERM, iprohc_sigterm) == SIG_ERR)
@@ -531,16 +560,16 @@ int main(int argc, char *argv[])
 
 		timeout.tv_sec = 80;
 		timeout.tv_usec = 0;
-		if(client_session.session.status == IPROHC_SESSION_CONNECTED)
+		if(client.session.status == IPROHC_SESSION_CONNECTED)
 		{
-			timeout.tv_sec = client_session.session.tunnel.params.keepalive_timeout * 2;
+			timeout.tv_sec = client.session.tunnel.params.keepalive_timeout * 2;
 			timeout.tv_usec = 0;
 		}
 
 		FD_ZERO(&rdfs);
-		FD_SET(client_session.session.tcp_socket, &rdfs);
+		FD_SET(client.session.tcp_socket, &rdfs);
 
-		ret = select(client_session.session.tcp_socket + 1, &rdfs, NULL, NULL, &timeout);
+		ret = select(client.session.tcp_socket + 1, &rdfs, NULL, NULL, &timeout);
 		if(ret < 0)
 		{
 			if(errno == EINTR)
@@ -559,24 +588,24 @@ int main(int argc, char *argv[])
 			goto close_tls;
 		}
 
-		if(FD_ISSET(client_session.session.tcp_socket, &rdfs))
+		if(FD_ISSET(client.session.tcp_socket, &rdfs))
 		{
-			ret = gnutls_record_recv(client_session.session.tls_session, buf, 1024);
+			ret = gnutls_record_recv(client.session.tls_session, buf, 1024);
 			if(ret < 0)
 			{
 				trace(LOG_ERR, "failed to receive data from server on TLS "
 				      "session: %s (%d)", gnutls_strerror(ret), ret);
-				goto error;
+				goto close_tls;
 			}
 			else if(ret == 0)
 			{
 				trace(LOG_ERR, "TLS session was interrupted by server");
-				goto error;
+				goto close_tls;
 			}
-			if(!handle_message(&client_session, buf, ret))
+			if(!handle_message(&client, buf, ret))
 			{
 				trace(LOG_ERR, "failed to handle message received from server");
-				goto error;
+				goto close_tls;
 			}
 		}
 	}
@@ -584,7 +613,7 @@ int main(int argc, char *argv[])
 	trace(LOG_INFO, "client interrupted, interrupt established session");
 
 	/* send disconnect message to server */
-	if(!client_send_disconnect_msg(client_session.session.tls_session))
+	if(!client_send_disconnect_msg(client.session.tls_session))
 	{
 		trace(LOG_WARNING, "failed to cleanly close the session with server");
 	}
@@ -593,18 +622,27 @@ int main(int argc, char *argv[])
 
 close_tls:
 	trace(LOG_INFO, "close TLS session");
-	gnutls_bye(client_session.session.tls_session, GNUTLS_SHUT_RDWR);
-	gnutls_deinit(client_session.session.tls_session);
-	gnutls_certificate_free_credentials(xcred);
-	gnutls_global_deinit();
-/*destroy_client_lock:*/
-	pthread_mutex_destroy(&(client_session.session.client_lock));
-destroy_status_lock:
-	pthread_mutex_destroy(&(client_session.session.status_lock));
+	gnutls_bye(client.session.tls_session, GNUTLS_SHUT_RDWR);
+free_session:
+	if(!iprohc_session_free(&(client.session)))
+	{
+		trace(LOG_ERR, "failed to reset session context");
+	}
 close_tcp:
 	trace(LOG_INFO, "close TCP connection");
-	close(client_session.session.tcp_socket);
+	close(ctrl_sock);
+free_addrinfo:
+	freeaddrinfo(result);
+delete_raw:
+	close(client.raw);
+delete_tun:
+	close(client.tun);
+tls_deinit:
+	trace(LOG_INFO, "free TLS resources");
+	gnutls_certificate_free_credentials(client.tls_cred);
+	gnutls_global_deinit();
 error:
+	closelog();
 	return exit_status;
 }
 

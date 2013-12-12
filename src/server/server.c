@@ -72,6 +72,7 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
                                             struct iprohc_server_session *const clients,
                                             size_t *const clients_nr,
                                             const size_t clients_max_nr,
+                                            const int raw,
                                             const int tun,
                                             const size_t tun_itf_mtu,
                                             const size_t basedev_mtu,
@@ -355,11 +356,11 @@ int main(int argc, char *argv[])
 	trace(LOG_INFO, "load server certificate from file '%s'",
 			server_opts.pkcs12_f);
 	gnutls_global_init();
-	gnutls_certificate_allocate_credentials(&(server_opts.xcred));
+	gnutls_certificate_allocate_credentials(&(server_opts.tls_cred));
 	gnutls_priority_init(&(server_opts.priority_cache), "NORMAL", NULL);
-	if(!load_p12(server_opts.xcred, server_opts.pkcs12_f, ""))
+	if(!load_p12(server_opts.tls_cred, server_opts.pkcs12_f, ""))
 	{
-		if(!load_p12(server_opts.xcred, server_opts.pkcs12_f, NULL))
+		if(!load_p12(server_opts.tls_cred, server_opts.pkcs12_f, NULL))
 		{
 			trace(LOG_ERR, "failed to load server certificate from file '%s'",
 					server_opts.pkcs12_f);
@@ -373,7 +374,7 @@ int main(int argc, char *argv[])
 		trace(LOG_ERR, "failed to generate Diffie-Hellman parameters");
 		goto deinit_tls;
 	}
-	gnutls_certificate_set_dh_params(server_opts.xcred, dh_params);
+	gnutls_certificate_set_dh_params(server_opts.tls_cred, dh_params);
 
 
 	/*
@@ -541,7 +542,7 @@ int main(int argc, char *argv[])
 		{
 			if(!iprohc_server_handle_new_client(serv_socket, clients, &clients_nr,
 			                                    server_opts.clients_max_nr,
-			                                    tun, tun_itf_mtu, basedev_mtu,
+			                                    raw, tun, tun_itf_mtu, basedev_mtu,
 			                                    server_opts))
 			{
 				trace(LOG_ERR, "failed to handle new client session");
@@ -697,28 +698,7 @@ int main(int argc, char *argv[])
 	{
 		if(clients[client_id].is_init)
 		{
-			/* close RAW socketpair */
-			close(clients[client_id].session.tunnel.fake_raw[0]);
-			clients[client_id].session.tunnel.fake_raw[0] = -1;
-			close(clients[client_id].session.tunnel.fake_raw[1]);
-			clients[client_id].session.tunnel.fake_raw[1] = -1;
-			/* close RAW socket */
-			close(clients[client_id].session.tunnel.raw_socket);
-			clients[client_id].session.tunnel.raw_socket = -1;
-			/* close TUN socketpair */
-			close(clients[client_id].session.tunnel.fake_tun[0]);
-			clients[client_id].session.tunnel.fake_tun[0] = -1;
-			close(clients[client_id].session.tunnel.fake_tun[1]);
-			clients[client_id].session.tunnel.fake_tun[1] = -1;
-			/* close TUN interface */
-			close(clients[client_id].session.tunnel.tun);
-			clients[client_id].session.tunnel.tun = -1;
-			/* close TLS session */
-			gnutls_deinit(clients[client_id].session.tls_session);
-			/* close TCP connection */
-			close(clients[client_id].session.tcp_socket);
-			/* free client context */
-			clients[client_id].is_init = false;
+			del_client(&(clients[client_id]));
 		}
 	}
 
@@ -745,7 +725,7 @@ free_dh:
 	gnutls_dh_params_deinit(dh_params);
 deinit_tls:
 	trace(LOG_INFO, "release TLS resources");
-	gnutls_certificate_free_credentials(server_opts.xcred);
+	gnutls_certificate_free_credentials(server_opts.tls_cred);
 	gnutls_priority_deinit(server_opts.priority_cache);
 	gnutls_global_deinit();
 /*free_client_contexts:*/
@@ -778,6 +758,7 @@ error:
  * @param clients             The contexts for all clients
  * @param[in,out] clients_nr  The number of clients currently connected
  * @param clients_max_nr      The maximum number of clients accepted
+ * @param raw                 The RAW socket
  * @param tun                 The file descriptor of the TUN interface
  * @param tun_itf_mtu         The MTU of the TUN interface
  * @param basedev_mtu         The MTU of the underlying interface
@@ -789,6 +770,7 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
                                             struct iprohc_server_session *const clients,
                                             size_t *const clients_nr,
                                             const size_t clients_max_nr,
+                                            const int raw,
                                             const int tun,
                                             const size_t tun_itf_mtu,
                                             const size_t basedev_mtu,
@@ -803,6 +785,8 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
 	assert(clients_nr != NULL);
 	assert(clients_max_nr > 0);
 	assert((*clients_nr) <= clients_max_nr);
+	assert(raw >= 0);
+	assert(tun >= 0);
 
 	/* accept connection */
 	conn = accept(serv_sock, (struct sockaddr *) &remote_addr, &remote_addr_len);
@@ -837,7 +821,7 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
 		trace(LOG_INFO, "will store client %zu/%zu at index %zu",
 		      (*clients_nr) + 1, clients_max_nr, client_id);
 
-		ret = new_client(conn, remote_addr, tun, tun_itf_mtu, basedev_mtu,
+		ret = new_client(conn, remote_addr, raw, tun, tun_itf_mtu, basedev_mtu,
 		                 &(clients[client_id]), client_id, server_opts);
 		if(ret < 0)
 		{
@@ -1005,7 +989,7 @@ static void * route(void *arg)
 				{
 					if(addr.s_addr == clients[i].session.local_address.s_addr)
 					{
-						ret = write(clients[i].session.tunnel.fake_tun[1], buffer, len);
+						ret = write(clients[i].fake_tun[1], buffer, len);
 						if(ret < 0)
 						{
 							trace(LOG_WARNING, "failed to send %zu-byte packet to "
@@ -1023,9 +1007,9 @@ static void * route(void *arg)
 				}
 				else
 				{
-					if(addr.s_addr == clients[i].session.tunnel.dest_address.s_addr)
+					if(addr.s_addr == clients[i].session.dst_addr.s_addr)
 					{
-						ret = write(clients[i].session.tunnel.fake_raw[1], buffer, len);
+						ret = write(clients[i].fake_raw[1], buffer, len);
 						if(ret < 0)
 						{
 							trace(LOG_WARNING, "failed to send %zu-byte packet to "

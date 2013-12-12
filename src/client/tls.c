@@ -213,6 +213,9 @@ int load_p12(gnutls_certificate_credentials_t xcred, char*p12_file, char*passwor
 			}
 		}
 		bag_idx++;
+
+		gnutls_pkcs12_bag_deinit(bag);
+		bag = NULL;
 	}
 
 	if(!key)

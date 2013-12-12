@@ -30,7 +30,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 
 /* Handlers of differents messages types */
-static bool handle_okconnect(struct iprohc_client_session *const client_session,
+static bool handle_okconnect(struct iprohc_client_session *const client,
                              unsigned char *const data,
                              const size_t data_len,
                              size_t *const parsed_len)
@@ -38,14 +38,14 @@ static bool handle_okconnect(struct iprohc_client_session *const client_session,
 
 
 /* Generic functions for handling messages */
-bool handle_message(struct iprohc_client_session *const client_session,
+bool handle_message(struct iprohc_client_session *const client,
 						  unsigned char *const buf,
 						  const int length)
 {
 	size_t parsed_len;
 	size_t i;
 
-	assert(client_session != NULL);
+	assert(client != NULL);
 	assert(buf != NULL);
 	assert(length > 0);
 
@@ -63,7 +63,7 @@ bool handle_message(struct iprohc_client_session *const client_session,
 				parsed_len++;
 
 				/* TODO: give remaining length */
-				is_ok = handle_okconnect(client_session, buf + i + 1,
+				is_ok = handle_okconnect(client, buf + i + 1,
 				                         length - i - 1, &tlv_len);
 				if(!is_ok)
 				{
@@ -79,12 +79,12 @@ bool handle_message(struct iprohc_client_session *const client_session,
 			case C_KEEPALIVE:
 			{
 				trace(LOG_DEBUG, "Received keepalive");
-				gettimeofday(&(client_session->session.last_keepalive), NULL);
+				gettimeofday(&(client->session.last_keepalive), NULL);
 				parsed_len++;
 				/* send keepalive */
 				char command[1] = { C_KEEPALIVE };
 				trace(LOG_DEBUG, "Keepalive !");
-				gnutls_record_send(client_session->session.tls_session, command, 1);
+				gnutls_record_send(client->session.tls_session, command, 1);
 				break;
 			}
 
@@ -112,13 +112,11 @@ error:
 
 
 /* Handler of okconnect message from server */
-static bool handle_okconnect(struct iprohc_client_session *const client_session,
+static bool handle_okconnect(struct iprohc_client_session *const client,
                              unsigned char *const data,
                              const size_t data_len,
                              size_t *const parsed_len)
 {
-	int tun, raw;
-	int tun_itf_id;
 	struct in_addr debug_addr;
 	pthread_t tunnel_thread;
 	struct tunnel_params tp;
@@ -129,7 +127,7 @@ static bool handle_okconnect(struct iprohc_client_session *const client_session,
 	bool is_ok;
 	int ret;
 
-	assert(client_session != NULL);
+	assert(client != NULL);
 	assert(data != NULL);
 	assert(parsed_len != NULL);
 
@@ -147,53 +145,29 @@ static bool handle_okconnect(struct iprohc_client_session *const client_session,
 	debug_addr.s_addr = tp.local_address;
 	trace(LOG_DEBUG, "Creation of tunnel, local address : %s\n", inet_ntoa(debug_addr));
 
-	/* create the TUN interface */
-	tun = create_tun(client_session->tun_name, client_session->basedev,
-	                 &tun_itf_id, &client_session->session.tunnel.basedev_mtu,
-	                 &client_session->session.tunnel.tun_itf_mtu);
-	if(tun < 0)
+	/* set params */
+	client->session.tunnel.params = tp;
+
+	/* set forced packing */
+	if(client->packing != 0)
 	{
-		trace(LOG_ERR, "Unable to create TUN device");
-		goto error;
+		client->session.tunnel.params.packing = client->packing;
 	}
 
 	/* set the IPv4 address on the TUN interface */
-	is_ok = set_ip4(tun_itf_id, tp.local_address, 24);
+	is_ok = set_ip4(client->tun_itf_id, tp.local_address, 24);
 	if(!is_ok)
 	{
 		trace(LOG_ERR, "failed to set IP address on TUN interface");
-		goto delete_tun;
-	}
-	client_session->session.tunnel.tun = tun;  /* real tun device */
-	client_session->session.tunnel.fake_tun[0] = -1;
-	client_session->session.tunnel.fake_tun[1] = -1;
-
-	/* set RAW  */
-	raw = create_raw();
-	if(raw < 0)
-	{
-		trace(LOG_ERR, "Unable to create RAW socket");
-		goto delete_tun;
-	}
-	client_session->session.tunnel.raw_socket  = raw;
-	client_session->session.tunnel.fake_raw[0] = -1;
-	client_session->session.tunnel.fake_raw[1] = -1;
-
-	/* set params */
-	client_session->session.tunnel.params = tp;
-
-	/* set forced packing */
-	if(client_session->packing != 0)
-	{
-		client_session->session.tunnel.params.packing = client_session->packing;
+		goto error;
 	}
 
 	/* up script */
-	if(strcmp(client_session->up_script_path, "") != 0)
+	if(strcmp(client->up_script_path, "") != 0)
 	{
 		if((pid = fork()) == 0)
 		{
-			char*argv[4] = { "sh", "-c", client_session->up_script_path, NULL };
+			char*argv[4] = { "sh", "-c", client->up_script_path, NULL };
 
 			setenv("ifconfig_local", inet_ntoa(debug_addr), 1);
 			execve("/bin/sh", argv, __environ);
@@ -208,32 +182,30 @@ static bool handle_okconnect(struct iprohc_client_session *const client_session,
 			if(status == 0)
 			{
 				trace(LOG_INFO, "%s successfully executed",
-				      client_session->up_script_path);
+				      client->up_script_path);
 			}
 			else
 			{
 				trace(LOG_WARNING, "%s exited with code %d",
-				      client_session->up_script_path, status);
+				      client->up_script_path, status);
 			}
 		}
 	}
 
 	/* Go thread, go ! */
 	trace(LOG_INFO, "run tunnel thread for new client");
-	ret = pthread_create(&tunnel_thread, NULL, new_tunnel,
-	                     (void *) client_session);
+	ret = pthread_create(&tunnel_thread, NULL, new_tunnel, &(client->session));
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "failed to run tunnel thread for new client: %s (%d)",
 				strerror(ret), ret);
+		goto error;
 	}
 
-	gnutls_record_send(client_session->session.tls_session, message, 1);
+	gnutls_record_send(client->session.tls_session, message, 1);
 
 	return true;
 
-delete_tun:
-	close(tun);
 error:
 	return false;
 }

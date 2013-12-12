@@ -36,6 +36,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 int new_client(const int conn,
                const struct sockaddr_in remote_addr,
+               const int raw,
                const int tun,
                const size_t tun_itf_mtu,
                const size_t basedev_mtu,
@@ -43,190 +44,145 @@ int new_client(const int conn,
                const size_t client_id,
                const struct server_opts server_opts)
 {
-	char remote_addr_str[INET_ADDRSTRLEN];
-	struct in_addr local;
-	int raw;
-	int ret;
+	struct in_addr client_local_addr;
 	unsigned int verify_status;
 	int status = -1;
+	int ret;
 
 	assert(conn >= 0);
+	assert(raw >= 0);
 	assert(tun >= 0);
 	assert(client != NULL);
 
-	/* Initialize TLS */
-	gnutls_session_t session;
-	gnutls_init(&session, GNUTLS_SERVER);
-	gnutls_priority_set(session, server_opts.priority_cache);
-	gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, server_opts.xcred);
-	gnutls_certificate_server_set_request(session, GNUTLS_CERT_REQUEST);
+	client_local_addr.s_addr =
+		htonl(ntohl(server_opts.local_address) + 1 + client_id);
 
-	/* init the debug prefix */
-	if(inet_ntop(AF_INET, &(remote_addr.sin_addr), remote_addr_str, INET_ADDRSTRLEN) == NULL)
+	/* init the generic session part */
+	if(!iprohc_session_new(&(client->session), GNUTLS_SERVER, server_opts.tls_cred,
+	                       server_opts.priority_cache, conn, client_local_addr,
+	                       remote_addr, raw, tun, basedev_mtu, tun_itf_mtu))
 	{
-		trace(LOG_ERR, "failed to convert client address to string: %s (%d)",
-		      strerror(errno), errno);
-		status = -3;
+		trace(LOG_ERR, "failed to init session for client #%zu", client_id);
+		status = -1;
 		goto error;
 	}
-	trace(LOG_INFO, "[client %s] new connection from %s:%d", remote_addr_str,
-	      remote_addr_str, ntohs(remote_addr.sin_port));
 
-	/* TLS */
+	/* create a socket pair for the TUN device between the route thread and
+	 * the client thread */
+	if(socketpair(AF_UNIX, SOCK_RAW, 0, client->fake_tun) < 0)
+	{
+		trace(LOG_ERR, "[client %s] failed to create a socket pair for TUN: "
+		      "%s (%d)", client->session.dst_addr_str, strerror(errno), errno);
+		status = -2;
+		goto free_session;
+	}
+	/* for local input, don't use the real TUN fd, but the socket pair */
+	client->session.tunnel.tun_fd_in = client->fake_tun[0];
+
+	/* create a socket pair for the RAW socket between the route thread and
+	 * the client thread */
+	if(socketpair(AF_UNIX, SOCK_RAW, 0, client->fake_raw) < 0)
+	{
+		trace(LOG_ERR, "[client %s] failed to create a socket pair for the raw "
+		      "socket: %s (%d)", client->session.dst_addr_str, strerror(errno),
+		      errno);
+		status = -3;
+		goto close_tun_pair;
+	}
+	/* for remote input, don't use the real RAW fd, but the socket pair */
+	client->session.tunnel.raw_socket_in = client->fake_raw[0];
+
+	/* set tunnel paramaters with the ones retrieved in configuration */
+	memcpy(&(client->session.tunnel.params), &server_opts.params,
+	       sizeof(struct tunnel_params));
+	client->session.tunnel.params.local_address =
+		client->session.local_address.s_addr;
+
 	/* Get rid of warning, it's a "bug" of GnuTLS
 	 * (see http://lists.gnu.org/archive/html/help-gnutls/2006-03/msg00020.html) */
-	gnutls_transport_set_ptr_nowarn(session, conn);
+	gnutls_transport_set_ptr_nowarn(client->session.tls_session, conn);
+
+	/* perform TLS handshake */
 	do
 	{
-		ret = gnutls_handshake (session);
+		ret = gnutls_handshake(client->session.tls_session);
 	}
 	while(ret < 0 && gnutls_error_is_fatal (ret) == 0);
-
 	if(ret < 0)
 	{
 		trace(LOG_ERR, "[client %s] TLS handshake failed: %s (%d)",
-		      remote_addr_str, gnutls_strerror(ret), ret);
+		      client->session.dst_addr_str, gnutls_strerror(ret), ret);
 		status = -4;
-		goto tls_deinit;
+		goto close_raw_pair;
 	}
-	trace(LOG_INFO, "[client %s] TLS handshake succeeded", remote_addr_str);
+	trace(LOG_INFO, "[client %s] TLS handshake succeeded",
+	      client->session.dst_addr_str);
 
-	ret = gnutls_certificate_verify_peers2(session, &verify_status);
+	/* check the peer certificate */
+	ret = gnutls_certificate_verify_peers2(client->session.tls_session, &verify_status);
 	if(ret < 0)
 	{
-		trace(LOG_ERR, "[client %s] TLS verify failed: %s (%d)", remote_addr_str,
-		      gnutls_strerror(ret), ret);
+		trace(LOG_ERR, "[client %s] TLS verify failed: %s (%d)",
+		      client->session.dst_addr_str, gnutls_strerror(ret), ret);
 		status = -5;
-		goto tls_deinit;
+		goto close_raw_pair;
 	}
 
 	if((verify_status & GNUTLS_CERT_INVALID) &&
 	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
 	{
 		trace(LOG_ERR, "[client %s] certificate cannot be verified (status %u)",
-		      remote_addr_str, verify_status);
+		      client->session.dst_addr_str, verify_status);
 		if(verify_status & GNUTLS_CERT_REVOKED)
 		{
-			trace(LOG_ERR, "[client %s] - revoked certificate", remote_addr_str);
+			trace(LOG_ERR, "[client %s] - revoked certificate",
+			      client->session.dst_addr_str);
 		}
 		if(verify_status & GNUTLS_CERT_SIGNER_NOT_FOUND)
 		{
 			trace(LOG_ERR, "[client %s] - unable to trust certificate issuer",
-			      remote_addr_str);
+			      client->session.dst_addr_str);
 		}
 		if(verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
 		{
 			trace(LOG_ERR, "[client %s] - certificate issuer is not a CA",
-			      remote_addr_str);
+			      client->session.dst_addr_str);
 		}
 		if(verify_status & GNUTLS_CERT_NOT_ACTIVATED)
 		{
 			trace(LOG_ERR, "[client %s] - the certificate is not activated",
-			      remote_addr_str);
+			      client->session.dst_addr_str);
 		}
 		if(verify_status & GNUTLS_CERT_EXPIRED)
 		{
 			trace(LOG_ERR, "[client %s] - the certificate has expired",
-			      remote_addr_str);
+			      client->session.dst_addr_str);
 		}
 		status = -6;
-		goto tls_deinit;
-	}
-
-	/* client creation parameters */
-	trace(LOG_DEBUG, "[client %s] creation of client", remote_addr_str);
-	memset(&(client->session.tunnel.stats), 0, sizeof(struct statitics));
-	client->session.tcp_socket = conn;
-	client->session.tls_session = session;
-
-	/* dest_addr */
-	client->session.tunnel.src_address.s_addr = INADDR_ANY;
-	client->session.tunnel.dest_address = remote_addr.sin_addr;
-	memcpy(client->session.tunnel.dest_addr_str, remote_addr_str, INET_ADDRSTRLEN);
-
-	/* local_addr */
-	local.s_addr = htonl(ntohl(server_opts.local_address) + client_id + 10);
-	client->session.local_address = local;
-
-	/* set tun */
-	client->session.tunnel.tun = tun;  /* real tun device */
-	client->session.tunnel.tun_itf_mtu = tun_itf_mtu;
-	if(socketpair(AF_UNIX, SOCK_RAW, 0, client->session.tunnel.fake_tun) < 0)
-	{
-		trace(LOG_ERR, "[client %s] failed to create a socket pair for TUN: "
-		      "%s (%d)", remote_addr_str, strerror(errno), errno);
-		/* TODO  : Flush */
-		status = -8;
-		goto reset_tun;
-	}
-
-	/* set raw */
-	raw = create_raw();
-	if(raw < 0)
-	{
-		trace(LOG_ERR, "[client %s] unable to create raw socket", remote_addr_str);
-		status = -9;
-		goto close_tun_pair;
-	}
-	client->session.tunnel.raw_socket = raw;
-	client->session.tunnel.basedev_mtu = basedev_mtu;
-	if(socketpair(AF_UNIX, SOCK_RAW, 0, client->session.tunnel.fake_raw) < 0)
-	{
-		trace(LOG_ERR, "[client %s] failed to create a socket pair for the raw "
-		      "socket: %s (%d)", remote_addr_str, strerror(errno), errno);
-		/* TODO  : Flush */
-		status = -10;
-		goto close_raw;
-	}
-
-	memcpy(&(client->session.tunnel.params),  &(server_opts.params),
-			 sizeof(struct tunnel_params));
-	client->session.tunnel.params.local_address = local.s_addr;
-	client->session.status = IPROHC_SESSION_CONNECTING;
-	client->session.last_keepalive.tv_sec = -1;
-
-	ret = pthread_mutex_init(&(client->session.status_lock), NULL);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "[client %s] failed to init lock: %s (%d)",
-		      remote_addr_str, strerror(ret), ret);
-		status = -11;
 		goto close_raw_pair;
 	}
-	ret = pthread_mutex_init(&(client->session.client_lock), NULL);
-	if(ret != 0)
-	{
-		trace(LOG_ERR, "[client %s] failed to init client_lock: %s (%d)",
-		      remote_addr_str, strerror(ret), ret);
-		status = -12;
-		goto destroy_lock;
-	}
 
-	trace(LOG_DEBUG, "[client %s] client context created", remote_addr_str);
+	trace(LOG_DEBUG, "[client %s] client context created",
+	      client->session.dst_addr_str);
 
 	client->is_init = true;
 	return client_id;
 
-destroy_lock:
-	pthread_mutex_destroy(&(client->session.status_lock));
 close_raw_pair:
-	close(client->session.tunnel.fake_raw[0]);
-	client->session.tunnel.fake_raw[0] = -1;
-	close(client->session.tunnel.fake_raw[1]);
-	client->session.tunnel.fake_raw[1] = -1;
-close_raw:
-	client->session.tunnel.raw_socket = -1;
-	close(raw);
+	close(client->fake_raw[0]);
+	client->fake_raw[0] = -1;
+	close(client->fake_raw[1]);
+	client->fake_raw[1] = -1;
 close_tun_pair:
-	close(client->session.tunnel.fake_tun[0]);
-	client->session.tunnel.fake_tun[0] = -1;
-	close(client->session.tunnel.fake_tun[1]);
-	client->session.tunnel.fake_tun[1] = -1;
-reset_tun:
-	client->session.tunnel.tun = -1;
-	client->is_init = false;
-tls_deinit:
-	gnutls_deinit(session);
+	close(client->fake_tun[0]);
+	client->fake_tun[0] = -1;
+	close(client->fake_tun[1]);
+	client->fake_tun[1] = -1;
+free_session:
+	if(!iprohc_session_free(&(client->session)))
+	{
+		trace(LOG_ERR, "failed to reset session for client #%zu", client_id);
+	}
 error:
 	return status;
 }
@@ -235,46 +191,37 @@ error:
 void del_client(struct iprohc_server_session *const client)
 {
 	assert(client != NULL);
+	assert(client->is_init);
 
-	trace(LOG_INFO, "[client %s] remove client", client->session.tunnel.dest_addr_str);
+	trace(LOG_INFO, "[client %s] remove client", client->session.dst_addr_str);
 
 	free(client->session.tunnel.stats.stats_packing);
 
-	/* reset source and destination addresses */
-	memset(&(client->session.tunnel.dest_address), 0, sizeof(struct in_addr));
-	memset(&(client->session.tunnel.dest_addr_str), 0, INET_ADDRSTRLEN);
-	memset(&(client->session.tunnel.src_address), 0, sizeof(struct in_addr));
-
-	pthread_mutex_destroy(&client->session.client_lock);
-	pthread_mutex_destroy(&client->session.status_lock);
-
 	/* close RAW socket pair */
-	close(client->session.tunnel.fake_raw[0]);
-	client->session.tunnel.fake_raw[0] = -1;
-	close(client->session.tunnel.fake_raw[1]);
-	client->session.tunnel.fake_raw[1] = -1;
+	close(client->fake_raw[0]);
+	client->fake_raw[0] = -1;
+	close(client->fake_raw[1]);
+	client->fake_raw[1] = -1;
 
-	/* close RAW socket (nothing to do if close_tunnel() was already called) */
-	close(client->session.tunnel.raw_socket);
-	client->session.tunnel.raw_socket = -1;
+	/* reset RAW socket (do not close it, it is shared with other clients) */
+	client->session.tunnel.raw_socket_in = -1;
+	client->session.tunnel.raw_socket_out = -1;
 
 	/* close TUN socket pair */
-	close(client->session.tunnel.fake_tun[0]);
-	client->session.tunnel.fake_tun[0] = -1;
-	close(client->session.tunnel.fake_tun[1]);
-	client->session.tunnel.fake_tun[1] = -1;
+	close(client->fake_tun[0]);
+	client->fake_tun[0] = -1;
+	close(client->fake_tun[1]);
+	client->fake_tun[1] = -1;
 
 	/* reset TUN fd (do not close it, it is shared with other clients) */
-	client->session.tunnel.tun = -1;
+	client->session.tunnel.tun_fd_in = -1;
+	client->session.tunnel.tun_fd_out = -1;
 
-	/* close TCP socket */
-	close(client->session.tcp_socket);
-	client->session.tcp_socket = -1;
+	if(!iprohc_session_free(&(client->session)))
+	{
+		trace(LOG_ERR, "failed to reset session for client");
+	}
 
-	/* free TLS resources */
-	gnutls_deinit(client->session.tls_session);
-	
-	/* free client context */
 	client->is_init = false;
 }
 
@@ -301,7 +248,6 @@ void stop_client_tunnel(struct iprohc_server_session *const client)
 	int ret;
 
 	assert(client != NULL);
-	assert(client->session.tunnel.raw_socket != -1);
 
 	ret = pthread_mutex_lock(&client->session.status_lock);
 	if(ret != 0)

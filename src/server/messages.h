@@ -22,7 +22,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 	do \
 	{ \
 		trace((prio), "[client %s] " format, \
-		      (client).session.tunnel.dest_addr_str, ##__VA_ARGS__); \
+		      (client).session.dst_addr_str, ##__VA_ARGS__); \
 	} \
 	while(0)
 

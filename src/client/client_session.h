@@ -26,17 +26,26 @@
 
 #include "session.h"
 
+#include <limits.h>
 #include <net/if.h>
 
 /** The context of the session at client */
 struct iprohc_client_session
 {
+	gnutls_certificate_credentials_t tls_cred;
+
 	struct iprohc_session session; /**< The generic session context */
 
 	char tun_name[IFNAMSIZ];       /**< The name of the TUN interface */
-	char basedev[IFNAMSIZ];        /**< The name of the base interface */
-	char *up_script_path;          /**< The path to the UP script */
-	int packing;                   /**< The packing level that client wishes to enforce */
+	int tun;
+	int tun_itf_id;
+
+	int raw;
+
+	char basedev[IFNAMSIZ];            /**< The name of the base interface */
+
+	char up_script_path[PATH_MAX + 1]; /**< The path to the UP script */
+	int packing;                       /**< The packing level that client wishes to enforce */
 };
 
 #endif

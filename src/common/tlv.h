@@ -130,7 +130,8 @@ Specific parsing
 /* Number of fields */
 #define N_TUNNEL_PARAMS 8
 
-struct tunnel_params {
+struct tunnel_params
+{
 	uint32_t local_address;
 	char packing;
 	size_t max_cid;

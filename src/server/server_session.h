@@ -36,6 +36,9 @@ struct iprohc_server_session
 
 	struct timeval last_keepalive;  /** The time at which the last keepalive was sent */
 	int packing;                    /** The packing level enforced by client */
+
+	int fake_raw[2];                /**< Fake RAW device for server side */
+	int fake_tun[2];                /**< Fake TUN device for server side */
 };
 
 #endif
