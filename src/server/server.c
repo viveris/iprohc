@@ -38,6 +38,8 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <signal.h>
 #include <getopt.h>
 #include <assert.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #include <sys/signalfd.h>
 #include <sys/timerfd.h>
@@ -321,6 +323,33 @@ int main(int argc, char *argv[])
 		trace(LOG_ERR, "[main] failed to create signal fd: %s (%d)",
 		      strerror(errno), errno);
 		goto remove_pidfile;
+	}
+
+
+	/*
+	 * Set system limits
+	 */
+
+	{
+		const size_t fds_nr_base = 20U;
+		const size_t fds_nr_per_client = 9U;
+		const size_t fds_max_nr =
+			fds_nr_base + server_opts.clients_max_nr * fds_nr_per_client;
+		const struct rlimit fd_limits = {
+			.rlim_cur = fds_max_nr,
+			.rlim_max = fds_max_nr + 1,
+		};
+
+		ret = setrlimit(RLIMIT_NOFILE, &fd_limits);
+		if(ret != 0)
+		{
+			trace(LOG_ERR, "[main] failed to set system limits: failed to limit "
+			      "the number of file descriptors to %zu: %s (%d)", fds_max_nr,
+			      strerror(errno), errno);
+			goto close_signal_fd;
+		}
+		trace(LOG_INFO, "[main] set system limit for the number of file "
+		      "descriptors to %zu", fds_max_nr);
 	}
 
 
