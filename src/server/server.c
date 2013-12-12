@@ -18,6 +18,15 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /* server.c -- Implements server side of the ROHC IP-IP tunnel
 */
 
+#include "tun_helpers.h"
+#include "client.h"
+#include "messages.h"
+#include "tls.h"
+#include "server_config.h"
+#include "rohc_tunnel.h"
+#include "log.h"
+#include "utils.h"
+
 #include "config.h"
 
 #include <sys/socket.h>
@@ -32,24 +41,11 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <assert.h>
 #include <gnutls/gnutls.h>
 #include <gnutls/pkcs12.h>
+#include <sys/signalfd.h>
 
-#include "tun_helpers.h"
-#include "client.h"
-#include "messages.h"
-#include "tls.h"
-#include "server_config.h"
-#include "rohc_tunnel.h"
-#include "log.h"
-
-
-/** Toggle to true to print clients stats at next event loop */
-static bool clients_do_dump_stats = false;
 
 int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
-
-/** Server stays alive until alive becomes zero */
-static int alive;
 
 
 /*
@@ -81,55 +77,6 @@ static bool iprohc_server_handle_new_client(const int serv_sock,
 	
 static void dump_stats_client(struct iprohc_server_session *const client)
 	__attribute__((nonnull(1)));
-
-
-/**
- * @brief Tell the main loop to dump statistics to log
- *
- * Called on SIGUSR1 signal.
- *
- * @param sig  The received signal, should be SIGUSR1
- */
-static void iprohc_server_dump_stats(int sig)
-{
-	clients_do_dump_stats = true;
-}
-
-
-/**
- * @brief Switch between LOG_INFO and LOG_DEBUG
- *
- * Called on SIGUSR2 signal.
- * 
- * @param sig  The received signal, should be SIGUSR2
- */
-static void iprohc_server_switch_log_max(int sig)
-{
-	if(log_max_priority == LOG_DEBUG)
-	{
-		log_max_priority = LOG_INFO;
-		trace(LOG_INFO, "Debugging disabled");
-	}
-	else
-	{
-		log_max_priority = LOG_DEBUG;
-		trace(LOG_DEBUG, "Debugging enabled");
-	}
-}
-
-
-/**
- * @brief Tell the main loop to quit
- *
- * Called on SIGINT or SIGTERM signals.
- * 
- * @param sig  The received signal.
- */
-static void iprohc_server_quit(int sig)
-{
-	trace(LOG_NOTICE, "SIGTERM or SIGINT received");
-	alive = 0;
-}
 
 
 /**
@@ -205,11 +152,14 @@ int main(int argc, char *argv[])
 	pthread_t raw_route_thread;
 
 	fd_set rdfs;
-	int max;
+	int max_fd;
 	int j;
 
 	int ret;
-	sigset_t sigmask;
+
+	int signal_fd;
+	sigset_t mask;
+	bool is_server_alive;
 
 	gnutls_dh_params_t dh_params;
 
@@ -224,13 +174,6 @@ int main(int argc, char *argv[])
 	/* Initialize logger */
 	openlog("iprohc_server", LOG_PID, LOG_DAEMON);
 
-	/* Signal for stats and log */
-	signal(SIGINT,  iprohc_server_quit);
-	signal(SIGTERM, iprohc_server_quit);
-	signal(SIGHUP, SIG_IGN); /* used to stop client threads */
-	signal(SIGPIPE, SIG_IGN); /* don't stop if TCP connection was unexpectedly closed */
-	signal(SIGUSR1, iprohc_server_dump_stats);
-	signal(SIGUSR2, iprohc_server_switch_log_max);
 
 	/*
 	 * Parsing options
@@ -289,7 +232,7 @@ int main(int argc, char *argv[])
 				break;
 			case 'd':
 				log_max_priority = LOG_DEBUG;
-				trace(LOG_DEBUG, "Debugging enabled");
+				trace(LOG_DEBUG, "debug mode enabled");
 				break;
 			case 'h':
 				usage();
@@ -330,6 +273,38 @@ int main(int argc, char *argv[])
 
 
 	/*
+	 * Handle signals for stats and log
+	 */
+
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGINT);
+	sigaddset(&mask, SIGTERM);
+	sigaddset(&mask, SIGQUIT);
+	sigaddset(&mask, SIGHUP); /* used to stop client threads */
+	sigaddset(&mask, SIGPIPE); /* don't stop if TCP connection was unexpectedly closed */
+	sigaddset(&mask, SIGUSR1);
+	sigaddset(&mask, SIGUSR2);
+
+	/* block signals to handle them through signal fd */
+	ret = sigprocmask(SIG_BLOCK, &mask, NULL);
+	if(ret != 0)
+	{
+		trace(LOG_ERR, "failed to block UNIX signals: %s (%d)",
+		      strerror(errno), errno);
+		goto remove_pidfile;
+	}
+
+	/* create signal fd */
+	signal_fd = signalfd(-1, &mask, 0);
+	if(signal_fd < 0)
+	{
+		trace(LOG_ERR, "failed to create signal fd: %s (%d)",
+		      strerror(errno), errno);
+		goto remove_pidfile;
+	}
+
+
+	/*
 	 * Initialize contexts for clients
 	 */
 
@@ -339,7 +314,7 @@ int main(int argc, char *argv[])
 	{
 		trace(LOG_ERR, "failed to allocate memory for the contexts of %zu "
 		      "clients", server_opts.clients_max_nr);
-		goto remove_pidfile;
+		goto close_signal_fd;
 	}
 	clients_nr = 0;
 	for(size_t i = 0; i < server_opts.clients_max_nr; i++)
@@ -418,8 +393,6 @@ int main(int argc, char *argv[])
 		goto close_tcp;
 	}
 
-	max = serv_socket;
-
 	/* TUN create */
 	trace(LOG_INFO, "create TUN interface");
 	tun = create_tun("tun_ipip", server_opts.basedev,
@@ -477,26 +450,23 @@ int main(int argc, char *argv[])
 	/* stop writing logs on stderr */
 	iprohc_log_stderr = false;
 
-	struct timespec timeout;
+	struct timeval timeout;
 	struct timeval now;
-
-	/* mask signals during interface polling */
-	sigemptyset(&sigmask);
-	sigaddset(&sigmask, SIGINT);
-	sigaddset(&sigmask, SIGTERM);
-	sigaddset(&sigmask, SIGKILL);
-	sigaddset(&sigmask, SIGUSR1);
-	sigaddset(&sigmask, SIGUSR2);
 
 	/* Start listening and looping on TCP socket */
 	trace(LOG_INFO, "server is now ready to accept requests from clients");
-	alive = 1;
-	while(alive)
+	is_server_alive = true;
+	while(is_server_alive)
 	{
+		max_fd = 0;
+
 		gettimeofday(&now, NULL);
+
 		FD_ZERO(&rdfs);
 		FD_SET(serv_socket, &rdfs);
-		max = serv_socket;
+		max_fd = max(serv_socket, max_fd);
+		FD_SET(signal_fd, &rdfs);
+		max_fd = max(signal_fd, max_fd);
 
 		/* Add client to select readfds */
 		for(j = 0; j < server_opts.clients_max_nr; j++)
@@ -514,7 +484,7 @@ int main(int argc, char *argv[])
 				if(clients[j].session.status >= IPROHC_SESSION_CONNECTING)
 				{
 					FD_SET(clients[j].session.tcp_socket, &rdfs);
-					max = (clients[j].session.tcp_socket > max) ? clients[j].session.tcp_socket : max;
+					max_fd = max(clients[j].session.tcp_socket, max_fd);
 				}
 
 				ret = pthread_mutex_unlock(&(clients[j].session.status_lock));
@@ -528,13 +498,100 @@ int main(int argc, char *argv[])
 		}
 
 		/* Reset timeout */
-		timeout.tv_sec = 1;
-		timeout.tv_nsec = 0;
+		timeout.tv_sec = 60;
+		timeout.tv_usec = 0;
 
-		if(pselect(max + 1, &rdfs, NULL, NULL, &timeout, &sigmask) == -1)
+		ret = select(max_fd + 1, &rdfs, NULL, NULL, &timeout);
+		if(ret < 0)
 		{
-			trace(LOG_ERR, "pselect failed: %s (%d)", strerror(errno), errno);
+			trace(LOG_ERR, "select failed: %s (%d)", strerror(errno), errno);
 			continue;
+		}
+		else if(ret == 0)
+		{
+			trace(LOG_DEBUG, "select: timeout expired without any event");
+			continue;
+		}
+
+		/* UNIX signal received? */
+		if(FD_ISSET(signal_fd, &rdfs))
+		{
+	   	struct signalfd_siginfo signal_infos;
+
+			ret = read(signal_fd, &signal_infos, sizeof(struct signalfd_siginfo));
+			if(ret < 0)
+			{
+				trace(LOG_ERR, "failed to retrieve information about the received "
+				      "UNIX signal: %s (%d)", strerror(errno), errno);
+				continue;
+			}
+			else if(ret != sizeof(struct signalfd_siginfo))
+			{
+				trace(LOG_ERR, "failed to retrieve information about the received "
+				      "UNIX signal: only %d bytes expected while %zu bytes received",
+				      ret, sizeof(struct signalfd_siginfo));
+				continue;
+			}
+
+			switch(signal_infos.ssi_signo)
+			{
+				case SIGINT:
+				case SIGTERM:
+				case SIGQUIT:
+				{
+					if(signal_infos.ssi_pid > 0)
+					{
+						/* killed by known process */
+						trace(LOG_NOTICE, "process with PID %d run by user with UID "
+						      "%d asked the IP/ROHC server to shutdown",
+						      signal_infos.ssi_pid, signal_infos.ssi_uid);
+					}
+					else
+					{
+						/* killed by unknown process */
+						trace(LOG_NOTICE, "user with UID %d asked the IP/ROHC server "
+						      "to shutdown", signal_infos.ssi_uid);
+					}
+					is_server_alive = false;
+					continue;
+				}
+				case SIGUSR1:
+				{
+					/* dump stats for all clients */
+					trace(LOG_INFO, "dump stats for all clients");
+					for(j = 0; j < server_opts.clients_max_nr; j++)
+					{
+						if(clients[j].is_init)
+						{
+							dump_stats_client(&(clients[j]));
+						}
+					}
+					break;
+				}
+				case SIGUSR2:
+					/* toggle between debug and non-debug modes */
+					if(log_max_priority == LOG_DEBUG)
+					{
+						log_max_priority = LOG_INFO;
+						trace(LOG_INFO, "debug mode disabled");
+					}
+					else
+					{
+						log_max_priority = LOG_DEBUG;
+						trace(LOG_DEBUG, "debug mode enabled");
+					}
+					break;
+				case SIGHUP:
+				case SIGPIPE:
+					/* ignore those signals */
+					break;
+				default:
+				{
+					trace(LOG_NOTICE, "ignore unexpected signal %d",
+					      signal_infos.ssi_signo);
+					break;
+				}
+			}
 		}
 
 		/* Read on serv_socket : new client */
@@ -676,21 +733,8 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
-
-		/* if SIGUSR1 was received, then dump stats */
-		if(clients_do_dump_stats)
-		{
-			for(j = 0; j < server_opts.clients_max_nr; j++)
-			{
-				if(clients[j].is_init)
-				{
-					dump_stats_client(&(clients[j]));
-				}
-			}
-			clients_do_dump_stats = false;
-		}
 	}
-	trace(LOG_INFO, "someone asked to stop server");
+	trace(LOG_INFO, "stopping server...");
 
 	/* release all clients */
 	trace(LOG_INFO, "release resources of connected clients...");
@@ -730,6 +774,8 @@ deinit_tls:
 	gnutls_global_deinit();
 /*free_client_contexts:*/
 	free(clients);
+close_signal_fd:
+	close(signal_fd);
 remove_pidfile:
 	if(strcmp(server_opts.pidfile_path, "") != 0)
 	{

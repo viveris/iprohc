@@ -32,5 +32,6 @@ noinst_HEADERS = \
 	rohc_tunnel.h \
 	tlv.h \
 	tun_helpers.h \
-	session.h
+	session.h \
+	utils.h
 

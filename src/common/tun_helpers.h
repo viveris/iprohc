@@ -18,6 +18,7 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef ROHC_IPIP_TUNH_H
 #define ROHC_IPIP_TUNH_H
 
+#include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
 

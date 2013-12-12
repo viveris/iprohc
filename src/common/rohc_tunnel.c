@@ -21,6 +21,8 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "session.h"
 #include "ip_chksum.h"
 #include "log.h"
+#include "utils.h"
+
 #include "config.h"
 
 #include <assert.h>
@@ -41,9 +43,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /*
  * Macros & definitions:
  */
-
-/// Return the greater value from the two
-#define max(x, y)  (((x) > (y)) ? (x) : (y))
 
 /// The maximal size of a ROHC packet
 #define MAX_ROHC_SIZE   (5 * 1024)
