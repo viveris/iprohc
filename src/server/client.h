@@ -41,7 +41,8 @@ struct client
 	int packing;
 };
 
-int new_client(const int sock,
+int new_client(const int conn,
+               const struct sockaddr_in remote_addr,
                const int tun,
                const size_t tun_itf_mtu,
                const size_t basedev_mtu,

@@ -34,7 +34,8 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include "tls.h"
 
 
-int new_client(const int sock,
+int new_client(const int conn,
+               const struct sockaddr_in remote_addr,
                const int tun,
                const size_t tun_itf_mtu,
                const size_t basedev_mtu,
@@ -42,17 +43,16 @@ int new_client(const int sock,
                const size_t client_id,
                struct server_opts server_opts)
 {
-	char src_addr_str[INET_ADDRSTRLEN];
-	int conn;
-	struct   sockaddr_in src_addr;
-	socklen_t src_addr_len = sizeof(src_addr);
+	char remote_addr_str[INET_ADDRSTRLEN];
 	struct in_addr local;
 	int raw;
 	int ret;
 	unsigned int verify_status;
 	int status = -1;
 
-	/* New client */
+	assert(conn >= 0);
+	assert(tun >= 0);
+	assert(client != NULL);
 
 	/* Initialize TLS */
 	gnutls_session_t session;
@@ -61,24 +61,16 @@ int new_client(const int sock,
 	gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, server_opts.xcred);
 	gnutls_certificate_server_set_request(session, GNUTLS_CERT_REQUEST);
 
-	/* accept connection */
-	conn = accept(sock, (struct sockaddr*)&src_addr, &src_addr_len);
-	if(conn < 0)
-	{
-		trace(LOG_ERR, "failed to accept new connection on socket %d: %s (%d)",
-				sock, strerror(errno), errno);
-		status = -2;
-		goto error;
-	}
-	if(inet_ntop(AF_INET, &(src_addr.sin_addr), src_addr_str, INET_ADDRSTRLEN) == NULL)
+	/* init the debug prefix */
+	if(inet_ntop(AF_INET, &(remote_addr.sin_addr), remote_addr_str, INET_ADDRSTRLEN) == NULL)
 	{
 		trace(LOG_ERR, "failed to convert client address to string: %s (%d)",
 		      strerror(errno), errno);
 		status = -3;
-		goto close_socket;
+		goto error;
 	}
-	trace(LOG_INFO, "[client %s] new connection from %s:%d\n", src_addr_str,
-	      src_addr_str, ntohs(src_addr.sin_port));
+	trace(LOG_INFO, "[client %s] new connection from %s:%d", remote_addr_str,
+	      remote_addr_str, ntohs(remote_addr.sin_port));
 
 	/* TLS */
 	/* Get rid of warning, it's a "bug" of GnuTLS
@@ -93,16 +85,16 @@ int new_client(const int sock,
 	if(ret < 0)
 	{
 		trace(LOG_ERR, "[client %s] TLS handshake failed: %s (%d)",
-		      src_addr_str, gnutls_strerror(ret), ret);
+		      remote_addr_str, gnutls_strerror(ret), ret);
 		status = -4;
 		goto tls_deinit;
 	}
-	trace(LOG_INFO, "[client %s] TLS handshake succeeded", src_addr_str);
+	trace(LOG_INFO, "[client %s] TLS handshake succeeded", remote_addr_str);
 
 	ret = gnutls_certificate_verify_peers2(session, &verify_status);
 	if(ret < 0)
 	{
-		trace(LOG_ERR, "[client %s] TLS verify failed: %s (%d)", src_addr_str,
+		trace(LOG_ERR, "[client %s] TLS verify failed: %s (%d)", remote_addr_str,
 		      gnutls_strerror(ret), ret);
 		status = -5;
 		goto tls_deinit;
@@ -112,45 +104,45 @@ int new_client(const int sock,
 	   (verify_status != (GNUTLS_CERT_INSECURE_ALGORITHM | GNUTLS_CERT_INVALID)))
 	{
 		trace(LOG_ERR, "[client %s] certificate cannot be verified (status %u)",
-		      src_addr_str, verify_status);
+		      remote_addr_str, verify_status);
 		if(verify_status & GNUTLS_CERT_REVOKED)
 		{
-			trace(LOG_ERR, "[client %s] - revoked certificate", src_addr_str);
+			trace(LOG_ERR, "[client %s] - revoked certificate", remote_addr_str);
 		}
 		if(verify_status & GNUTLS_CERT_SIGNER_NOT_FOUND)
 		{
 			trace(LOG_ERR, "[client %s] - unable to trust certificate issuer",
-			      src_addr_str);
+			      remote_addr_str);
 		}
 		if(verify_status & GNUTLS_CERT_SIGNER_NOT_CA)
 		{
 			trace(LOG_ERR, "[client %s] - certificate issuer is not a CA",
-			      src_addr_str);
+			      remote_addr_str);
 		}
 		if(verify_status & GNUTLS_CERT_NOT_ACTIVATED)
 		{
 			trace(LOG_ERR, "[client %s] - the certificate is not activated",
-			      src_addr_str);
+			      remote_addr_str);
 		}
 		if(verify_status & GNUTLS_CERT_EXPIRED)
 		{
 			trace(LOG_ERR, "[client %s] - the certificate has expired",
-			      src_addr_str);
+			      remote_addr_str);
 		}
 		status = -6;
 		goto tls_deinit;
 	}
 
 	/* client creation parameters */
-	trace(LOG_DEBUG, "[client %s] creation of client", src_addr_str);
+	trace(LOG_DEBUG, "[client %s] creation of client", remote_addr_str);
 	memset(&(client->tunnel.stats), 0, sizeof(struct statitics));
 	client->tcp_socket = conn;
 	client->tls_session = session;
 
 	/* dest_addr */
 	client->tunnel.src_address.s_addr = INADDR_ANY;
-	client->tunnel.dest_address  = src_addr.sin_addr;
-	memcpy(client->tunnel.dest_addr_str, src_addr_str, INET_ADDRSTRLEN);
+	client->tunnel.dest_address = remote_addr.sin_addr;
+	memcpy(client->tunnel.dest_addr_str, remote_addr_str, INET_ADDRSTRLEN);
 
 	/* local_addr */
 	local.s_addr = htonl(ntohl(server_opts.local_address) + client_id + 10);
@@ -162,7 +154,7 @@ int new_client(const int sock,
 	if(socketpair(AF_UNIX, SOCK_RAW, 0, client->tunnel.fake_tun) < 0)
 	{
 		trace(LOG_ERR, "[client %s] failed to create a socket pair for TUN: "
-		      "%s (%d)", src_addr_str, strerror(errno), errno);
+		      "%s (%d)", remote_addr_str, strerror(errno), errno);
 		/* TODO  : Flush */
 		status = -8;
 		goto reset_tun;
@@ -172,7 +164,7 @@ int new_client(const int sock,
 	raw = create_raw();
 	if(raw < 0)
 	{
-		trace(LOG_ERR, "[client %s] unable to create raw socket", src_addr_str);
+		trace(LOG_ERR, "[client %s] unable to create raw socket", remote_addr_str);
 		status = -9;
 		goto close_tun_pair;
 	}
@@ -181,7 +173,7 @@ int new_client(const int sock,
 	if(socketpair(AF_UNIX, SOCK_RAW, 0, client->tunnel.fake_raw) < 0)
 	{
 		trace(LOG_ERR, "[client %s] failed to create a socket pair for the raw "
-		      "socket: %s (%d)", src_addr_str, strerror(errno), errno);
+		      "socket: %s (%d)", remote_addr_str, strerror(errno), errno);
 		/* TODO  : Flush */
 		status = -10;
 		goto close_raw;
@@ -197,7 +189,7 @@ int new_client(const int sock,
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "[client %s] failed to init lock: %s (%d)",
-		      src_addr_str, strerror(ret), ret);
+		      remote_addr_str, strerror(ret), ret);
 		status = -11;
 		goto close_raw_pair;
 	}
@@ -205,12 +197,12 @@ int new_client(const int sock,
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "[client %s] failed to init client_lock: %s (%d)",
-		      src_addr_str, strerror(ret), ret);
+		      remote_addr_str, strerror(ret), ret);
 		status = -12;
 		goto destroy_lock;
 	}
 
-	trace(LOG_DEBUG, "[client %s] client context created", src_addr_str);
+	trace(LOG_DEBUG, "[client %s] client context created", remote_addr_str);
 
 	client->is_init = true;
 	return client_id;
@@ -235,8 +227,6 @@ reset_tun:
 	client->is_init = false;
 tls_deinit:
 	gnutls_deinit(session);
-close_socket:
-	close(conn);
 error:
 	return status;
 }

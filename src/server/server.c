@@ -49,6 +49,16 @@ int log_max_priority = LOG_INFO;
 bool iprohc_log_stderr = true;
 
 
+static bool iprohc_server_handle_new_client(const int serv_sock,
+                                            struct client *const clients,
+                                            size_t *const clients_nr,
+                                            const size_t clients_max_nr,
+                                            const int tun,
+                                            const size_t tun_itf_mtu,
+                                            const size_t basedev_mtu,
+                                            const struct server_opts server_opts)
+	__attribute__((warn_unused_result, nonnull(2, 3)));
+
 
 /*
  * Route function that will be threaded twice to route
@@ -670,52 +680,12 @@ int main(int argc, char *argv[])
 		/* Read on serv_socket : new client */
 		if(FD_ISSET(serv_socket, &rdfs))
 		{
-			if(clients_nr >= server_opts.clients_max_nr)
+			if(!iprohc_server_handle_new_client(serv_socket, clients, &clients_nr,
+			                                    server_opts.clients_max_nr,
+			                                    tun, tun_itf_mtu, basedev_mtu,
+			                                    server_opts))
 			{
-				int conn;
-				struct sockaddr_in src_addr;
-				socklen_t src_addr_len = sizeof(src_addr);
-
-				trace(LOG_ERR, "no more clients accepted, maximum %zu reached",
-				      server_opts.clients_max_nr);
-
-				/* reject connection */
-				conn = accept(serv_socket, (struct sockaddr*)&src_addr, &src_addr_len);
-				if(conn < 0)
-				{
-					trace(LOG_ERR, "failed to accept new connection: %s (%d)",
-					      strerror(errno), errno);
-				}
-				else
-				{
-					close(conn);
-				}
-			}
-			else
-			{
-				size_t client_id;
-
-				for(client_id = 0; client_id < server_opts.clients_max_nr &&
-				    clients[client_id].is_init; client_id++)
-				{
-				}
-				assert(client_id < server_opts.clients_max_nr);
-				trace(LOG_INFO, "will store client %zu/%zu at index %zu",
-				      clients_nr + 1, server_opts.clients_max_nr, client_id);
-
-				ret = new_client(serv_socket, tun, tun_itf_mtu, basedev_mtu,
-				                 &clients[client_id], client_id, server_opts);
-				if(ret < 0)
-				{
-					trace(LOG_ERR, "new_client returned %d\n", ret);
-					/* TODO : HANDLE THAT */
-				}
-				else
-				{
-					assert(clients_nr >= 0);
-					assert(clients_nr < server_opts.clients_max_nr);
-					clients_nr++;
-				}
+				trace(LOG_ERR, "failed to handle new client session");
 			}
 		}
 
@@ -941,3 +911,89 @@ error:
 	return exit_status;
 }
 
+
+/**
+ * @brief Accept or reject a new client session
+ *
+ * @param serv_sock           The server socket in listen state
+ * @param clients             The contexts for all clients
+ * @param[in,out] clients_nr  The number of clients currently connected
+ * @param clients_max_nr      The maximum number of clients accepted
+ * @param tun                 The file descriptor of the TUN interface
+ * @param tun_itf_mtu         The MTU of the TUN interface
+ * @param basedev_mtu         The MTU of the underlying interface
+ * @param server_opts         The server configuration
+ * @return                    true if client session was accepted or rejected,
+ *                            false if a problem occurred during acception/rejection
+ */
+static bool iprohc_server_handle_new_client(const int serv_sock,
+                                            struct client *const clients,
+                                            size_t *const clients_nr,
+                                            const size_t clients_max_nr,
+                                            const int tun,
+                                            const size_t tun_itf_mtu,
+                                            const size_t basedev_mtu,
+                                            const struct server_opts server_opts)
+{
+	struct sockaddr_in remote_addr;
+	socklen_t remote_addr_len = sizeof(struct sockaddr_in);
+	int conn;
+
+	assert(serv_sock >= 0);
+	assert(clients != NULL);
+	assert(clients_nr != NULL);
+	assert(clients_max_nr > 0);
+	assert((*clients_nr) <= clients_max_nr);
+
+	/* accept connection */
+	conn = accept(serv_sock, (struct sockaddr *) &remote_addr, &remote_addr_len);
+	if(conn < 0)
+	{
+		trace(LOG_ERR, "failed to accept new connection on socket %d: %s (%d)",
+				serv_sock, strerror(errno), errno);
+		goto error;
+	}
+
+	/* enough resources for a new client? */
+	if((*clients_nr) >= clients_max_nr)
+	{
+		/* not enough resource, kick the new client away */
+		trace(LOG_ERR, "no more clients accepted, maximum %zu reached",
+		      clients_max_nr);
+
+		/* reject connection */
+		close(conn);
+	}
+	else
+	{
+		size_t client_id;
+		int ret;
+
+		/* find the first free context for the new client */
+		for(client_id = 0; client_id < clients_max_nr &&
+		    clients[client_id].is_init; client_id++)
+		{
+		}
+		assert(client_id < clients_max_nr);
+		trace(LOG_INFO, "will store client %zu/%zu at index %zu",
+		      (*clients_nr) + 1, clients_max_nr, client_id);
+
+		ret = new_client(conn, remote_addr, tun, tun_itf_mtu, basedev_mtu,
+		                 &(clients[client_id]), client_id, server_opts);
+		if(ret < 0)
+		{
+			trace(LOG_ERR, "failed to init new client session (%d)\n", ret);
+			close(conn);
+		}
+		else
+		{
+			assert((*clients_nr) < clients_max_nr);
+			(*clients_nr)++;
+		}
+	}
+
+	return true;
+
+error:
+	return false;
+}
