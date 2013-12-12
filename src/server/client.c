@@ -99,6 +99,8 @@ int new_client(const int conn,
 		      client->session.dst_addr_str);
 		goto close_raw_pair;
 	}
+	client->session.tunnel.tun_fd_out = tun;
+	client->session.tunnel.raw_socket_out = raw;
 
 	trace(LOG_DEBUG, "[client %s] client context created",
 	      client->session.dst_addr_str);
