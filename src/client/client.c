@@ -547,8 +547,10 @@ int main(int argc, char *argv[])
 	is_client_alive = true;
 	while(is_client_alive)
 	{
+		const int timeout = 10 * 1000; /* in milliseconds */
+
 		/* wait for events */
-		ret = epoll_wait(pollfd, events, max_events_nr, -1);
+		ret = epoll_wait(pollfd, events, max_events_nr, timeout);
 		if(ret < 0)
 		{
 			if(errno == EINTR)
