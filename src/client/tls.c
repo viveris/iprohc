@@ -93,7 +93,8 @@ int load_p12(gnutls_certificate_credentials_t xcred, char*p12_file, char*passwor
 	ret = gnutls_pkcs12_import(p12, &p12blob, GNUTLS_X509_FMT_DER, 0);
 	if(ret < 0)
 	{
-		free(p12blob.data); goto error;
+		free(p12blob.data);
+		goto error;
 	}
 	free(p12blob.data);
 
