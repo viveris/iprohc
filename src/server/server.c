@@ -50,7 +50,7 @@ bool iprohc_log_stderr = true;
 
 
 static bool iprohc_server_handle_new_client(const int serv_sock,
-                                            struct client *const clients,
+                                            struct iprohc_server_session *const clients,
                                             size_t *const clients_nr,
                                             const size_t clients_max_nr,
                                             const int tun,
@@ -69,7 +69,7 @@ enum type_route { TUN, RAW };
 struct route_args
 {
 	int fd;
-	struct client *clients;
+	struct iprohc_server_session *clients;
 	size_t clients_max_nr;   /**< The maximum number of simultaneous clients */
 	enum type_route type;
 };
@@ -80,7 +80,7 @@ void * route(void*arg)
 	/* Getting args */
 	const struct route_args *const _arg = (struct route_args *) arg;
 	int fd = _arg->fd;
-	struct client *clients = _arg->clients;
+	struct iprohc_server_session *clients = _arg->clients;
 	size_t clients_max_nr = _arg->clients_max_nr;
 	enum type_route type = _arg->type;
 
@@ -130,9 +130,9 @@ void * route(void*arg)
 				/* Send to fake raw or tun device */
 				if(type == TUN)
 				{
-					if(addr.s_addr == clients[i].local_address.s_addr)
+					if(addr.s_addr == clients[i].session.local_address.s_addr)
 					{
-						ret = write(clients[i].tunnel.fake_tun[1], buffer, len);
+						ret = write(clients[i].session.tunnel.fake_tun[1], buffer, len);
 						if(ret < 0)
 						{
 							trace(LOG_WARNING, "failed to send %zu-byte packet to "
@@ -150,9 +150,9 @@ void * route(void*arg)
 				}
 				else
 				{
-					if(addr.s_addr == clients[i].tunnel.dest_address.s_addr)
+					if(addr.s_addr == clients[i].session.tunnel.dest_address.s_addr)
 					{
-						ret = write(clients[i].tunnel.fake_raw[1], buffer, len);
+						ret = write(clients[i].session.tunnel.fake_raw[1], buffer, len);
 						if(ret < 0)
 						{
 							trace(LOG_WARNING, "failed to send %zu-byte packet to "
@@ -176,11 +176,11 @@ void * route(void*arg)
 }
 
 
-static void dump_stats_client(struct client *const client)
+static void dump_stats_client(struct iprohc_server_session *const client)
 {
 	int ret;
 
-	ret = pthread_mutex_lock(&client->tunnel.status_lock);
+	ret = pthread_mutex_lock(&client->session.status_lock);
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "dump_stats_client: failed to acquire lock for client");
@@ -189,58 +189,58 @@ static void dump_stats_client(struct client *const client)
 	}
 
 	client_tracep(client, LOG_INFO, "--------------------------------------------");
-	switch(client->tunnel.status)
+	switch(client->session.status)
 	{
-		case IPROHC_TUNNEL_CONNECTING:
+		case IPROHC_SESSION_CONNECTING:
 			client_tracep(client, LOG_INFO, "status: connecting");
 			break;
-		case IPROHC_TUNNEL_CONNECTED:
+		case IPROHC_SESSION_CONNECTED:
 			client_tracep(client, LOG_INFO, "status: connected");
 			break;
-		case IPROHC_TUNNEL_PENDING_DELETE:
+		case IPROHC_SESSION_PENDING_DELETE:
 			client_tracep(client, LOG_INFO, "status: pending delete");
 			break;
 		default:
 			client_tracep(client, LOG_INFO, "status: unknown (%d)",
-			              client->tunnel.status);
+			              client->session.status);
 			break;
 	}
-	if(client->tunnel.status == IPROHC_TUNNEL_CONNECTED)
+	if(client->session.status == IPROHC_SESSION_CONNECTED)
 	{
 		int i;
 
 		client_tracep(client, LOG_INFO, "packing: %d", client->packing);
 		client_tracep(client, LOG_INFO, "stats:");
 		client_tracep(client, LOG_INFO, "  failed decompression:          %d",
-		              client->tunnel.stats.decomp_failed);
+		              client->session.tunnel.stats.decomp_failed);
 		client_tracep(client, LOG_INFO, "  total  decompression:          %d",
-		              client->tunnel.stats.decomp_total);
+		              client->session.tunnel.stats.decomp_total);
 		client_tracep(client, LOG_INFO, "  failed compression:            %d",
-		              client->tunnel.stats.comp_failed);
+		              client->session.tunnel.stats.comp_failed);
 		client_tracep(client, LOG_INFO, "  total  compression:            %d",
-		              client->tunnel.stats.comp_total);
+		              client->session.tunnel.stats.comp_total);
 		client_tracep(client, LOG_INFO, "  failed depacketization:        %d",
-		              client->tunnel.stats.unpack_failed);
+		              client->session.tunnel.stats.unpack_failed);
 		client_tracep(client, LOG_INFO, "  total received packets on raw: %d",
-		              client->tunnel.stats.total_received);
+		              client->session.tunnel.stats.total_received);
 		client_tracep(client, LOG_INFO, "  total compressed header size:  %d bytes",
-		              client->tunnel.stats.head_comp_size);
+		              client->session.tunnel.stats.head_comp_size);
 		client_tracep(client, LOG_INFO, "  total compressed packet size:  %d bytes",
-		              client->tunnel.stats.total_comp_size);
+		              client->session.tunnel.stats.total_comp_size);
 		client_tracep(client, LOG_INFO, "  total header size before comp: %d bytes",
-		              client->tunnel.stats.head_uncomp_size);
+		              client->session.tunnel.stats.head_uncomp_size);
 		client_tracep(client, LOG_INFO, "  total packet size before comp: %d bytes",
-		              client->tunnel.stats.total_uncomp_size);
+		              client->session.tunnel.stats.total_uncomp_size);
 		client_tracep(client, LOG_INFO, "stats packing:");
-		for(i = 1; i < client->tunnel.stats.n_stats_packing; i++)
+		for(i = 1; i < client->session.tunnel.stats.n_stats_packing; i++)
 		{
 			client_tracep(client, LOG_INFO, "  %d packets: %d", i,
-			              client->tunnel.stats.stats_packing[i]);
+			              client->session.tunnel.stats.stats_packing[i]);
 		}
 	}
 	client_tracep(client, LOG_INFO, "--------------------------------------------");
 
-	ret = pthread_mutex_unlock(&client->tunnel.status_lock);
+	ret = pthread_mutex_unlock(&client->session.status_lock);
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "dump_stats_client: failed to acquire lock for client");
@@ -334,7 +334,7 @@ int main(int argc, char *argv[])
 {
 	int exit_status = 1;
 
-	struct client *clients = NULL;
+	struct iprohc_server_session *clients = NULL;
 	size_t clients_nr = 0;
 
 	size_t client_id;
@@ -479,7 +479,8 @@ int main(int argc, char *argv[])
 	 * Initialize contexts for clients
 	 */
 
-	clients = calloc(server_opts.clients_max_nr, sizeof(struct client));
+	clients = calloc(server_opts.clients_max_nr,
+	                 sizeof(struct iprohc_server_session));
 	if(clients == NULL)
 	{
 		trace(LOG_ERR, "failed to allocate memory for the contexts of %zu "
@@ -487,6 +488,11 @@ int main(int argc, char *argv[])
 		goto remove_pidfile;
 	}
 	clients_nr = 0;
+	for(size_t i = 0; i < server_opts.clients_max_nr; i++)
+	{
+		memcpy(&(clients[i].session.tunnel.params), &(server_opts.params),
+		       sizeof(struct tunnel_params));
+	}
 
 
 	/*
@@ -504,7 +510,7 @@ int main(int argc, char *argv[])
 		{
 			trace(LOG_ERR, "failed to load server certificate from file '%s'",
 					server_opts.pkcs12_f);
-			goto free_client_contexts;
+			goto deinit_tls;
 		}
 	}
 
@@ -512,7 +518,7 @@ int main(int argc, char *argv[])
 	if(!generate_dh_params(&dh_params))
 	{
 		trace(LOG_ERR, "failed to generate Diffie-Hellman parameters");
-		goto free_client_contexts;
+		goto deinit_tls;
 	}
 	gnutls_certificate_set_dh_params(server_opts.xcred, dh_params);
 
@@ -604,7 +610,7 @@ int main(int argc, char *argv[])
 	trace(LOG_INFO, "start RAW routing thread");
 	route_args_raw.fd = raw;
 	route_args_raw.clients = clients;
-	route_args_tun.clients_max_nr = server_opts.clients_max_nr;
+	route_args_raw.clients_max_nr = server_opts.clients_max_nr;
 	route_args_raw.type = RAW;
 	ret = pthread_create(&raw_route_thread, NULL, route, (void*)&route_args_raw);
 	if(ret != 0)
@@ -643,7 +649,7 @@ int main(int argc, char *argv[])
 		{
 			if(clients[j].is_init)
 			{
-				ret = pthread_mutex_lock(&(clients[j].tunnel.status_lock));
+				ret = pthread_mutex_lock(&(clients[j].session.status_lock));
 				if(ret != 0)
 				{
 					trace(LOG_ERR, "failed to acquire lock for client #%d", j);
@@ -651,13 +657,13 @@ int main(int argc, char *argv[])
 					goto delete_raw;
 				}
 
-				if(clients[j].tunnel.status >= IPROHC_TUNNEL_CONNECTING)
+				if(clients[j].session.status >= IPROHC_SESSION_CONNECTING)
 				{
-					FD_SET(clients[j].tcp_socket, &rdfs);
-					max = (clients[j].tcp_socket > max) ? clients[j].tcp_socket : max;
+					FD_SET(clients[j].session.tcp_socket, &rdfs);
+					max = (clients[j].session.tcp_socket > max) ? clients[j].session.tcp_socket : max;
 				}
 
-				ret = pthread_mutex_unlock(&(clients[j].tunnel.status_lock));
+				ret = pthread_mutex_unlock(&(clients[j].session.status_lock));
 				if(ret != 0)
 				{
 					trace(LOG_ERR, "failed to release lock for client #%d", j);
@@ -692,22 +698,22 @@ int main(int argc, char *argv[])
 		/* Test read on each client socket */
 		for(j = 0; j < server_opts.clients_max_nr; j++)
 		{
-			iprohc_tunnel_status_t client_status;
+			iprohc_session_status_t client_status;
 
 			if(!clients[j].is_init)
 			{
 				continue;
 			}
 
-			ret = pthread_mutex_lock(&(clients[j].tunnel.status_lock));
+			ret = pthread_mutex_lock(&(clients[j].session.status_lock));
 			if(ret != 0)
 			{
 				trace(LOG_ERR, "failed to acquire lock for client #%d", j);
 				assert(0);
 				goto delete_raw;
 			}
-			client_status = clients[j].tunnel.status;
-			ret = pthread_mutex_unlock(&(clients[j].tunnel.status_lock));
+			client_status = clients[j].session.status;
+			ret = pthread_mutex_unlock(&(clients[j].session.status_lock));
 			if(ret != 0)
 			{
 				trace(LOG_ERR, "failed to release lock for client #%d", j);
@@ -715,17 +721,17 @@ int main(int argc, char *argv[])
 				goto delete_raw;
 			}
 
-			if(client_status == IPROHC_TUNNEL_CONNECTED &&
+			if(client_status == IPROHC_SESSION_CONNECTED &&
 			   (clients[j].last_keepalive.tv_sec == -1 ||
 			    clients[j].last_keepalive.tv_sec +
-			    ceil(clients[j].tunnel.params.keepalive_timeout / 3) < now.tv_sec))
+			    ceil(clients[j].session.tunnel.params.keepalive_timeout / 3) < now.tv_sec))
 			{
 				/* send keepalive */
 				char command[1] = { C_KEEPALIVE };
 				trace(LOG_DEBUG, "Keepalive !");
-				gnutls_record_send(clients[j].tls_session, command, 1);
+				gnutls_record_send(clients[j].session.tls_session, command, 1);
 
-				ret = pthread_mutex_lock(&clients[j].tunnel.status_lock);
+				ret = pthread_mutex_lock(&clients[j].session.status_lock);
 				if(ret != 0)
 				{
 					trace(LOG_ERR, "failed to acquire lock for client #%d", j);
@@ -733,7 +739,7 @@ int main(int argc, char *argv[])
 					goto delete_raw;
 				}
 				gettimeofday(&(clients[j].last_keepalive), NULL);
-				ret = pthread_mutex_unlock(&clients[j].tunnel.status_lock);
+				ret = pthread_mutex_unlock(&clients[j].session.status_lock);
 				if(ret != 0)
 				{
 					trace(LOG_ERR, "failed to release lock for client #%d", j);
@@ -741,15 +747,15 @@ int main(int argc, char *argv[])
 					goto delete_raw;
 				}
 			}
-			else if(client_status == IPROHC_TUNNEL_PENDING_DELETE)
+			else if(client_status == IPROHC_SESSION_PENDING_DELETE)
 			{
-				ret = pthread_mutex_trylock(&clients[j].tunnel.client_lock);
+				ret = pthread_mutex_trylock(&clients[j].session.client_lock);
 				if(ret == 0)
 				{
 					/* free dead client */
 					trace(LOG_INFO, "remove context of client #%d", j);
 					dump_stats_client(&(clients[j]));
-					gnutls_bye(clients[j].tls_session, GNUTLS_SHUT_WR);
+					gnutls_bye(clients[j].session.tls_session, GNUTLS_SHUT_WR);
 					/* delete client */
 					del_client(&(clients[j]));
 
@@ -762,32 +768,32 @@ int main(int argc, char *argv[])
 					assert(clients_nr < server_opts.clients_max_nr);
 				}
 			}
-			else if(FD_ISSET(clients[j].tcp_socket, &rdfs))
+			else if(FD_ISSET(clients[j].session.tcp_socket, &rdfs))
 			{
 				/* handle request */
 				ret = handle_client_request(&(clients[j]));
 				if(ret < 0)
 				{
-					if(client_status == IPROHC_TUNNEL_CONNECTED)
+					if(client_status == IPROHC_SESSION_CONNECTED)
 					{
 						client_trace(clients[j], LOG_NOTICE, "client #%d was "
 						             "disconnected, stop its thread", j);
 						stop_client_tunnel(&(clients[j]));
 					}
-					else if(client_status == IPROHC_TUNNEL_CONNECTING)
+					else if(client_status == IPROHC_SESSION_CONNECTING)
 					{
 						client_trace(clients[j], LOG_NOTICE, "failed to connect "
 						             "client #%d, aborting", j);
 
-						ret = pthread_mutex_lock(&clients[j].tunnel.status_lock);
+						ret = pthread_mutex_lock(&clients[j].session.status_lock);
 						if(ret != 0)
 						{
 							trace(LOG_ERR, "failed to acquire lock for client #%d", j);
 							assert(0);
 							goto delete_raw;
 						}
-						clients[j].tunnel.status = IPROHC_TUNNEL_PENDING_DELETE;
-						ret = pthread_mutex_unlock(&clients[j].tunnel.status_lock);
+						clients[j].session.status = IPROHC_SESSION_PENDING_DELETE;
+						ret = pthread_mutex_unlock(&clients[j].session.status_lock);
 						if(ret != 0)
 						{
 							trace(LOG_ERR, "failed to release lock for client #%d", j);
@@ -798,15 +804,15 @@ int main(int argc, char *argv[])
 				}
 				else
 				{
-					ret = pthread_mutex_lock(&clients[j].tunnel.status_lock);
+					ret = pthread_mutex_lock(&clients[j].session.status_lock);
 					if(ret != 0)
 					{
 						trace(LOG_ERR, "failed to acquire lock for client #%d", j);
 						assert(0);
 						goto delete_raw;
 					}
-					gettimeofday(&(clients[j].tunnel.last_keepalive), NULL);
-					ret = pthread_mutex_unlock(&clients[j].tunnel.status_lock);
+					gettimeofday(&(clients[j].session.last_keepalive), NULL);
+					ret = pthread_mutex_unlock(&clients[j].session.status_lock);
 					if(ret != 0)
 					{
 						trace(LOG_ERR, "failed to release lock for client #%d", j);
@@ -839,34 +845,29 @@ int main(int argc, char *argv[])
 		if(clients[client_id].is_init)
 		{
 			/* close RAW socketpair */
-			close(clients[client_id].tunnel.fake_raw[0]);
-			clients[client_id].tunnel.fake_raw[0] = -1;
-			close(clients[client_id].tunnel.fake_raw[1]);
-			clients[client_id].tunnel.fake_raw[1] = -1;
+			close(clients[client_id].session.tunnel.fake_raw[0]);
+			clients[client_id].session.tunnel.fake_raw[0] = -1;
+			close(clients[client_id].session.tunnel.fake_raw[1]);
+			clients[client_id].session.tunnel.fake_raw[1] = -1;
 			/* close RAW socket */
-			close(clients[client_id].tunnel.raw_socket);
-			clients[client_id].tunnel.raw_socket = -1;
+			close(clients[client_id].session.tunnel.raw_socket);
+			clients[client_id].session.tunnel.raw_socket = -1;
 			/* close TUN socketpair */
-			close(clients[client_id].tunnel.fake_tun[0]);
-			clients[client_id].tunnel.fake_tun[0] = -1;
-			close(clients[client_id].tunnel.fake_tun[1]);
-			clients[client_id].tunnel.fake_tun[1] = -1;
+			close(clients[client_id].session.tunnel.fake_tun[0]);
+			clients[client_id].session.tunnel.fake_tun[0] = -1;
+			close(clients[client_id].session.tunnel.fake_tun[1]);
+			clients[client_id].session.tunnel.fake_tun[1] = -1;
 			/* close TUN interface */
-			close(clients[client_id].tunnel.tun);
-			clients[client_id].tunnel.tun = -1;
+			close(clients[client_id].session.tunnel.tun);
+			clients[client_id].session.tunnel.tun = -1;
 			/* close TLS session */
-			gnutls_deinit(clients[client_id].tls_session);
+			gnutls_deinit(clients[client_id].session.tls_session);
 			/* close TCP connection */
-			close(clients[client_id].tcp_socket);
+			close(clients[client_id].session.tcp_socket);
 			/* free client context */
 			clients[client_id].is_init = false;
 		}
 	}
-
-	trace(LOG_INFO, "release TLS resources...");
-	gnutls_certificate_free_credentials(server_opts.xcred);
-	gnutls_priority_deinit(server_opts.priority_cache);
-	gnutls_global_deinit();
 
 	/* everything went fine */
 	exit_status = 0;
@@ -875,21 +876,26 @@ int main(int argc, char *argv[])
 	pthread_cancel(raw_route_thread);
 	pthread_join(raw_route_thread, NULL);
 delete_raw:
-	trace(LOG_INFO, "close RAW socket...");
+	trace(LOG_INFO, "close RAW socket");
 	close(raw);
 stop_tun_thread:
 	trace(LOG_INFO, "cancel TUN routing thread...");
 	pthread_cancel(tun_route_thread);
 	pthread_join(tun_route_thread, NULL);
 delete_tun:
-	trace(LOG_INFO, "close TUN interface...");
+	trace(LOG_INFO, "close TUN interface");
 	close(tun);
 close_tcp:
-	trace(LOG_INFO, "close TCP server socket...");
+	trace(LOG_INFO, "close TCP server socket");
 	close(serv_socket);
 free_dh:
 	gnutls_dh_params_deinit(dh_params);
-free_client_contexts:
+deinit_tls:
+	trace(LOG_INFO, "release TLS resources");
+	gnutls_certificate_free_credentials(server_opts.xcred);
+	gnutls_priority_deinit(server_opts.priority_cache);
+	gnutls_global_deinit();
+/*free_client_contexts:*/
 	free(clients);
 remove_pidfile:
 	if(strcmp(server_opts.pidfile_path, "") != 0)
@@ -927,7 +933,7 @@ error:
  *                            false if a problem occurred during acception/rejection
  */
 static bool iprohc_server_handle_new_client(const int serv_sock,
-                                            struct client *const clients,
+                                            struct iprohc_server_session *const clients,
                                             size_t *const clients_nr,
                                             const size_t clients_max_nr,
                                             const int tun,

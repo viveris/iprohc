@@ -18,44 +18,24 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef IPROHC_SERVER_CLIENT_H
 #define IPROHC_SERVER_CLIENT_H
 
-#include <time.h>
-
-#include "rohc_tunnel.h"
-#include "tlv.h"
-
+#include "server_session.h"
 #include "server.h"
-
-struct client
-{
-	bool is_init;
-
-	int tcp_socket;
-	gnutls_session_t tls_session;
-	struct in_addr local_address;
-
-	pthread_t thread_tunnel;
-	struct tunnel tunnel;
-
-	struct timeval last_keepalive;
-
-	int packing;
-};
 
 int new_client(const int conn,
                const struct sockaddr_in remote_addr,
                const int tun,
                const size_t tun_itf_mtu,
                const size_t basedev_mtu,
-               struct client *const client,
+               struct iprohc_server_session *const client,
                const size_t client_id,
-               struct server_opts server_opts);
+               const struct server_opts server_opts);
 
-void del_client(struct client *const client)
+void del_client(struct iprohc_server_session *const client)
 	__attribute__((nonnull(1)));
 
-int  start_client_tunnel(struct client*client);
+int  start_client_tunnel(struct iprohc_server_session *const client);
 
-void stop_client_tunnel(struct client *const client)
+void stop_client_tunnel(struct iprohc_server_session *const client)
 	__attribute__((nonnull(1)));
 
 #endif

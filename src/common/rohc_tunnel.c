@@ -18,6 +18,11 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 /* rohc_tunnel.c -- Functions handling a tunnel, client or server-side
 */
 
+#include "session.h"
+#include "ip_chksum.h"
+#include "log.h"
+#include "config.h"
+
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -30,12 +35,6 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdarg.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
-
-#include "rohc_tunnel.h"
-#include "ip_chksum.h"
-#include "log.h"
-#include "config.h"
-
 
 
 /*
@@ -122,16 +121,17 @@ int tun2raw(struct rohc_comp *comp,
  * This function will initialize ROHC contexts and start polling tun and
  * raw socket to compress/decompress the packets via the other functions.
  *
- * @param arg    A struct tunnel defining tunnel itself
- * @return       0 in case of success, a non-null value otherwise
+ * @param arg    A tunnel session
+ * @return       NULL in case of success, a non-null value otherwise
  */
 void * new_tunnel(void *arg)
 {
-	struct tunnel*tunnel = (struct tunnel*) arg;
+	struct iprohc_session *const session = (struct iprohc_session *) arg;
+	struct tunnel *const tunnel = &(session->tunnel);
 
 	int failure = 0;
 	int is_umode = tunnel->params.is_unidirectional;
-	iprohc_tunnel_status_t tunnel_status;
+	iprohc_session_status_t session_status;
 
 	fd_set readfds;
 	struct timespec timeout;
@@ -158,7 +158,7 @@ void * new_tunnel(void *arg)
 	/* TODO : Check assumed present attributes
 	   (thread, local_address, dest_address, tun, fake_tun, raw_socket) */
 
-	ret = pthread_mutex_lock(&tunnel->client_lock);
+	ret = pthread_mutex_lock(&(session->client_lock));
 	if(ret != 0)
 	{
 		tunnel_trace(tunnel, LOG_ERR, "failed to acquire client_lock for client");
@@ -249,17 +249,17 @@ void * new_tunnel(void *arg)
 	sigaddset(&sigmask, SIGINT);
 
 	/* initialize the last time we sent a packet */
-	ret = pthread_mutex_lock(&tunnel->status_lock);
+	ret = pthread_mutex_lock(&session->status_lock);
 	if(ret != 0)
 	{
 		tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
 		assert(0);
 		goto destroy_decomp;
 	}
-	gettimeofday(&(tunnel->last_keepalive), NULL);
-	tunnel->status = IPROHC_TUNNEL_CONNECTED;
-	tunnel_status = tunnel->status;
-	ret = pthread_mutex_unlock(&tunnel->status_lock);
+	gettimeofday(&(session->last_keepalive), NULL);
+	session->status = IPROHC_SESSION_CONNECTED;
+	session_status = session->status;
+	ret = pthread_mutex_unlock(&session->status_lock);
 	if(ret != 0)
 	{
 		tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
@@ -320,15 +320,15 @@ void * new_tunnel(void *arg)
 			             strerror(errno), errno);
 			failure = 1;
 
-			ret = pthread_mutex_lock(&tunnel->status_lock);
+			ret = pthread_mutex_lock(&session->status_lock);
 			if(ret != 0)
 			{
 				tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
 				assert(0);
 				goto destroy_decomp;
 			}
-			tunnel->status = IPROHC_TUNNEL_PENDING_DELETE;
-			ret = pthread_mutex_unlock(&tunnel->status_lock);
+			session->status = IPROHC_SESSION_PENDING_DELETE;
+			ret = pthread_mutex_unlock(&session->status_lock);
 			if(ret != 0)
 			{
 				tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
@@ -393,21 +393,21 @@ void * new_tunnel(void *arg)
 			}
 		}
 
-		ret = pthread_mutex_lock(&tunnel->status_lock);
+		ret = pthread_mutex_lock(&session->status_lock);
 		if(ret != 0)
 		{
 			tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
 			assert(0);
 			goto destroy_decomp;
 		}
-		if(now.tv_sec > tunnel->last_keepalive.tv_sec + kp_timeout)
+		if(now.tv_sec > session->last_keepalive.tv_sec + kp_timeout)
 		{
 			tunnel_trace(tunnel, LOG_ERR, "keepalive timeout detected "
 			             "(%ld > %ld + %d), disconnect client", now.tv_sec,
-			             tunnel->last_keepalive.tv_sec, kp_timeout);
-			tunnel->status = IPROHC_TUNNEL_PENDING_DELETE;
+			             session->last_keepalive.tv_sec, kp_timeout);
+			session->status = IPROHC_SESSION_PENDING_DELETE;
 		}
-		ret = pthread_mutex_unlock(&tunnel->status_lock);
+		ret = pthread_mutex_unlock(&session->status_lock);
 		if(ret != 0)
 		{
 			tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
@@ -415,15 +415,15 @@ void * new_tunnel(void *arg)
 			goto destroy_decomp;
 		}
 
-		ret = pthread_mutex_lock(&tunnel->status_lock);
+		ret = pthread_mutex_lock(&session->status_lock);
 		if(ret != 0)
 		{
 			tunnel_trace(tunnel, LOG_ERR, "failed to acquire lock for client");
 			assert(0);
 			goto destroy_decomp;
 		}
-		tunnel_status = tunnel->status;
-		ret = pthread_mutex_unlock(&tunnel->status_lock);
+		session_status = session->status;
+		ret = pthread_mutex_unlock(&session->status_lock);
 		if(ret != 0)
 		{
 			tunnel_trace(tunnel, LOG_ERR, "failed to release lock for client");
@@ -431,7 +431,7 @@ void * new_tunnel(void *arg)
 			goto destroy_decomp;
 		}
 	}
-	while(tunnel_status == IPROHC_TUNNEL_CONNECTED);
+	while(session_status == IPROHC_SESSION_CONNECTED);
 
 	tunnel_trace(tunnel, LOG_INFO, "client thread was asked to stop");
 
@@ -443,7 +443,7 @@ destroy_decomp:
 destroy_comp:
 	rohc_comp_free(comp);
 unlock:
-	ret = pthread_mutex_unlock(&tunnel->client_lock);
+	ret = pthread_mutex_unlock(&(session->client_lock));
 	if(ret != 0)
 	{
 		tunnel_trace(tunnel, LOG_ERR, "failed to release client_lock for client");
@@ -730,8 +730,8 @@ int raw2tun(struct rohc_decomp *decomp,
 {
 	const struct rohc_timestamp arrival_time = { .sec = 0, .nsec = 0 };
 
-	unsigned int packet_len = mtu;
 	unsigned char packet[TUNTAP_BUFSIZE];
+	unsigned int packet_len = TUNTAP_BUFSIZE;
 	struct iphdr *ip_header;
 
 	unsigned char *ip_payload;

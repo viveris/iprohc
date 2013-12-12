@@ -20,22 +20,25 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef ROHC_IPIP_TUNNEL_H
 #define ROHC_IPIP_TUNNEL_H
 
+#include "tlv.h"
+
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <sys/time.h>
 
+#include <gnutls/gnutls.h>
+
 #include <rohc/rohc.h>
 #include <rohc/rohc_comp.h>
 #include <rohc/rohc_decomp.h>
 
-#include "tlv.h"
 
 /// The maximal size of data that can be received on the virtual interface
 #define TUNTAP_BUFSIZE 1518
 
-
-struct statitics {
+struct statitics
+{
 	int decomp_failed;
 	int decomp_total;
 
@@ -56,14 +59,6 @@ struct statitics {
 };
 
 
-typedef enum
-{
-	IPROHC_TUNNEL_PENDING_DELETE  = 0,
-	IPROHC_TUNNEL_CONNECTING      = 1,
-	IPROHC_TUNNEL_CONNECTED       = 2,
-} iprohc_tunnel_status_t;
-
-
 /* Stucture defining a tunnel */
 struct tunnel
 {
@@ -82,32 +77,14 @@ struct tunnel
 	/** The frame being packed, stored in context until completion or timeout */
 	unsigned char packing_frame[TUNTAP_BUFSIZE];
 
-	/**
-	 * @brief The client lock
-	 *
-	 * Protect the client context against deletion by main thread when used by
-	 * client thread
-	 */
-	pthread_mutex_t client_lock;
-
-	/**
-	 * @brief The status lock
-	 *
-	 * Protect the client status and keepalive timestamp against concurrent
-	 * accesses by main thread and client thread.
-	 */
-	pthread_mutex_t status_lock;
-
-	iprohc_tunnel_status_t status;
-	struct timeval last_keepalive;
-
 	struct tunnel_params params;
 
 	struct statitics stats;
 };
 
+
 /* Called in a thread on a new tunnel */
-void * new_tunnel(void*arg);
+void * new_tunnel(void *arg);
 
 #endif
 

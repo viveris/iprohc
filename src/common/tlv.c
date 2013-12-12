@@ -282,7 +282,7 @@ bool parse_connect(const unsigned char *const data,
 		trace(LOG_ERR, "parse_connect: failed to parse TLV parameters");
 		goto error;
 	}
-	trace(LOG_DEBUG, "Parsing ok");
+	trace(LOG_DEBUG, "client parameters:");
 
 	for(i = 0; i < N_TUNNEL_PARAMS; i++)
 	{
@@ -296,27 +296,38 @@ bool parse_connect(const unsigned char *const data,
 		{
 			case IP_ADDR:
 				params->local_address       = ntohl(*((uint32_t*) results[i].value));
+				trace(LOG_DEBUG, "  IP address = 0x%08x", params->local_address);
 				break;
 			case PACKING:
 				params->packing             = *((char*) results[i].value);
+				trace(LOG_DEBUG, "  packing level = %d", params->packing);
 				break;
 			case MAXCID:
 				params->max_cid             = ntohl(*((uint32_t*) results[i].value));
+				trace(LOG_DEBUG, "  MAX_CID = %zu", params->max_cid);
 				break;
 			case UNID:
 				params->is_unidirectional   = *((char*) results[i].value);
+				trace(LOG_DEBUG, "  mode = %s", params->is_unidirectional ?
+				      "unidirectional" : "bidirectional");
 				break;
 			case WINDOWSIZE:
 				params->wlsb_window_width   = ntohl(*((uint32_t*) results[i].value));
+				trace(LOG_DEBUG, "  WLSB width = %zu", params->wlsb_window_width);
 				break;
 			case REFRESH:
 				params->refresh             = ntohl(*((uint32_t*) results[i].value));
+				trace(LOG_DEBUG, "  refresh = %zu", params->refresh);
 				break;
 			case KEEPALIVE:
 				params->keepalive_timeout   = ntohl(*((uint32_t*) results[i].value));
+				trace(LOG_DEBUG, "  keepalive interval = %zu seconds",
+				      params->keepalive_timeout);
 				break;
 			case ROHC_COMPAT:
 				params->rohc_compat_version = (*((char*) results[i].value));
+				trace(LOG_DEBUG, "  compatibility version = %d",
+				      params->rohc_compat_version);
 				break;
 			default:
 				trace(LOG_ERR, "Unexpected field 0x%02x in connect", results[i].type);

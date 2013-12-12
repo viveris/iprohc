@@ -16,103 +16,22 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "messages.h"
+#include "client.h"
+#include "log.h"
 
 #include <sys/types.h>
 #include <sys/time.h>
 #include <assert.h>
 
-#include "tlv.h"
-#include "rohc_tunnel.h"
 
-#include "client.h"
-
-#include "log.h"
-
-bool handle_connect(struct client *const client,
-						  const unsigned char *const message,
-						  const size_t message_len,
-						  size_t *const parsed_len)
-{
-	/* Receiving parameters */
-	int packing;
-	int client_proto_version;
-
-	/* Prepare order for connection */
-	unsigned char tlv[1024];
-	size_t tlv_len;
-
-	bool is_ok;
-	bool is_success = false;
-
-	assert(client != NULL);
-	assert(message != NULL);
-	assert(parsed_len != NULL);
-
-	*parsed_len = 0;
-	tlv_len = 0;
-
-	client_tracep(client, LOG_INFO, "connection asked, negotating parameters");
-
-	/* parse connect message received from client */
-	is_ok = parse_connrequest(message, message_len, parsed_len, &packing,
-	                          &client_proto_version);
-	if(!is_ok)
-	{
-		client_tracep(client, LOG_ERR, "unable to parse connection request");
-
-		/* create failure answer for client */
-		tlv[0] = C_CONNECT_KO;
-		tlv_len++;
-		// TODO : Clear client
-	}
-	else if(client_proto_version != CURRENT_PROTO_VERSION)
-	{
-		/* Current behaviour as for proto version = 1 : refuse any other version */
-		client_tracep(client, LOG_WARNING, "connection refused because of wrong "
-		              "protocol version: %d received from client but %d expected",
-		              client_proto_version, CURRENT_PROTO_VERSION);
-
-		/* create failure answer for client */
-		tlv[0] = C_CONNECT_KO;
-		tlv_len++;
-		// TODO : Clear client
-	}
-	else
-	{
-		size_t len;
-
-		client_tracep(client, LOG_INFO, "connection asked, negotating parameters "
-		              "(proto version = %d, asked packing = %d)",
-		              client_proto_version, packing);
-		client->packing = packing;
-
-		/* create successful answer for client */
-		tlv[0] = C_CONNECT_OK;
-		tlv_len++;
-
-		/* add parameters in TLV format */
-		is_ok = gen_connect(client->tunnel.params, tlv + 1, &len);
-		if(!is_ok)
-		{
-			client_tracep(client, LOG_ERR, "failed to generate the connect "
-			              "message for client");
-			goto error;
-		}
-		tlv_len += len;
-
-		is_success = true;
-	}
-
-	gnutls_record_send(client->tls_session, tlv, tlv_len);
-
-	return is_success;
-
-error:
-	return false;
-}
+static bool handle_connect(struct iprohc_server_session *const client,
+                           const unsigned char *const message,
+                           const size_t message_len,
+                           size_t *const parsed_len)
+	__attribute__((warn_unused_result, nonnull(1, 2, 4)));
 
 
-int handle_client_request(struct client *const client)
+int handle_client_request(struct iprohc_server_session *const client)
 {
 	unsigned char buf[1024];
 	int length;
@@ -120,7 +39,7 @@ int handle_client_request(struct client *const client)
 	size_t remain_len;;
 	bool is_ok;
 
-	length = gnutls_record_recv(client->tls_session, buf, 1024);
+	length = gnutls_record_recv(client->session.tls_session, buf, 1024);
 	if(length == 0)
 	{
 		return -1;
@@ -181,4 +100,89 @@ int handle_client_request(struct client *const client)
 
 	return 0;
 }
+
+
+static bool handle_connect(struct iprohc_server_session *const client,
+                           const unsigned char *const message,
+                           const size_t message_len,
+                           size_t *const parsed_len)
+{
+	/* Receiving parameters */
+	int packing;
+	int client_proto_version;
+
+	/* Prepare order for connection */
+	unsigned char tlv[1024];
+	size_t tlv_len;
+
+	bool is_ok;
+	bool is_success = false;
+
+	assert(client != NULL);
+	assert(message != NULL);
+	assert(parsed_len != NULL);
+
+	*parsed_len = 0;
+	tlv_len = 0;
+
+	client_tracep(client, LOG_INFO, "connection asked, negotating parameters");
+
+	/* parse connect message received from client */
+	is_ok = parse_connrequest(message, message_len, parsed_len, &packing,
+	                          &client_proto_version);
+	if(!is_ok)
+	{
+		client_tracep(client, LOG_ERR, "unable to parse connection request");
+
+		/* create failure answer for client */
+		tlv[0] = C_CONNECT_KO;
+		tlv_len++;
+		// TODO : Clear client
+	}
+	else if(client_proto_version != CURRENT_PROTO_VERSION)
+	{
+		/* Current behaviour as for proto version = 1 : refuse any other version */
+		client_tracep(client, LOG_WARNING, "connection refused because of wrong "
+		              "protocol version: %d received from client but %d expected",
+		              client_proto_version, CURRENT_PROTO_VERSION);
+
+		/* create failure answer for client */
+		tlv[0] = C_CONNECT_KO;
+		tlv_len++;
+		// TODO : Clear client
+	}
+	else
+	{
+		size_t len;
+
+		client_tracep(client, LOG_INFO, "connection asked, negotating parameters "
+		              "(proto version = %d, asked packing = %d)",
+		              client_proto_version, packing);
+		client->packing = packing;
+
+		/* create successful answer for client */
+		tlv[0] = C_CONNECT_OK;
+		tlv_len++;
+
+		/* add parameters in TLV format */
+		is_ok = gen_connect(client->session.tunnel.params, tlv + 1, &len);
+		if(!is_ok)
+		{
+			client_tracep(client, LOG_ERR, "failed to generate the connect "
+			              "message for client");
+			goto error;
+		}
+		tlv_len += len;
+
+		is_success = true;
+	}
+
+	gnutls_record_send(client->session.tls_session, tlv, tlv_len);
+
+	return is_success;
+
+error:
+	return false;
+}
+
 
