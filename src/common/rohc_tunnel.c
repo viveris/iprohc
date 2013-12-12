@@ -112,6 +112,80 @@ int tun2raw(struct rohc_comp *comp,
  * Main functions
  */
 
+
+/**
+ * @brief Initialize the given tunnel context
+ *
+ * @param tunnel        The tunnel context to initialize
+ * @param raw_socket    The RAW socket to use to send packets to remote endpoint
+ * @param tun_fd        The file descriptor of the local TUN interface
+ * @param base_dev_mtu  The MTU of the base device used to send packets to the
+ *                      remote endpoint
+ * @param tun_dev_mtu   The MTU of the local TUN interface
+ * @return              true if tunnel was successfully initialized,
+ *                      false if a problem occurred
+ */
+bool iprohc_tunnel_new(struct iprohc_tunnel *const tunnel,
+                       const int raw_socket,
+                       const int tun_fd,
+                       const size_t base_dev_mtu,
+                       const size_t tun_dev_mtu)
+{
+	assert(tunnel != NULL);
+	assert(raw_socket >= 0);
+	assert(tun_fd >= 0);
+
+	/* TUN interface */
+	tunnel->tun_fd_in = tun_fd;
+	tunnel->tun_fd_out = tun_fd;
+
+	/* RAW socket */
+	tunnel->raw_socket_in = raw_socket;
+	tunnel->raw_socket_out = raw_socket;
+
+	/* device MTU */
+	tunnel->tun_itf_mtu = tun_dev_mtu;
+	tunnel->basedev_mtu = base_dev_mtu;
+
+	/* no parameter yet */
+	memset(&tunnel->params, 0, sizeof(struct tunnel_params));
+
+	/* reset stats */
+	memset(&tunnel->stats, 0, sizeof(struct statitics));
+
+	return true;
+}
+
+
+/**
+ * @brief Reset the given tunnel context
+ *
+ * @param tunnel  The tunnel context to reset
+ * @return        true if the tunnel was successfully reset,
+ *                false if a problem occurred
+ */
+bool iprohc_tunnel_free(struct iprohc_tunnel *const tunnel)
+{
+	/* reset RAW sockets and TUN fds */
+	tunnel->tun_fd_in = -1;
+	tunnel->tun_fd_out = -1;
+	tunnel->raw_socket_in = -1;
+	tunnel->raw_socket_out = -1;
+
+	/* device MTU */
+	tunnel->tun_itf_mtu = 0;
+	tunnel->basedev_mtu = 0;
+
+	/* no more parameter */
+	memset(&tunnel->params, 0, sizeof(struct tunnel_params));
+
+	/* reset stats */
+	memset(&tunnel->stats, 0, sizeof(struct statitics));
+
+	return true;
+}
+
+
 /**
  * @brief Start a new tunnel
  *
@@ -125,10 +199,10 @@ int tun2raw(struct rohc_comp *comp,
  * @param arg    A tunnel session
  * @return       NULL in case of success, a non-null value otherwise
  */
-void * new_tunnel(void *arg)
+void * iprohc_tunnel_run(void *arg)
 {
 	struct iprohc_session *const session = (struct iprohc_session *) arg;
-	struct tunnel *const tunnel = &(session->tunnel);
+	struct iprohc_tunnel *const tunnel = &(session->tunnel);
 
 	int failure = 0;
 	int is_umode = tunnel->params.is_unidirectional;

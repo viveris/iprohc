@@ -231,8 +231,8 @@ int start_client_tunnel(struct iprohc_server_session *const client)
 	int ret;
 
 	/* Go threads, go ! */
-	ret = pthread_create(&(client->session.thread_tunnel), NULL, new_tunnel,
-	                     &(client->session));
+	ret = pthread_create(&(client->session.thread_tunnel), NULL,
+	                     iprohc_tunnel_run, &(client->session));
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "failed to create the client tunnel thread: %s (%d)",

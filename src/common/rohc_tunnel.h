@@ -60,7 +60,7 @@ struct statitics
 
 
 /* Stucture defining a tunnel */
-struct tunnel
+struct iprohc_tunnel
 {
 	/* input and output RAW sockets may be different sockets */
 	int raw_socket_in;   /**< The RAW socket for receiving data from remote endpoint */
@@ -82,8 +82,17 @@ struct tunnel
 };
 
 
-/* Called in a thread on a new tunnel */
-void * new_tunnel(void *arg);
+bool iprohc_tunnel_new(struct iprohc_tunnel *const tunnel,
+                       const int raw_socket,
+                       const int tun_fd,
+                       const size_t base_dev_mtu,
+                       const size_t tun_dev_mtu)
+	__attribute__((warn_unused_result, nonnull(1)));
+
+bool iprohc_tunnel_free(struct iprohc_tunnel *const tunnel)
+	__attribute__((warn_unused_result, nonnull(1)));
+
+void * iprohc_tunnel_run(void *arg);
 
 #endif
 

@@ -51,7 +51,7 @@ struct iprohc_session
 	char dst_addr_str[INET_ADDRSTRLEN];  /**< string representation of dst_addr */
 	struct in_addr src_addr;             /**< The IP address of the local endpoint */
 
-	struct tunnel tunnel;          /**< The tunnel context */
+	struct iprohc_tunnel tunnel;   /**< The tunnel context */
 	pthread_t thread_tunnel;       /**< The thread that handle the session */
 	/**
 	 * @brief The client lock

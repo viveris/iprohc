@@ -194,7 +194,8 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 
 	/* Go thread, go ! */
 	trace(LOG_INFO, "run tunnel thread for new client");
-	ret = pthread_create(&tunnel_thread, NULL, new_tunnel, &(client->session));
+	ret = pthread_create(&tunnel_thread, NULL, iprohc_tunnel_run,
+	                     &(client->session));
 	if(ret != 0)
 	{
 		trace(LOG_ERR, "failed to run tunnel thread for new client: %s (%d)",
