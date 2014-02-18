@@ -199,7 +199,8 @@ configure_ldflags="$configure_ldflags $ROHC_LIBS"
 # check for libyaml presence through pkg-config
 PKG_CHECK_MODULES([YAML], [yaml-0.1],
                   [libyaml_found="yes"], [libyaml_found="no"])
-if test "x$libyaml_found" != "xyes" ; then
+if test "x$iprohc_server" != "x0" && \
+   test "x$libyaml_found" != "xyes" ; then
 	echo
 	echo "ERROR: libyaml library/headers not found"
 	echo
