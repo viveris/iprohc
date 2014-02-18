@@ -81,6 +81,7 @@ AC_CHECK_HEADERS([arpa/inet.h])
 AC_CHECK_HEADERS([sys/types.h])
 AC_CHECK_HEADERS([linux/if_tun.h]) # TUN/TAP support
 AC_CHECK_HEADERS([sys/timerfd.h]) # timerfd support on Linux
+AC_CHECK_HEADERS([sys/signalfd.h]) # signalfd support on Linux
 
 # TUN interfaces are not supported on non-Linux platforms yet
 if test "x$ac_cv_header_linux_if_tun_h" != "xyes" ; then
@@ -94,6 +95,14 @@ fi
 if test "x$ac_cv_header_sys_timerfd_h" != "xyes" ; then
 	echo
 	echo "ERROR: timerfd API is mandatory"
+	echo
+	exit 1
+fi
+
+# signalfd API is mandatory
+if test "x$ac_cv_header_sys_signalfd_h" != "xyes" ; then
+	echo
+	echo "ERROR: signalfd API is mandatory"
 	echo
 	exit 1
 fi
@@ -234,6 +243,19 @@ else
 	# timerfd API provided by the libtimerfd library
 	configure_cflags="$configure_cflags $TIMERFD_CFLAGS"
 	configure_ldflags="$configure_ldflags $TIMERFD_LIBS"
+fi
+
+
+# check for libsignalfd presence through pkg-config
+PKG_CHECK_MODULES([SIGNALFD], [signalfd],
+                  [libsignalfd_found="yes"], [libsignalfd_found="no"])
+if test "x$libsignalfd_found" != "xyes" ; then
+	# signalfd API provided by libc
+	:
+else
+	# signalfd API provided by the libsignalfd library
+	configure_cflags="$configure_cflags $SIGNALFD_CFLAGS"
+	configure_ldflags="$configure_ldflags $SIGNALFD_LIBS"
 fi
 
 
