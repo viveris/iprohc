@@ -579,6 +579,7 @@ int main(int argc, char *argv[])
 				{
 					trace(LOG_ERR, "[main] failed to stop session");
 				}
+				is_client_alive = false;
 			}
 
 			continue;

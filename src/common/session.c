@@ -97,6 +97,7 @@ bool iprohc_session_new(struct iprohc_session *const session,
 	session->dst_addr = remote_addr.sin_addr;
 	session->status = IPROHC_SESSION_CONNECTING;
 	session->thread_tunnel = -1;
+	session->thread_stack = NULL;
 
 	/* Initialize TLS session */
 	gnutls_init(&session->tls_session, tls_type);
@@ -323,6 +324,7 @@ destroy_thread_attrs:
 	}
 free_stack:
 	free(session->thread_stack);
+	session->thread_stack = NULL;
 release_lock:
 	AO_store_release_write(&(session->is_thread_running), 0);
 /*close_pipe:*/
@@ -357,17 +359,24 @@ bool iprohc_session_stop(struct iprohc_session *const session)
 	}
 
 	/* wait for thread to stop */
-	trace(LOG_ERR, "[main] wait for client %s to stop", session->dst_addr_str);
-	pthread_join(session->thread_tunnel, NULL);
+	if(AO_load_acquire_read(&(session->is_thread_running)))
+	{
+		trace(LOG_ERR, "[main] wait for client %s to stop", session->dst_addr_str);
+		pthread_join(session->thread_tunnel, NULL);
+	}
 
 	/* free the thread attributes and the thread stack */
-	ret = pthread_attr_destroy(&session->thread_attr);
-	if(ret != 0)
+	if(session->thread_stack != NULL)
 	{
-		trace(LOG_ERR, "failed to destroy thread attributes: %s (%d)",
-		      strerror(ret), ret);
+		ret = pthread_attr_destroy(&session->thread_attr);
+		if(ret != 0)
+		{
+			trace(LOG_ERR, "failed to destroy thread attributes: %s (%d)",
+			      strerror(ret), ret);
+		}
+		free(session->thread_stack);
+		session->thread_stack = NULL;
 	}
-	free(session->thread_stack);
 
 	/* close the remaining read side of the pipe */
 	close(session->p2c[0]);
