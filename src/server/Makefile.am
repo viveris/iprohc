@@ -48,4 +48,6 @@ iprohc_server.1: $(iprohc_server_SOURCES) $(builddir)/iprohc_server
 		-n "The IP/ROHC server" \
 		$(builddir)/iprohc_server
 
+EXTRA_DIST = \
+	iprohc_server.conf
 
