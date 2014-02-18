@@ -80,11 +80,20 @@ AC_CHECK_HEADERS([time.h sys/time.h])
 AC_CHECK_HEADERS([arpa/inet.h])
 AC_CHECK_HEADERS([sys/types.h])
 AC_CHECK_HEADERS([linux/if_tun.h]) # TUN/TAP support
+AC_CHECK_HEADERS([sys/timerfd.h]) # timerfd support on Linux
 
 # TUN interfaces are not supported on non-Linux platforms yet
 if test "x$ac_cv_header_linux_if_tun_h" != "xyes" ; then
 	echo
 	echo "ERROR: non Linux platforms not supported yet"
+	echo
+	exit 1
+fi
+
+# timerfd API is mandatory
+if test "x$ac_cv_header_sys_timerfd_h" != "xyes" ; then
+	echo
+	echo "ERROR: timerfd API is mandatory"
 	echo
 	exit 1
 fi
@@ -213,6 +222,19 @@ if test "x$iprohc_server" != "x0" && \
 fi
 configure_cflags="$configure_cflags $YAML_CFLAGS"
 configure_ldflags="$configure_ldflags $YAML_LIBS"
+
+
+# check for libtimerfd presence through pkg-config
+PKG_CHECK_MODULES([TIMERFD], [timerfd],
+                  [libtimerfd_found="yes"], [libtimerfd_found="no"])
+if test "x$libtimerfd_found" != "xyes" ; then
+	# timerfd API provided by libc
+	:
+else
+	# timerfd API provided by the libtimerfd library
+	configure_cflags="$configure_cflags $TIMERFD_CFLAGS"
+	configure_ldflags="$configure_ldflags $TIMERFD_LIBS"
+fi
 
 
 # libnetlink.h is required
