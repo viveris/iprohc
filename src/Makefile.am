@@ -4,8 +4,20 @@
 #	Description: create the IP/ROHC client and server
 ################################################################################
 
+if BUILD_CLIENT
+CLIENT_DIR = client
+else
+CLIENT_DIR =
+endif
+
+if BUILD_SERVER
+SERVER_DIR = server
+else
+SERVER_DIR =
+endif
+
 SUBDIRS = \
 	common \
-	client \
-	server
+	$(CLIENT_DIR) \
+	$(SERVER_DIR)
 

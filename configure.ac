@@ -135,12 +135,7 @@ AC_ARG_ENABLE(client,
                              [enable IP/ROHC client [[default=yes]]]),
               [enable_client=$enableval],
               [enable_client=yes])
-if test "x$enable_client" = "xyes" ; then
-	iprohc_client=1
-else
-	iprohc_client=0
-fi
-AM_CONDITIONAL([IPROHC_CLIENT], [test x$iprohc_client = xyes])
+AM_CONDITIONAL([BUILD_CLIENT], [test x$enable_client = xyes])
 
 
 # build IP/ROHC server
@@ -149,12 +144,7 @@ AC_ARG_ENABLE(server,
                              [enable IP/ROHC server [[default=yes]]]),
               [enable_server=$enableval],
               [enable_server=yes])
-if test "x$enable_server" = "xyes" ; then
-	iprohc_server=1
-else
-	iprohc_server=0
-fi
-AM_CONDITIONAL([IPROHC_SERVER], [test x$iprohc_server = xyes])
+AM_CONDITIONAL([BUILD_SERVER], [test x$enable_server = xyes])
 
 
 # check if -Werror must be appended to CFLAGS
@@ -217,7 +207,7 @@ configure_ldflags="$configure_ldflags $ROHC_LIBS"
 # check for libyaml presence through pkg-config
 PKG_CHECK_MODULES([YAML], [yaml-0.1],
                   [libyaml_found="yes"], [libyaml_found="no"])
-if test "x$iprohc_server" != "x0" && \
+if test "x$enable_server" == "xyes" && \
    test "x$libyaml_found" != "xyes" ; then
 	echo
 	echo "ERROR: libyaml library/headers not found"
