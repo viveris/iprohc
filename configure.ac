@@ -215,7 +215,8 @@ configure_ldflags="$configure_ldflags $YAML_LIBS"
 
 
 # libnetlink.h is required
-AC_CHECK_HEADERS([libnetlink.h])
+AC_CHECK_HEADERS([libnetlink.h], [], [], [[#include <sys/socket.h>
+#include <stdio.h>]])
 if test "x$ac_cv_header_libnetlink_h" != "xyes" ; then
 	echo
 	echo "ERROR: libnetlink.h header not found"
