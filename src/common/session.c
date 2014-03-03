@@ -350,7 +350,7 @@ bool iprohc_session_stop(struct iprohc_session *const session)
 	if(AO_load_acquire_read(&(session->is_thread_running)))
 	{
 		/* ask for thread to stop (close the write side of the pipe) */
-		trace(LOG_ERR, "[main] ask client %s to stop", session->dst_addr_str);
+		trace(LOG_INFO, "[main] ask client %s to stop", session->dst_addr_str);
 	}
 	if(session->p2c[1] >= 0)
 	{
@@ -361,7 +361,7 @@ bool iprohc_session_stop(struct iprohc_session *const session)
 	/* wait for thread to stop */
 	if(AO_load_acquire_read(&(session->is_thread_running)))
 	{
-		trace(LOG_ERR, "[main] wait for client %s to stop", session->dst_addr_str);
+		trace(LOG_INFO, "[main] wait for client %s to stop", session->dst_addr_str);
 		pthread_join(session->thread_tunnel, NULL);
 	}
 
