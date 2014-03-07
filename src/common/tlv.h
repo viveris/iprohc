@@ -22,9 +22,13 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdint.h>
 #include <stdbool.h>
 
+
+#define IPROHC_PROTO_VERSION_FIRST         1
+#define IPROHC_PROTO_VERSION_ROHC_COMPAT   2
+
 /* Defines the current protocol version, must be modified each time
    a field is added or removed */
-#define CURRENT_PROTO_VERSION 1
+#define CURRENT_PROTO_VERSION  IPROHC_PROTO_VERSION_ROHC_COMPAT
 
 /* Global structures */
 enum commands
@@ -55,7 +59,9 @@ enum types
 };
 
 #define N_CONNECT_FIELD 8
-#define N_CONNREQ_FIELD 2
+#define N_CONNREQ_FIELD_FIRST        2
+#define N_CONNREQ_FIELD_ROHC_COMPAT  3
+#define N_CONNREQ_FIELD              N_CONNREQ_FIELD_ROHC_COMPAT
 
 struct tlv_result
 {
@@ -142,6 +148,10 @@ struct tunnel_params
 	char rohc_compat_version;
 };
 
+#define IPROHC_ROHC_COMPAT_1_6_x   1
+#define IPROHC_ROHC_COMPAT_1_7_x   2
+#define IPROHC_ROHC_COMPAT_LAST    IPROHC_ROHC_COMPAT_1_7_x
+
 bool parse_connect(const unsigned char *const data,
                    const size_t data_len,
 						 struct tunnel_params *const params,
@@ -157,8 +167,9 @@ bool parse_connrequest(const unsigned char *const data,
                        const size_t data_len,
 							  size_t *const parsed_len,
 							  int *const packing,
-							  int *const proto_version)
-	__attribute__((nonnull(1, 3, 4, 5), warn_unused_result));
+							  int *const proto_version,
+							  int *const rohc_compat_version)
+	__attribute__((nonnull(1, 3, 4, 5, 6), warn_unused_result));
 
 bool gen_connrequest(const int packing,
 							unsigned char *const dest,

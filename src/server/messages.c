@@ -98,6 +98,7 @@ static bool handle_connect(struct iprohc_session *const session,
 	/* Receiving parameters */
 	int packing;
 	int client_proto_version;
+	int rohc_compat_version;
 
 	/* Prepare order for connection */
 	unsigned char tlv[1024];
@@ -117,7 +118,7 @@ static bool handle_connect(struct iprohc_session *const session,
 
 	/* parse connect message received from client */
 	is_ok = parse_connrequest(message, message_len, parsed_len, &packing,
-	                          &client_proto_version);
+	                          &client_proto_version, &rohc_compat_version);
 	if(!is_ok)
 	{
 		session_trace(session, LOG_ERR, "unable to parse connection request");
@@ -127,12 +128,29 @@ static bool handle_connect(struct iprohc_session *const session,
 		tlv_len++;
 		// TODO : Clear client
 	}
-	else if(client_proto_version != CURRENT_PROTO_VERSION)
+	else if(client_proto_version != IPROHC_PROTO_VERSION_FIRST &&
+	        client_proto_version != IPROHC_PROTO_VERSION_ROHC_COMPAT)
 	{
 		/* Current behaviour as for proto version = 1 : refuse any other version */
 		session_trace(session, LOG_WARNING, "connection refused because of wrong "
-		              "protocol version: %d received from client but %d expected",
-		              client_proto_version, CURRENT_PROTO_VERSION);
+		              "protocol version: %d received from client but %d or %d "
+		              "expected", client_proto_version, IPROHC_PROTO_VERSION_FIRST,
+		              IPROHC_PROTO_VERSION_ROHC_COMPAT);
+
+		/* create failure answer for client */
+		tlv[0] = C_CONNECT_KO;
+		tlv_len++;
+		// TODO : Clear client
+	}
+	else if(client_proto_version == IPROHC_PROTO_VERSION_ROHC_COMPAT &&
+	        rohc_compat_version != IPROHC_ROHC_COMPAT_1_6_x &&
+	        rohc_compat_version != IPROHC_ROHC_COMPAT_1_7_x)
+	{
+		session_trace(session, LOG_WARNING, "client uses an unsupported version "
+		              "of the ROHC library (client uses version %d, server "
+		              "accepts versions %d or %d), abort session now",
+		              rohc_compat_version, IPROHC_ROHC_COMPAT_1_6_x,
+		              IPROHC_ROHC_COMPAT_1_7_x);
 
 		/* create failure answer for client */
 		tlv[0] = C_CONNECT_KO;
@@ -157,6 +175,27 @@ static bool handle_connect(struct iprohc_session *const session,
 			session_trace(session, LOG_INFO, "client asked for packing level %d",
 			              packing);
 			session->tunnel.params.packing = packing;
+		}
+
+		if(client_proto_version == IPROHC_PROTO_VERSION_FIRST)
+		{
+			session->tunnel.params.rohc_compat_version = IPROHC_ROHC_COMPAT_1_6_x;
+			session_trace(session, LOG_INFO, "client uses an old version of the "
+			              "ROHC library (client uses version %d, server uses %d), "
+			              "run in compatibility mode", IPROHC_ROHC_COMPAT_1_6_x,
+			              IPROHC_ROHC_COMPAT_LAST);
+		}
+		else if(rohc_compat_version != IPROHC_ROHC_COMPAT_LAST)
+		{
+			session->tunnel.params.rohc_compat_version = rohc_compat_version;
+			session_trace(session, LOG_INFO, "client uses an old version of the "
+			              "ROHC library (client uses version %d, server uses %d), "
+			              "run in compatibility mode", rohc_compat_version,
+			              IPROHC_ROHC_COMPAT_LAST);
+		}
+		else
+		{
+			session->tunnel.params.rohc_compat_version = IPROHC_ROHC_COMPAT_LAST;
 		}
 
 		/* create successful answer for client */

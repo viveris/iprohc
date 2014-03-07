@@ -200,6 +200,15 @@ static bool handle_okconnect(struct iprohc_client_session *const client,
 		tp.packing = client->packing;
 	}
 
+	/* reject unknown ROHC compat version */
+	if(tp.rohc_compat_version != IPROHC_ROHC_COMPAT_LAST)
+	{
+		trace(LOG_ERR, "[client %s] unsupported ROHC compatibility version %d, "
+		      "version %d was expected", client->session.dst_addr_str,
+		      tp.rohc_compat_version, IPROHC_ROHC_COMPAT_LAST);
+		goto error;
+	}
+
 	/* init tunnel context */
 	if(!iprohc_tunnel_new(&(client->session.tunnel), tp,
 	                      client->session.local_address.s_addr,

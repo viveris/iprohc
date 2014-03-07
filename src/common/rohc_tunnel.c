@@ -601,6 +601,24 @@ void * iprohc_tunnel_run(void *arg)
 							      "context: %s (%d)", strerror(errno), errno);
 							goto close_pollfd;
 						}
+
+						/* ROHC compatibility mode? */
+						if(session->tunnel.params.rohc_compat_version == IPROHC_ROHC_COMPAT_1_6_x)
+						{
+							trace(LOG_INFO, "enable ROHC 1.6.x compatibility mode");
+							if(!rohc_comp_set_features(session->tunnel.comp,
+							                           ROHC_COMP_FEATURE_COMPAT_1_6_x))
+							{
+								trace(LOG_ERR, "failed to enable ROHC 1.6.x compatibility mode");
+								goto close_pollfd;
+							}
+							if(!rohc_decomp_set_features(session->tunnel.decomp,
+							                             ROHC_DECOMP_FEATURE_COMPAT_1_6_x))
+							{
+								trace(LOG_ERR, "failed to enable ROHC 1.6.x compatibility mode");
+								goto close_pollfd;
+							}
+						}
 					}
 				}
 

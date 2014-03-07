@@ -418,7 +418,8 @@ bool parse_connrequest(const unsigned char *const data,
                        const size_t data_len,
 							  size_t *const parsed_len,
 							  int *const packing,
-							  int *const proto_version)
+							  int *const proto_version,
+							  int *const rohc_compat_version)
 {
 	struct tlv_result results[N_CONNREQ_FIELD + 1];
 	bool is_success = false;
@@ -456,6 +457,12 @@ bool parse_connrequest(const unsigned char *const data,
 			      "found", results[i].type);
 			*proto_version = *((char*) results[i].value);
 		}
+		else if(results[i].type == ROHC_COMPAT)
+		{
+			trace(LOG_DEBUG, "connection request: parameter ROHC_COMPAT (%u) "
+			      "found", results[i].type);
+			*rohc_compat_version = *((char*) results[i].value);
+		}
 		else
 		{
 			trace(LOG_WARNING, "connection request: unexpected parameter %u",
@@ -475,7 +482,8 @@ bool gen_connrequest(const int packing,
 							unsigned char *const dest,
 							size_t *const length)
 {
-	const int version = CURRENT_PROTO_VERSION;
+	const int proto_version = CURRENT_PROTO_VERSION;
+	const int rohc_compat_version = IPROHC_ROHC_COMPAT_LAST;
 	struct tlv_result *results;
 	bool is_success = false;
 	bool is_ok;
@@ -498,7 +506,10 @@ bool gen_connrequest(const int packing,
 	results[0].value = (unsigned char*) &packing;
 
 	results[1].type  = CPROTO_VERSION;
-	results[1].value = (unsigned char*) &version;
+	results[1].value = (unsigned char*) &proto_version;
+
+	results[2].type  = ROHC_COMPAT;
+	results[2].value = (unsigned char*) &rohc_compat_version;
 
 	is_ok = gen_tlv(dest, results, N_CONNREQ_FIELD, length);
 	if(!is_ok)

@@ -219,7 +219,7 @@ int main(int argc, char *argv[])
 	server_opts.params.wlsb_window_width   = 23;
 	server_opts.params.refresh             = 9;
 	server_opts.params.keepalive_timeout   = 60;
-	server_opts.params.rohc_compat_version = 1;
+	server_opts.params.rohc_compat_version = 2;
 
 	struct option options[] = {
 		{ "conf",      required_argument, NULL, 'c' },
