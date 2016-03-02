@@ -622,16 +622,7 @@ void * iprohc_tunnel_run(void *arg)
 					}
 				}
 
-				/* re-arm keepalive timer */
-				if(!iprohc_session_update_keepalive(session,
-				                                    tunnel->params.keepalive_timeout))
-				{
-					tunnel_trace(session, LOG_ERR, "failed to update the keepalive "
-					             "timeout to %zu seconds",
-					             tunnel->params.keepalive_timeout);
-					session->status = IPROHC_SESSION_PENDING_DELETE;
-					goto close_pollfd;
-				}
+				/* Packet received from remote, reset missed keepalive */
 				session->keepalive_misses = 0;
 			}
 		}
