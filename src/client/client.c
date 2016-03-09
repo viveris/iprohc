@@ -352,6 +352,9 @@ int main(int argc, char *argv[])
 	 * Initialize client context
 	 */
 
+	/* Configure libgcrypt backend for use in multi-threaded environment */
+	gcry_control (GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
+
 	/* load certificates and key for TLS session */
 	gnutls_global_init();
 	gnutls_certificate_allocate_credentials(&(client.tls_cred));

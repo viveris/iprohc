@@ -29,6 +29,12 @@ along with iprohc.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <gnutls/gnutls.h>
 
+/* Configure GnuTLS and libgcrypt for use in multi-threaded environment */
+#include <gcrypt.h>
+#include <errno.h>
+GCRY_THREAD_OPTION_PTHREAD_IMPL;
+
+
 #include <rohc/rohc.h>
 #include <rohc/rohc_comp.h>
 #include <rohc/rohc_decomp.h>

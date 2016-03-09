@@ -93,7 +93,7 @@ bool iprohc_session_new(struct iprohc_session *const session,
 	session->stop_ctrl = stop_ctrl;
 	session->handle_ctrl_opaque = handle_ctrl_opaque;
 	session->local_address = local_addr;
-	session->src_addr.s_addr = INADDR_ANY;
+	session->src_addr.s_addr = ntohl(local_addr.s_addr);
 	session->dst_addr = remote_addr.sin_addr;
 	session->status = IPROHC_SESSION_CONNECTING;
 	session->thread_tunnel = -1;

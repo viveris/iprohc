@@ -389,6 +389,9 @@ int main(int argc, char *argv[])
 	 * GnuTLS stuff
 	 */
 
+	/* Configure libgcrypt backend for use in multi-threaded environment */
+	gcry_control (GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
+
 	trace(LOG_INFO, "[main] load server certificate from file '%s'",
 			server_opts.pkcs12_f);
 	gnutls_global_init();
