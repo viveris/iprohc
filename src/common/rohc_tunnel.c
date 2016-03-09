@@ -800,6 +800,9 @@ error:
 	tunnel_trace(session, LOG_INFO, "end of thread");
 	session->status = IPROHC_SESSION_PENDING_DELETE;
 	AO_store_release_write(&(session->is_thread_running), 0);
+	/* Parent thread is not calling pthread_join,
+	   so detach thread to free allocated resources */
+	pthread_detach(session->thread_tunnel);
 	return NULL;
 }
 
